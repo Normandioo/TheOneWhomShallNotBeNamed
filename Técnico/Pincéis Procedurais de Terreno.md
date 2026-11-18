@@ -15,9 +15,9 @@ Um cone ou prato liso tem uma só escala e nenhuma direção: a natureza tem rel
 | **Ridged multifractal** (1 − \|ruído\|, oitavas) | Cristas finas e vales em V: serras | Baixo | Montanhas |
 | **Domain warping** (deslocar a posição antes de ler o ruído) | Cristas que serpenteiam, sem aspecto de grade | Baixo | Montanhas |
 | **Erosão térmica** (material escorre acima do ângulo de repouso) | Encostas e picos arredondados, entulho nos vales | Baixo-médio | Erosão |
-| **Erosão hidráulica** (chuva, fluxo, sedimento) | Redes de drenagem, vales entalhados, leques | Alto | **Não feito** (próximo passo) |
+| **Erosão hidráulica** (chuva, fluxo, sedimento) | Redes de drenagem, vales entalhados, leques | Alto | Vales (versão simplificada) |
 | **Terraços** (quantizar a altura com suavização) | Degraus, mesas | Baixo | Não feito |
-| **Carvar rios** (pincel que segue o declive e entalha) | Vales fluviais | Médio | Não feito |
+| **Carvar rios** (pincel que segue o declive e entalha) | Vales fluviais | Médio | Vales marca os rios |
 | **Máscaras por declive/altura** (ruído só onde...) | Rocha só em encosta, areia só no plano | Baixo | Não feito |
 | **Ruído em 3D na esfera** | Sem emenda em 180° nem estiramento nos polos | — | Todos |
 
@@ -34,15 +34,18 @@ Um cone ou prato liso tem uma só escala e nenhuma direção: a natureza tem rel
 - **Suavizar:** média ponderada.
 - **Montanhas:** cristas. *Rugosidade* baixa = maciço arredondado e largo; alta = cristas finas, menos volume.
 - **Erosão:** térmica, 3 passadas por marca.
+- **Vales:** erosão hidráulica simplificada. Cada pixel escoa para o vizinho mais baixo (D8); o fluxo acumulado rio abaixo entalha o terreno e o sedimento assenta onde o declive cai. Ao soltar, marca os rios por onde o fluxo passou. **Nunca baixa a terra abaixo de 1 m** (não cria mar) **nem levanta o mar acima de −1 m** (não cria ilha).
+
+Tudo isso roda em C# desde 18/11/2026 ([[Núcleo em C#]]).
 
 ## Limites conhecidos (vistos na galeria)
 - Pixel de 12,7 km: as cristas mais finas têm ~25 km; o resultado não alcança a riqueza de um mapa feito em resolução maior.
-- **A erosão térmica borra:** arredonda tudo, mas não entalha vales nem cria drenagem. Para o aspecto "erodido de verdade" falta a hidráulica.
+- **A erosão térmica borra:** arredonda tudo, mas não entalha vales nem cria drenagem. O Vales cobre o entalhe e a drenagem, na grade de 12,7 km.
 - Rugosidade 0% em Montanhas faz um platô muito alto e largo (muito branco); talvez limitar a altura.
 - Nada disso muda ainda as camadas derivadas do Gleba (clima, biomas, rios): ficam desatualizadas ([[Simulação]]).
 
 ## Ideias seguintes (por valor)
-1. Erosão hidráulica simplificada (fluxo + entalhe) para rios e vales.
+1. ~~Erosão hidráulica simplificada (fluxo + entalhe) para rios e vales.~~ Feito: Vales.
 2. Direção: cristas alinhadas ao traço do mouse (cordilheira em linha).
 3. Terraços e mesas; máscaras por declive.
 4. Pré-visualização do resultado antes de soltar o mouse ([[Interação Esperada]]).
