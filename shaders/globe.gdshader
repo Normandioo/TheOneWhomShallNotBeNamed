@@ -6,6 +6,7 @@ render_mode specular_disabled;
 
 #include "res://shaders/relief.gdshaderinc"
 #include "res://shaders/brush.gdshaderinc"
+#include "res://shaders/political.gdshaderinc"
 
 uniform sampler2D layer_linear : source_color, filter_linear_mipmap, repeat_enable;   // camada atual, valores contínuos
 uniform sampler2D layer_nearest : source_color, filter_nearest, repeat_enable; // a mesma camada, para categorias
@@ -82,6 +83,7 @@ void fragment() {
 	}
 	ALBEDO = col;
 	ALBEDO = river_paint(uv, ALBEDO);
+	ALBEDO = political_paint(uv, ALBEDO);
 	ALBEDO = brush_preview(n, ALBEDO);
 	ROUGHNESS = 1.0;
 	NORMAL = relief_normal(n, uv, h, NORMAL, VIEW_MATRIX * MODEL_MATRIX);

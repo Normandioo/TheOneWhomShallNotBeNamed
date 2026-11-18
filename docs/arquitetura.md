@@ -25,6 +25,8 @@ scripts/
     RegistryPlaces.cs (C#, parte do Registry) lugares (ponto ou disco), presenças no mapa, estimativas e distribuições demográficas
     RegistryBorders.cs (C#, parte do Registry) lugares com contorno desenhado à mão (polígono de vértices lat/lon)
     PlaceGeometry.cs (C#) geometria do contorno na esfera: validar, centro, área, "está dentro", distância até a borda
+    Territory.cs     (C#) a camada política: o dono de cada pixel (ushort, grade da altitude), pincel, balde, borracha, área em km²
+    RegistryTerritory.cs (C#, parte do Registry) a camada gravada no banco (comprimida) e a cor de cada país
     domain_hub.gd    liga os painéis de busca, ficha e calendários ao Registry; segue o relógio (set_time/tick)
     calendar.gd      o calendário universal: só conversões (365 dias, sem bissextos); tempo = segundos int64 desde a época
     world_clock.gd   o relógio oficial: presente, consulta, pausa, velocidade, eventos e o contrato dos módulos
@@ -36,6 +38,7 @@ scripts/
     BrushKernel.cs   o trabalho pixel a pixel do pincel (todos os modos, erosão e rios)
     TerrainEdit.cs   uma pincelada como DADO: pixels mexidos, altura antes e depois (arrays; gravável no banco)
     TerrainNoise.cs  ruídos dos pincéis (fbm e cristas) na posição 3D da esfera
+    TerritoryEdit.cs uma pincelada de território como DADO: pixels mexidos, dono antes e depois (8 bytes por pixel); vai na mesma pilha de desfazer
   view/            o globo na tela.
     globe_material.gd  o material (globe.gdshader); único lugar que escreve nos uniforms; guarda só a camada da tela
     globe_camera.gd    gira em volta do globo e dá zoom logarítmico, da órbita a ~17 km do chão; a luz vai junto
@@ -50,6 +53,7 @@ scripts/
     sheet_panel.gd   a ficha: identidade, resumo, etiquetas, nomes, conteúdo gerado dos campos, relações, calendários, duplicar e excluir
     calendar_panel.gd janela dos calendários locais: os cadastrados e o formulário de um novo (com a primeira era)
     presence_panel.gd camadas e escopo do mapa de presenças (a ficha aberta ou todas as entidades)
+    territory_panel.gd a barra do modo pintar território (pincel, balde, borracha, raio, "só em terra", área, Terminar)
     draw_panel.gd    a barra do modo desenhar fronteira (pontos marcados, Desfazer, Concluir, Cancelar; Esc, Enter e Backspace)
     time_bar.gd      barra de tempo (embaixo à esquerda) e janela do calendário: data, pausa, velocidade, avanços, consulta
     legend_panel.gd, ui_kit.gd
@@ -228,6 +232,29 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
   iguais). Para ver o vizinho, ponha o painel de presenças em "Todas as entidades".
 - **Ainda não feito:** mover ou apagar um vértice solto de um contorno já criado (hoje: Redesenhar); buracos e várias partes num mesmo território (ilhas); contorno maior que 85° do centro; pré-visualização do lado
   a fechar sob o mouse; importar contornos; verificar sobreposição entre territórios de países diferentes (hoje cada um é independente, e o clique lista todos que cobrem o ponto).
+
+### Território pintado (a camada política por pixel)
+
+Alternativa ao contorno por pontos para o **mapa político**: o país é uma mancha de cor que preenche o mapa, como em jogos de estratégia. As outras ideias (províncias e traço livre)
+e o raciocínio de cada método estão em `docs/alternativas-fronteiras.md`.
+
+- **Dado** (`Territory.cs`): um `ushort` por pixel na grade da altitude, o id do cadastro do **país** dono (1 a 65535; 0 = ninguém), no formato RG8 que a GPU lê. Um dono por pixel: **sem fresta e sem sobreposição**, a
+  borda nasce onde duas cores se encontram, e ilhas, buracos e países enormes saem naturais. A camada é gravada em `territory` (migração 6), numa linha só, **comprimida** (deflate; um mapa quase vazio cabe em centenas de KB),
+  ~1,5 s depois da última edição e ao fechar. A **cor** de cada país é a coluna `entity.color` (RGB), automática (passo de matiz áureo pelo id: vizinhos tendem a ser bem diferentes) enquanto o autor não escolhe.
+- **Pincelar** (`Territory.Dab/End/Fill/ClearOwner`): o disco do pincel é o do terreno (`Terrain.DiskInto`: pela superfície, atravessa 180° e cobre o polo). Pincel dá o território ao país da barra e **toma** o de outro país
+  (conquista); **borracha** só apaga o território do país da barra (nunca o do vizinho); **balde** preenche a região conectada de mesmo dono (e mesma terra/água) clicada; **"só em terra"** pinta só onde a altitude é ≥ 0, então a costa
+  do país segue a costa do mapa. Cada pincelada, balde ou "apagar tudo" é **um comando** (`TerritoryEdit`, 8 bytes por pixel) na mesma pilha de desfazer do terreno (Ctrl+Z / Ctrl+Y). A área em km² pesa cada linha pela largura real
+  dos pixels (perto do polo eles são estreitos) e é guardada até a próxima edição.
+- **Interface:** na ficha de um **país**, a seção "Território" mostra a área, o seletor de cor (a prévia vai para a paleta enquanto o seletor está aberto; ao fechar, grava), **Pintar território** e **Apagar território**.
+  "Pintar território" abre a barra (canto inferior direito): Pincel, Balde, Borracha, raio, "Só em terra", área e Terminar (Esc). Com o modo ligado, o **botão esquerdo pinta** (o direito gira a câmera) e o anel do pincel aparece sob o mouse;
+  escolher uma ferramenta de terreno sai do modo. O painel "Presenças no mapa" liga e desliga a camada pela caixa "Fronteira política", e o **clique no território seleciona o país dono do pixel** (abre a ficha).
+  Excluir o país apaga o território dele; um país sem cor na paleta (alfa 0) não é desenhado.
+- **No shader** (`political.gdshaderinc`, usado pelo globo e pelos blocos): parâmetros globais `political_map` (RG8: dono = r + 256·g), `political_palette` (256 × 256: cor do país de id por `(id & 255, id >> 8)`) e `political_on`,
+  escritos por `GlobeMaterial`. A cor do país cobre o território (55%, o relevo continua aparecendo) e uma **linha escura** marca onde dois países se encontram. A borda é **suavizada**: cada ponto olha os 4 pixels em volta e fica com
+  o dono de maior peso bilinear (no lugar de degraus, diagonais), e a linha vale onde o segundo colocado é outro país e a disputa está quase empatada. Resolução da borda = a da grade (~12,7 km por pixel).
+- **GPU:** a camada inteira (16 MiB) volta à GPU, no máximo 10 vezes por segundo durante a pincelada e uma vez ao soltar (como a altitude).
+- **Ainda não feito (de propósito, para testar o método primeiro):** nome grande do país no centro, barra de população e ícones de cidades sobre o território; linha de costa; "território compartilhado" entre países;
+  recalcular as camadas do Gleba que ficam desatualizadas; subir a resolução da camada (8K); a seleção por clique escolhe só o país (não a província); o desfazer não atravessa a exclusão de um país.
 
 ## Testes
 

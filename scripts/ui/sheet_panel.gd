@@ -25,6 +25,9 @@ signal calendar_use_removed(use_id: int)
 signal place_focus_requested(place_id: int)
 signal border_draw_requested(name: String, role: String)   # desenhar uma fronteira nova no globo
 signal border_redraw_requested(place_id: int, role: String)  # refazer o contorno de um lugar que já é contorno
+signal territory_paint_requested                              # entrar no modo pintar território para este país
+signal territory_clear_requested                              # apagar todo o território deste país (desfaz com Ctrl+Z)
+signal entity_color_changed(entity_id: int, rgb: int, final: bool)  # final = o usuário fechou o seletor (grava); senão, prévia na paleta
 signal place_search(text: String)  # buscar lugares para os menus (o hub responde com show_place_candidates)
 signal presence_added(place_id: int, role: String)
 signal presence_removed(presence_id: int)
@@ -60,6 +63,7 @@ var _fixed_label: Label
 var _create_place_btn: Button
 var _geo_message: Label
 var _border_msg: Label
+var _territory_msg: Label
 var _place_pickers: Array = []  # os menus de lugar da ficha (a busca de um atualiza todos)
 var _universal_label: Label
 var _date_labels := {}     # id do uso -> Label com a data local
@@ -125,6 +129,7 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	_build_names()
 	_build_content()
 	_build_links()
+	_build_territory()
 	_build_places()
 	_build_population()
 	_build_calendars()
@@ -146,6 +151,11 @@ func show_fixed_point(text: String, enabled: bool) -> void:
 	if _fixed_label != null:
 		_fixed_label.text = text
 		_create_place_btn.disabled = not enabled
+
+
+func show_territory_message(text: String) -> void:
+	if _territory_msg != null:
+		_territory_msg.text = text
 
 
 func show_border_message(text: String) -> void:
@@ -450,6 +460,47 @@ func _build_links() -> void:
 	_link_query.text_changed.connect(func(_t: String) -> void: search.call())
 	_link_type.item_selected.connect(func(_i: int) -> void: search.call())
 	search.call()
+
+
+## Só para países: a camada política (o território pintado, a cor do país, pintar e apagar).
+func _build_territory() -> void:
+	_territory_msg = null
+	if _sheet.kind != "pais" or not _geo.has("territory"):
+		return
+	var info: Dictionary = _geo.territory
+	var eid := int(_sheet.id)
+	var box := _section("Território")
+	box.add_child(_note("≈ %s km² pintados no mapa." % LayerPanel._thousands(roundi(info.area_km2)) if info.area_km2 > 0.0 else "Ainda sem território pintado."))
+	var color_row := HBoxContainer.new()
+	box.add_child(color_row)
+	var color_label := Label.new()
+	color_label.text = "Cor do país:"
+	color_row.add_child(color_label)
+	var picker := ColorPickerButton.new()
+	picker.edit_alpha = false
+	picker.custom_minimum_size = Vector2(70, 0)
+	picker.color = Color8((info.color >> 16) & 255, (info.color >> 8) & 255, info.color & 255)
+	var rgb_of := func(c: Color) -> int:
+		return (roundi(c.r * 255.0) << 16) | (roundi(c.g * 255.0) << 8) | roundi(c.b * 255.0)
+	picker.color_changed.connect(func(c: Color) -> void: entity_color_changed.emit(eid, rgb_of.call(c), false))
+	picker.popup_closed.connect(func() -> void: entity_color_changed.emit(eid, rgb_of.call(picker.color), true))
+	color_row.add_child(picker)
+	var row := HBoxContainer.new()
+	box.add_child(row)
+	var paint := Button.new()
+	paint.text = "Pintar território"
+	paint.disabled = not info.ok
+	paint.tooltip_text = "Pinta no globo com o pincel; pintar sobre outro país toma o território dele" if info.ok else "Este cadastro tem um id acima de 65535: a camada política não comporta"
+	paint.pressed.connect(func() -> void: territory_paint_requested.emit())
+	row.add_child(paint)
+	var clear := Button.new()
+	clear.text = "Apagar território"
+	clear.disabled = info.area_km2 <= 0.0
+	clear.tooltip_text = "Apaga todo o território pintado deste país (Ctrl+Z desfaz)"
+	clear.pressed.connect(func() -> void: territory_clear_requested.emit())
+	row.add_child(clear)
+	_territory_msg = _note("")
+	box.add_child(_territory_msg)
 
 
 func _build_places() -> void:

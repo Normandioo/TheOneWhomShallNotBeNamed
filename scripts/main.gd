@@ -30,6 +30,9 @@ const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
 const CalendarPanel = preload("res://scripts/ui/calendar_panel.gd")
 const PresencePanel = preload("res://scripts/ui/presence_panel.gd")
 const DrawPanel = preload("res://scripts/ui/draw_panel.gd")
+const TerritoryPanel = preload("res://scripts/ui/territory_panel.gd")
+const Territory = preload("res://scripts/world/Territory.cs")
+const TerrainEdit = preload("res://scripts/edit/TerrainEdit.cs")
 const DomainHub = preload("res://scripts/world/domain_hub.gd")
 const ToolPanel = preload("res://scripts/ui/tool_panel.gd")
 const TimeBar = preload("res://scripts/ui/time_bar.gd")
@@ -43,6 +46,7 @@ const AUTOSAVE_SECONDS := 30.0  # reais; o relógio também é salvo a cada coma
 var domains_db := "user://evron_world.db"
 
 var terrain: Terrain
+var territory: Territory  # a camada política: o dono de cada pixel
 var commands := CommandStack.new()
 var brush: TerrainBrush
 var material := GlobeMaterial.new()
@@ -63,6 +67,7 @@ var tool := ToolPanel.NAVIGATE    # -1 navegar; senão TerrainBrush.Op
 var selected_dir := Vector3.ZERO  # ponto fixado pelo clique (ZERO = nenhum)
 var brush_preview := Vector4.ZERO # o que foi para o parâmetro global "brush" (fora do editor não dá para lê-lo)
 var _since_upload := 0.0
+var _since_political := 0.0
 
 
 func _ready() -> void:
@@ -71,6 +76,8 @@ func _ready() -> void:
 	terrain = Terrain.new()
 	terrain.Setup(EvronMaps.load_height())
 	brush = TerrainBrush.new(terrain, commands)
+	territory = Territory.new()
+	territory.Setup(terrain)
 	material.set_height(terrain.HeightImage())
 	material.set_rivers(terrain.RiversImage())
 	globe = GlobeView.new()
@@ -98,6 +105,12 @@ func _ready() -> void:
 	var draw_panel := DrawPanel.new()
 	hud.add_child(draw_panel)
 	domains.bind_draw(draw_panel)
+	var territory_panel := TerritoryPanel.new()
+	hud.add_child(territory_panel)
+	domains.palette_changed.connect(material.set_political_palette)
+	domains.painting_changed.connect(_on_painting_changed)
+	domains.bind_territory(territory, commands, territory_panel)  # lê a camada gravada e manda a paleta
+	material.set_political(territory.OwnersImage())
 	if save_path != "":
 		WorldStore.load_into(clock, save_path)  # sem salvamento válido, abre o cenário técnico, pausado
 	demo.attach(clock)
@@ -151,6 +164,11 @@ func _process(delta: float) -> void:
 		material.refresh_height(terrain.HeightImage())
 		terrain.Dirty = false
 		_since_upload = 0.0
+	if territory.Dirty and (not domains.territory_stroking or _since_political >= 0.1):
+		material.refresh_political(territory.OwnersImage())  # durante a pincelada, no máximo 10x por segundo (a camada inteira: 16 MiB)
+		territory.Dirty = false
+		_since_political = 0.0
+	_since_political += delta
 	if terrain.RiversDirty and not brush.active:  # os rios só mudam ao soltar o mouse, desfazer ou refazer
 		material.refresh_rivers(terrain.RiversImage())
 		terrain.RiversDirty = false
@@ -172,6 +190,18 @@ func _unhandled_input(e: InputEvent) -> void:
 		if e.keycode == KEY_Y or (e.keycode == KEY_Z and e.shift_pressed):
 			redo()
 			return
+	# No modo pintar território, o botão esquerdo pinta (a câmera só gira com o direito), como no pincel de terreno.
+	if domains.painting_territory:
+		if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
+			if e.pressed:
+				domains.territory_begin(globe.pick(e.position))
+			else:
+				domains.territory_end()
+			return
+		if e is InputEventMouseMotion and domains.territory_stroking:
+			domains.territory_drag(globe.pick(e.position))
+		globe.handle_input(e)
+		return
 	# Com um pincel ativo, o botão esquerdo pinta (a câmera só gira com o direito).
 	if tool != ToolPanel.NAVIGATE and e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
 		var n := globe.pick(e.position)
@@ -200,6 +230,8 @@ func set_layer(index: int) -> void:
 
 ## -1 = navegar; senão uma operação do pincel (TerrainBrush.Op).
 func set_tool(op: int) -> void:
+	if domains.painting_territory:  # escolher uma ferramenta da barra sai do modo pintar território
+		domains.stop_painting()
 	if brush.active:
 		brush.end()
 	tool = op
@@ -290,15 +322,24 @@ func _season_line(n: Vector3) -> String:
 
 func _on_hover(n: Vector3) -> void:
 	layer_panel.show_cursor(describe(n))
+	if domains.painting_territory:
+		_show_brush(n, domains.territory_radius)  # o anel do pincel de território
 	if tool != ToolPanel.NAVIGATE:
 		_show_brush(n)
 
 
 ## Círculo do pincel no globo (parâmetro global "brush" dos shaders); ZERO esconde.
-func _show_brush(n: Vector3) -> void:
-	var a := brush.radius_km / EvronGeo.RADIUS_KM if n != Vector3.ZERO else 0.0
+func _show_brush(n: Vector3, km := -1.0) -> void:
+	var a := (km if km > 0.0 else brush.radius_km) / EvronGeo.RADIUS_KM if n != Vector3.ZERO else 0.0
 	brush_preview = Vector4(n.x, n.y, n.z, a)
 	RenderingServer.global_shader_parameter_set("brush", brush_preview)
+
+
+## Entrou ou saiu do modo pintar território: a barra de ferramentas volta a Navegar e o anel do pincel some.
+func _on_painting_changed(on: bool) -> void:
+	tool = ToolPanel.NAVIGATE
+	tool_panel.show_tool(ToolPanel.NAVIGATE)
+	_show_brush(Vector3.ZERO)
 
 
 func _on_history_changed() -> void:
@@ -308,4 +349,4 @@ func _on_history_changed() -> void:
 
 ## Só a camada Altitude acompanha as edições; as imagens do Gleba (clima, biomas, rios...) ficam desatualizadas.
 func _refresh_stale() -> void:
-	legend.show_stale(commands.can_undo() and MapLayers.LAYERS[layer]["kind"] != "altitude")
+	legend.show_stale(commands.has_undoable(TerrainEdit) and MapLayers.LAYERS[layer]["kind"] != "altitude")  # só o terreno deixa as imagens do Gleba desatualizadas (o território não)

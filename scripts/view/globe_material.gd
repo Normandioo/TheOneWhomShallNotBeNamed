@@ -6,6 +6,8 @@ const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 
 var material: ShaderMaterial
 var river_texture: ImageTexture
+var political_texture: ImageTexture          # os donos de cada pixel (RG8)
+var political_palette_texture: ImageTexture  # 256×256: a cor de cada país por id
 var height_texture: ImageTexture  # também usada pelos blocos (TileLayer), para o mesmo relevo
 var layer_file := ""  # arquivo da camada carregada ("" = nenhuma)
 
@@ -23,6 +25,36 @@ func set_rivers(rivers: Image) -> void:
 ## Reenvia os rios editados para a GPU (4 MiB).
 func refresh_rivers(rivers: Image) -> void:
 	river_texture.update(rivers)
+
+
+## A camada política (donos por pixel, RG8): vai para o parâmetro global que o globo e os blocos leem.
+func set_political(owners: Image) -> void:
+	political_texture = ImageTexture.create_from_image(owners)
+	RenderingServer.global_shader_parameter_set("political_map", political_texture)
+
+
+## Reenvia os donos editados para a GPU (a imagem inteira, 16 MiB).
+func refresh_political(owners: Image) -> void:
+	political_texture.update(owners)
+
+
+## A paleta: entries = [{id, rgb}] (Registry.CountryPalette). Ids sem entrada ficam sem cor (alfa 0).
+func set_political_palette(entries: Array) -> void:
+	var img := Image.create(256, 256, false, Image.FORMAT_RGBA8)
+	for e in entries:
+		var id := int(e.id)
+		var rgb := int(e.rgb)
+		if id > 0 and id <= 65535:
+			img.set_pixel(id & 255, id >> 8, Color8((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, 255))
+	if political_palette_texture == null:
+		political_palette_texture = ImageTexture.create_from_image(img)
+		RenderingServer.global_shader_parameter_set("political_palette", political_palette_texture)
+	else:
+		political_palette_texture.update(img)
+
+
+func show_political(on: bool) -> void:
+	RenderingServer.global_shader_parameter_set("political_on", 1.0 if on else 0.0)
 
 
 ## Peso de julho (0 = só janeiro, 1 = só julho) da temperatura sazonal; vem de SeasonalTemperature.july_weight.

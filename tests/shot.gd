@@ -18,6 +18,8 @@ const HEADLESS_SUITES := [
 	"res://tests/suites/regression_suite.gd",
 	"res://tests/suites/border_suite.gd",
 	"res://tests/suites/draw_suite.gd",
+	"res://tests/suites/territory_suite.gd",
+	"res://tests/suites/paint_suite.gd",
 	"res://tests/suites/calendar_suite.gd",
 ]
 const SCENE_SUITES := [
@@ -28,6 +30,7 @@ const SCENE_SUITES := [
 	"res://tests/suites/time_suite.gd",
 	"res://tests/suites/hub_suite.gd",  # com a cena: o hub segue o relógio
 	"res://tests/suites/draw_suite.gd",  # com a cena: Main.select no modo desenhar
+	"res://tests/suites/paint_suite.gd",  # com a cena: o shader e o Main levam a camada política à GPU
 ]
 
 

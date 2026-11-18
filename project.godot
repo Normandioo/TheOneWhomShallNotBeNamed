@@ -29,3 +29,15 @@ brush={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
+political_map={
+"type": "sampler2D",
+"value": "res://shaders/political_default.tres"
+}
+political_palette={
+"type": "sampler2D",
+"value": "res://shaders/political_default.tres"
+}
+political_on={
+"type": "float",
+"value": 1.0
+}

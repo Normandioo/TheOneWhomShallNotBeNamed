@@ -43,6 +43,14 @@ func redo() -> bool:
 	return true
 
 
+## Algum comando que dá para desfazer é desse tipo (o script do objeto, como TerrainEdit.cs)? Para saber o que foi editado.
+func has_undoable(script: Script) -> bool:
+	for c in _undo:
+		if c["cmd"].get_script() == script:
+			return true
+	return false
+
+
 func can_undo() -> bool:
 	return not _undo.is_empty()
 

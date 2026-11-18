@@ -77,6 +77,7 @@ public partial class Registry : RefCounted
         CalendarsMigration,  // RegistryCalendar.cs
         PlacesMigration,  // RegistryPlaces.cs
         BordersMigration,  // RegistryBorders.cs
+        TerritoryMigration,  // RegistryTerritory.cs
     };
 
     WorldDb _db = new();

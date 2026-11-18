@@ -6,6 +6,7 @@ render_mode specular_disabled, cull_disabled;
 
 #include "res://shaders/relief.gdshaderinc"
 #include "res://shaders/brush.gdshaderinc"
+#include "res://shaders/political.gdshaderinc"
 
 uniform sampler2D tile : source_color, filter_linear_mipmap, repeat_disable;
 
@@ -20,6 +21,7 @@ void fragment() {
 	vec2 guv = globe_uv(n);
 	ALBEDO = texture(tile, UV).rgb;
 	ALBEDO = river_paint(guv, ALBEDO);
+	ALBEDO = political_paint(guv, ALBEDO);
 	ALBEDO = brush_preview(n, ALBEDO);
 	ROUGHNESS = 1.0;
 	NORMAL = relief_normal(n, guv, height(guv), NORMAL, VIEW_MATRIX * MODEL_MATRIX);
