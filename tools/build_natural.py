@@ -34,6 +34,9 @@ import os
 import numpy as np
 from PIL import Image
 
+import coast_fix
+import coast_prototype
+
 D = "data/evron"
 SW, SH = 4096, 2048     # grade dos mapas do Gleba
 W, H = 8192, 4096       # saída
@@ -355,8 +358,28 @@ def fields():
             "t_mean", "t_max", "rain", "rain_min", "hum", "n_low", "n_mid", "n_mid2", "n_xlow", "ice_t", "ice_coast"]
     # Geografia fixa (amostrada sem deslocamento): lagos e rios ficam onde o Gleba pôs. A costa (abaixo) tem um
     # warp fino próprio para não ficar com cara de hexágono.
-    G = np.stack([blur(land, 2), blur(lake, 1), saline, blur(river, 1)], -1).astype(np.float32)  # river = vale
+    land_soft = coast_patch(land)
+    G = np.stack([land_soft, blur(lake, 1), saline, blur(river, 1)], -1).astype(np.float32)  # river = vale
     return F, {k: i for i, k in enumerate(keys)}, G, warp, warp_coast
+
+
+def coast_patch(land):
+    """Etapa 3 do plano de costa (docs/coast_proto/relatorio.md), só no recorte "continental" por enquanto:
+    fora dele, devolve exatamente blur(land, 2) como antes. Dentro, troca a máscara quadriculada por uma
+    versão corrigida (tools/coast_fix.fix_coast, numa grade 4x mais fina) reamostrada para a grade nativa como
+    fração de terra (não 0/1): a costa ganha forma nova sem que o resto do planeta mude um pixel."""
+    base = blur(land, 2)
+    cy, cx, half = coast_prototype.pick_crops(land)["continental"]
+    land_hi = np.repeat(np.repeat(land, 4, 0), 4, 1)
+    fixed_hi = coast_fix.fix_coast(land_hi)
+    land_fixed = blur(fixed_hi.reshape(SH, 4, SW, 4).mean((1, 3)).astype(np.float32), 1)  # 1 px: combina
+    # com o blur(land, 2) do resto do mapa (a média do bloco 4x4 sozinha antialiasa só dentro do pixel nativo,
+    # sem suavizar entre pixels vizinhos; fica mais "duro" que o resto da costa sem isso)
+    yy, xx = np.ogrid[:SH, :SW]
+    dx = np.minimum(np.abs(xx - cx), SW - np.abs(xx - cx))  # distância em longitude, com a emenda
+    feather = 16  # px nativos de transição, para o patch não aparecer como um degrau
+    t = smooth(half + feather, half, np.maximum(np.abs(yy - cy), dx).astype(np.float32))
+    return base * (1 - t) + land_fixed * t
 
 
 # --- etapa 2: imagem final em 8K, por faixas -----------------------------------------------------------------------
