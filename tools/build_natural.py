@@ -270,7 +270,7 @@ def fields():
     k = np.minimum(1.0, 1.0 / np.maximum(shrub + grass + trees, 1e-6))
     shrub, grass, trees = shrub * k, grass * k, trees * k
 
-    bw = [blur(sum(is_color(biome, c) for c, g in BIOMES.items() if g == n), 1) for n in GROUPS]
+    bw = [blur(sum(is_color(biome, c) for c, g in BIOMES.items() if g == n), 3) for n in GROUPS]
 
     # Solo: textura (R areia, G silte, B argila), espessura e riqueza (relativas).
     tex = load("Soil Texture.png").astype(np.float32)
@@ -376,7 +376,7 @@ def render_band(F, ix, G, warp, y0, y1):
     n_mid, n_low = c["n_mid"], c["n_low"]
 
     # Biomas: os limites (borrados nas células) viram bordas irregulares; os pesos são renormalizados.
-    bw = {k: smooth(0.15, 0.85, c[k] + 0.30 * n_mid + 0.12 * n_fine) for k in GROUPS}
+    bw = {k: smooth(0.0, 1.0, c[k] + 0.20 * n_mid + 0.08 * n_fine) for k in GROUPS}
     tot = sum(bw.values())
     bw = {k: v / np.maximum(tot, 1e-6) for k, v in bw.items()}
 
