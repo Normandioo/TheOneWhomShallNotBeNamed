@@ -208,7 +208,7 @@ func _valleys(idx: PackedInt32Array, w: PackedFloat32Array) -> void:
 			if not recv.has(p):
 				continue
 			var d: float = drop[p]
-			var cut := minf(INCISION * gain * sqrt(area[p]) * d * w[i], d * 0.5)
+			var cut := minf(INCISION * gain * sqrt(maxf(area[p] - 1.0, 0.0)) * d * w[i], d * 0.5)
 			var floor_h := minf(_terrain.get_h(p), 1.0)  # terra continua terra
 			cuts[p] = minf(cut, maxf(_terrain.get_h(p) - floor_h, 0.0))
 		for p in cuts:

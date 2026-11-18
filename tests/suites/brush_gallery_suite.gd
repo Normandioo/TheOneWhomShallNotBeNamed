@@ -36,6 +36,13 @@ func run() -> void:
 	await save("9_galeria_6_depois_da_erosao")
 	for i in 5:
 		main.commands.undo()
+	# Vales: o mesmo maciço de cristas, entalhado pela água.
+	await _stroke(TerrainBrush.Op.MOUNTAINS, 600.0, 1.0, 300.0)
+	for i in 4:
+		await _stroke(TerrainBrush.Op.VALLEYS, 300.0, 0.5, 300.0)
+	await save("9_galeria_7_vales")
+	for i in 5:
+		main.commands.undo()
 	ok("galeria de pincéis salva")
 
 
