@@ -101,6 +101,12 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>      (com janela: tira c
 - **Elevar/Rebaixar/Nivelar** usam fBm (colinas, ~100 km) pela rugosidade; **Erosão** é térmica (conserva massa,
   ângulo de repouso 150 m entre pixels, 3 passadas por marca). Ruídos em `edit/terrain_noise.gd`.
   Estudo completo e limites no cofre: *Pincéis Procedurais de Terreno*.
+- **Vales** (erosão hidráulica): escoamento D8, captação acumulada de cima para baixo, entalhe ∝ raiz(captação − 1) ×
+  desnível (espigão não entalha), sedimento que desce o rio e deposita onde achata (poço retém 60%; ~74% do material
+  entalhado fica no disco, ~26% sai). Os pixels do tronco principal com captação ≥ 4% do disco viram **rio**,
+  guardado em `Terrain.rivers` (R8, desfaz junto com a altura) e desenhado em azul por cima de qualquer camada
+  (`river_paint` em relief.gdshaderinc). Limite: cada marca só vê a água do próprio disco, então os rios saem como
+  trechos curtos e desconectados; rio contínuo exige acumular o fluxo na pincelada inteira.
 - Uma marca de 200 km custa ~3 ms. A altitude inteira (32 MiB) volta para a GPU em ~5–9 ms, no máximo 10 vezes por
   segundo durante a pincelada e uma vez ao soltar.
 - O que muda com a edição: a camada Altitude, o relevo na luz de todas as camadas, a cor do mar no satélite

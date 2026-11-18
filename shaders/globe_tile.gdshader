@@ -19,6 +19,7 @@ void fragment() {
 	vec3 n = normalize(obj_pos);
 	vec2 guv = globe_uv(n);
 	ALBEDO = texture(tile, UV).rgb;
+	ALBEDO = river_paint(guv, ALBEDO);
 	ALBEDO = brush_preview(n, ALBEDO);
 	ROUGHNESS = 1.0;
 	NORMAL = relief_normal(n, guv, height(guv), NORMAL, VIEW_MATRIX * MODEL_MATRIX);

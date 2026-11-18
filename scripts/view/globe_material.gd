@@ -5,6 +5,7 @@ const GLOBE_SHADER = preload("res://shaders/globe.gdshader")
 const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 
 var material: ShaderMaterial
+var river_texture: ImageTexture
 var height_texture: ImageTexture  # também usada pelos blocos (TileLayer), para o mesmo relevo
 var layer_file := ""  # arquivo da camada carregada ("" = nenhuma)
 
@@ -12,6 +13,16 @@ var layer_file := ""  # arquivo da camada carregada ("" = nenhuma)
 func _init() -> void:
 	material = ShaderMaterial.new()
 	material.shader = GLOBE_SHADER
+
+
+func set_rivers(rivers: Image) -> void:
+	river_texture = ImageTexture.create_from_image(rivers)
+	material.set_shader_parameter("river_map", river_texture)
+
+
+## Reenvia os rios editados para a GPU (4 MiB).
+func refresh_rivers(rivers: Image) -> void:
+	river_texture.update(rivers)
 
 
 func set_height(height: Image) -> void:

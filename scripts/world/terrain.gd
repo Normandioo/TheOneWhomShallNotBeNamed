@@ -7,11 +7,14 @@ const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 var img: Image
 var size: Vector2i
 var dirty := false  # mudou desde a última vez que a textura do globo foi atualizada
+var rivers: Image   # rios criados pelo pincel Vales: 0 = nada, até 1 = rio grande (R8, mesma grade da altitude)
+var rivers_dirty := false
 
 
 func _init(height: Image) -> void:
 	img = height
 	size = height.get_size()
+	rivers = Image.create(size.x, size.y, false, Image.FORMAT_R8)
 
 
 func get_h(idx: int) -> float:
@@ -26,6 +29,22 @@ func set_h(idx: int, meters: float) -> void:
 func height_at(n: Vector3) -> float:
 	var p := EvronGeo.pixel(n, size)
 	return img.get_pixel(p.x, p.y).r
+
+
+func get_river(idx: int) -> float:
+	return rivers.get_pixel(idx % size.x, idx / size.x).r
+
+
+func set_river(idx: int, value: float) -> void:
+	rivers.set_pixel(idx % size.x, idx / size.x, Color(value, 0.0, 0.0))
+	rivers_dirty = true
+
+
+## Grava alturas e rios de uma vez (desfazer e refazer): índice do pixel -> valor.
+func apply(heights: Dictionary, river_values: Dictionary) -> void:
+	write(heights)
+	for idx in river_values:
+		set_river(idx, river_values[idx])
 
 
 ## Grava um conjunto de alturas (índice do pixel -> metros): usado para desfazer e refazer.

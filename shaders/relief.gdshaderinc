@@ -4,6 +4,7 @@
 const float RADIUS = 8282300.0; // metros (EvronGeo.RADIUS_KM)
 
 uniform sampler2D height_map : filter_linear, repeat_enable; // altitude em metros (calibrada)
+uniform sampler2D river_map : filter_linear, repeat_enable; // rios do pincel Vales (0..1), mesma grade da altitude
 uniform float relief = 6.0;      // exagero do relevo na iluminação
 
 float height(vec2 uv) {
@@ -29,4 +30,10 @@ vec3 relief_normal(vec3 n, vec2 uv, float h, vec3 fallback, mat4 view_model) {
 	vec3 north = cross(n, east);
 	vec3 pn = normalize(n - relief * (gx * east + gy * north));
 	return normalize((view_model * vec4(pn, 0.0)).xyz);
+}
+
+// Rios criados pelo pincel Vales, por cima de qualquer camada. A textura é linear: a linha de 1 pixel fica lisa.
+vec3 river_paint(vec2 uv, vec3 col) {
+	float r = textureLod(river_map, vec2(uv.x, clamp(uv.y, 0.0, 1.0)), 0.0).r;
+	return mix(col, pow(vec3(0.12, 0.38, 0.72), vec3(2.2)), smoothstep(0.12, 0.35, r));
 }

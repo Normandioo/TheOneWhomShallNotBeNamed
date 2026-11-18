@@ -23,7 +23,8 @@ enum Op { RAISE, LOWER, FLATTEN, SMOOTH, MOUNTAINS, ERODE, VALLEYS }
 const NAMES := ["Elevar", "Rebaixar", "Nivelar", "Suavizar", "Montanhas", "Erosão", "Vales"]
 const MOUNTAIN_CAP := 1.5  # montanhas: uma pincelada sobe no máximo intensidade × ganho × 1,5 em cada pixel (sem platôs)
 const INCISION := 0.02     # vales: fração do desnível entalhada por passada, por raiz da área de captação
-const CELL_M := 12700.0    # tamanho do pixel no equador, para as inclinações
+const RIVER_SHARE := 0.04   # vales: o pixel vira rio se recebe a água de 4% do disco (mínimo RIVER_MIN pixels)
+const RIVER_MIN := 12.0
 const SPACING := 0.25      # nova marca do pincel a cada 1/4 do raio percorrido
 const MOUNTAIN_GAIN := 6.0 # a intensidade (até 1000) vale ×6 em montanhas: picos de milhares de metros
 const TALUS_M := 150.0     # erosão: desnível entre pixels vizinhos (12,7 km) que ainda se sustenta
@@ -39,6 +40,7 @@ var _noise := TerrainNoise.new()
 var _terrain: Terrain
 var _stack: CommandStack
 var _before := {}       # índice do pixel -> altura antes da pincelada
+var _before_r := {}     # índice do pixel -> rio antes da pincelada
 var _target := 0.0      # nivelar: a altura do ponto onde a pincelada começou
 var _last := Vector3.ZERO
 var last_flow := {}     # vales: pixel -> área de captação da última marca (para os testes e para estudar)
@@ -52,6 +54,7 @@ func _init(terrain: Terrain, stack: CommandStack) -> void:
 func begin(n: Vector3) -> void:
 	active = true
 	_before = {}
+	_before_r = {}
 	_target = _terrain.height_at(n)
 	_noise.set_seed(seed_value if seed_value >= 0 else randi())
 	_dab(n)
@@ -66,15 +69,20 @@ func drag(n: Vector3) -> void:
 ## Termina a pincelada e a registra como comando. Retorna quantos pixels mudaram.
 func end() -> int:
 	active = false
-	if _before.is_empty():
+	if _before.is_empty() and _before_r.is_empty():
 		return 0
 	var before := _before
+	var before_r := _before_r
 	var after := {}
+	var after_r := {}
 	for idx in before:
 		after[idx] = _terrain.get_h(idx)
+	for idx in before_r:
+		after_r[idx] = _terrain.get_river(idx)
 	var t := _terrain
-	_stack.push("%s terreno (%d pontos)" % [NAMES[op], before.size()], t.write.bind(before), t.write.bind(after))
+	_stack.push("%s terreno (%d pontos)" % [NAMES[op], before.size()], t.apply.bind(before, before_r), t.apply.bind(after, after_r))
 	_before = {}
+	_before_r = {}
 	return before.size()
 
 
@@ -160,14 +168,20 @@ func _erode_pass(idx: PackedInt32Array, w: PackedFloat32Array) -> void:
 		_terrain.set_h(p, h + delta[p])
 
 
-## Erosão hidráulica: 1) cada pixel do disco escoa para o vizinho mais baixo (D8); 2) a área de captação soma de cima
-## para baixo (do mais alto ao mais baixo); 3) cada pixel que escoa é entalhado em proporção a raiz(área) × desnível.
-## 4 passadas por marca: o vale aprofunda e a captação se reorganiza.
+## Erosão hidráulica, em 4 passadas por marca:
+##  1) cada pixel do disco escoa para o vizinho mais baixo (D8);
+##  2) a área de captação soma de cima para baixo;
+##  3) cada pixel que escoa é entalhado em proporção a raiz(área − 1) × desnível (espigão não entalha, canal sim);
+##  4) o sedimento entalhado desce o rio e deposita onde o terreno achata (planícies aluviais); um poço retém 60% e o
+##     resto é levado embora (suspenso, rumo ao mar ou lago). Terra continua terra (piso de 1 m).
+## No fim, os pixels com água suficiente (tronco principal com captação ≥ RIVER_SHARE do disco) viram rio na camada de rios.
 func _valleys(idx: PackedInt32Array, w: PackedFloat32Array) -> void:
 	var gain := clampf(strength / 100.0, 0.1, 10.0)
 	var width := _terrain.size.x
+	var area := {}
+	var recv_last := {}
 	for pass_i in 4:
-		var recv := {}   # pixel -> vizinho para onde escoa (só se for mais baixo)
+		var recv := {}
 		var drop := {}
 		var order: Array = []
 		for i in idx.size():
@@ -194,7 +208,7 @@ func _valleys(idx: PackedInt32Array, w: PackedFloat32Array) -> void:
 				drop[p] = best_drop
 			order.append([h, i])
 		order.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])  # do mais alto ao mais baixo
-		var area := {}
+		area = {}
 		for it in order:
 			var p := idx[it[1]]
 			var a: float = area.get(p, 0.0) + 1.0
@@ -202,19 +216,44 @@ func _valleys(idx: PackedInt32Array, w: PackedFloat32Array) -> void:
 			if recv.has(p):
 				area[recv[p]] = area.get(recv[p], 0.0) + a
 		last_flow = area
-		var cuts := {}
-		for i in idx.size():
+		recv_last = recv
+		# Entalhe e sedimento, do alto para baixo, sobre as alturas de antes da passada.
+		var delta := {}
+		var sediment := {}
+		for it in order:
+			var i: int = it[1]
 			var p := idx[i]
-			if not recv.has(p):
-				continue
-			var d: float = drop[p]
-			var cut := minf(INCISION * gain * sqrt(maxf(area[p] - 1.0, 0.0)) * d * w[i], d * 0.5)
-			var floor_h := minf(_terrain.get_h(p), 1.0)  # terra continua terra
-			cuts[p] = minf(cut, maxf(_terrain.get_h(p) - floor_h, 0.0))
-		for p in cuts:
 			var h := _terrain.get_h(p)
-			_remember(p, h)
-			_terrain.set_h(p, h - cuts[p])
+			var cut := 0.0
+			if recv.has(p):
+				var d: float = drop[p]
+				cut = minf(INCISION * gain * sqrt(maxf(area[p] - 1.0, 0.0)) * d * w[i], d * 0.5)
+				cut = minf(cut, maxf(h - minf(h, 1.0), 0.0))  # terra continua terra
+			var load: float = sediment.get(p, 0.0) + cut
+			var flat := 0.6 if not recv.has(p) else clampf(1.0 - drop[p] / 60.0, 0.0, 1.0) * 0.6
+			var deposit := load * flat
+			delta[p] = deposit - cut
+			if recv.has(p):
+				sediment[recv[p]] = sediment.get(recv[p], 0.0) + load - deposit
+		for p in delta:
+			if absf(delta[p]) > 1e-6:
+				var h := _terrain.get_h(p)
+				_remember(p, h)
+				_terrain.set_h(p, h + delta[p])
+	# Rios: tronco principal onde passa água de sobra. Só conta o afluente de maior captação em cada confluência
+	# (senão vários afluentes quase iguais viram uma mancha larga), e só em terra.
+	var threshold := maxf(RIVER_SHARE * idx.size(), RIVER_MIN)
+	var biggest_in := {}
+	for p in recv_last:
+		biggest_in[recv_last[p]] = maxf(biggest_in.get(recv_last[p], 0.0), area.get(p, 1.0))
+	for i in idx.size():
+		var p := idx[i]
+		var a: float = area.get(p, 1.0)
+		var main_stem: bool = not recv_last.has(p) or area.get(p, 1.0) >= biggest_in.get(recv_last[p], 0.0)
+		if a >= threshold and main_stem and w[i] > 0.15 and _terrain.get_h(p) > 1.0:
+			if not _before_r.has(p):
+				_before_r[p] = _terrain.get_river(p)
+			_terrain.set_river(p, maxf(_terrain.get_river(p), minf(0.4 + sqrt(a) * 0.03, 1.0)))
 
 
 func _remember(p: int, h: float) -> void:

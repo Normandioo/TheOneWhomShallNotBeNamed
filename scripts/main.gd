@@ -50,6 +50,7 @@ func _ready() -> void:
 	terrain = Terrain.new(height_img)
 	brush = TerrainBrush.new(terrain, commands)
 	material.set_height(height_img)
+	material.set_rivers(terrain.rivers)
 	globe = GlobeView.new()
 	globe.setup(material.material)
 	add_child(globe)
@@ -80,6 +81,9 @@ func _process(delta: float) -> void:
 		material.refresh_height(height_img)
 		terrain.dirty = false
 		_since_upload = 0.0
+	if terrain.rivers_dirty and (not brush.active or _since_upload == 0.0):
+		material.refresh_rivers(terrain.rivers)
+		terrain.rivers_dirty = false
 
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -110,7 +114,7 @@ func _unhandled_input(e: InputEvent) -> void:
 func set_layer(index: int) -> void:
 	layer = index
 	material.show_layer(MapLayers.LAYERS[index])
-	globe.set_tiles(MapLayers.LAYERS[index].get("tiles", ""), material.height_texture)
+	globe.set_tiles(MapLayers.LAYERS[index].get("tiles", ""), material.height_texture, material.river_texture)
 	legend.show_layer(MapLayers.LAYERS[index])
 	_refresh_stale()
 	layer_panel.show_layer(index)

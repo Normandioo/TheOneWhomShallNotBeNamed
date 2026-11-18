@@ -271,7 +271,8 @@ func _roughness(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> b
 	return true
 
 
-## Vales: entalham mais onde passa mais água, nunca criam água nem poços, e desfazer é exato.
+## Vales: entalham mais onde passa mais água, depositam sedimento nas partes planas, criam rios só em terra, nunca criam
+## água e desfazer é exato (alturas e rios).
 func _valleys(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> bool:
 	var hill := EvronGeo.dir(33.0, -39.0)  # cordilheira
 	var idx: PackedInt32Array = terrain.disk(hill, 250.0)[0]
@@ -289,15 +290,16 @@ func _valleys(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> boo
 	var cut_low := 0.0
 	var n_low := 0
 	var water := 0
-	var total := 0.0
+	var removed := 0.0
+	var deposited := 0.0
 	for i in idx:
 		var cut: float = before[i] - terrain.get_h(i)
-		total += cut
+		if cut > 0.0:
+			removed += cut
+		else:
+			deposited -= cut
 		if before[i] > 1.0 and terrain.get_h(i) < 1.0:
 			water += 1
-		if cut < -0.001:
-			fail("vales não deveriam levantar terreno: pixel %d subiu %.1f m" % [i, -cut])
-			return false
 		var a: float = flow.get(i, 1.0)
 		if a >= 6.0:
 			cut_high += cut
@@ -305,23 +307,40 @@ func _valleys(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> boo
 		elif a <= 1.0:
 			cut_low += cut
 			n_low += 1
+	var river_px := 0
+	var river_on_water := 0
+	for i in idx:
+		if terrain.get_river(i) > 0.0:
+			river_px += 1
+			if terrain.get_h(i) <= 1.0:
+				river_on_water += 1
 	stack.undo()
+	var river_left := 0
 	for i in idx:
 		if terrain.get_h(i) != before[i]:
 			fail("desfazer os vales deveria devolver a altura exata")
 			return false
-	if water > 0:
-		fail("vales criaram %d pixels de água" % water)
+		if terrain.get_river(i) > 0.0:
+			river_left += 1
+	if river_left > 0:
+		fail("desfazer os vales deveria apagar os rios: sobraram %d pixels" % river_left)
 		return false
-	if total < 100.0 or n_high == 0 or n_low == 0:
-		fail("vales deveriam remover terreno: total %.0f m, %d pixels de canal, %d de espigão" % [total, n_high, n_low])
+	if water > 0 or river_on_water > 0:
+		fail("vales criaram %d pixels de água e %d de rio sobre água" % [water, river_on_water])
 		return false
-	var mean_high := cut_high / n_high
-	var mean_low := cut_low / n_low
-	if mean_high < mean_low * 3.0:
-		fail("o entalhe deveria ser bem maior nos canais (muita água) que nos espigões: %.1f m vs %.1f m" % [mean_high, mean_low])
+	if river_px < 5:
+		fail("vales deveriam criar rios onde a água se junta: só %d pixels" % river_px)
 		return false
-	ok("vales: canais entalhados %.1f m em média contra %.1f m nos espigões (%.0fx), nenhum pixel virou água, desfazer exato" % [mean_high, mean_low, mean_high / maxf(mean_low, 0.01)])
+	if removed < 100.0 or deposited < removed * 0.05 or deposited > removed * 0.85:
+		fail("vales deveriam depositar entre 5%% e 85%% do que entalham (o resto fica como vale): removido %.0f m, depositado %.0f m" % [removed, deposited])
+		return false
+	var mean_high := cut_high / maxi(n_high, 1)
+	var mean_low := cut_low / maxi(n_low, 1)
+	if mean_high < 8.0 or mean_high < mean_low * 3.0 + 5.0:
+		fail("os canais deveriam ficar >= 8 m mais fundos e bem mais que os espigões: %.1f m vs %.1f m" % [mean_high, mean_low])
+		return false
+	ok("vales: canais -%.1f m (espigões %.1f m), %.0f m removidos e %.0f m depositados (%.0f%%), %d pixels de rio, sem água, desfazer exato" % [
+		mean_high, mean_low, removed, deposited, 100.0 * deposited / removed, river_px])
 	return true
 
 

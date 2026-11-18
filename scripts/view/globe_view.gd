@@ -72,10 +72,10 @@ func update(delta: float) -> void:
 
 
 ## Mostra a pirâmide de blocos `tile_set` por cima do globo ("" = nenhuma).
-func set_tiles(tile_set: String, height_tex: Texture2D) -> void:
+func set_tiles(tile_set: String, height_tex: Texture2D, river_tex: Texture2D) -> void:
 	if tile_set == tiles.name_id:
 		return
-	var on := tile_set != "" and tiles.open(tile_set, RADIUS, height_tex)
+	var on := tile_set != "" and tiles.open(tile_set, RADIUS, height_tex, river_tex)
 	if not on:
 		tiles.close()
 	_globe.scale = Vector3.ONE * (UNDER_TILES_SCALE if on else 1.0)

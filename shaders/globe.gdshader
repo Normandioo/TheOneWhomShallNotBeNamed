@@ -60,6 +60,7 @@ void fragment() {
 		EMISSION = vec3(0.10, 0.22, 0.55) * pow(1.0 - clamp(dot(geo_normal, VIEW), 0.0, 1.0), 4.0);
 	}
 	ALBEDO = col;
+	ALBEDO = river_paint(uv, ALBEDO);
 	ALBEDO = brush_preview(n, ALBEDO);
 	ROUGHNESS = 1.0;
 	NORMAL = relief_normal(n, uv, h, NORMAL, VIEW_MATRIX * MODEL_MATRIX);
