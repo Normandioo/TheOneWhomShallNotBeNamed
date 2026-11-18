@@ -158,6 +158,16 @@ public partial class Territory : RefCounted
         return Apply(all, 0);
     }
 
+    /// Apaga o território de vários donos numa passada só (apagar um por um varreria o mapa inteiro para cada um). Edição ou null.
+    public TerritoryEdit? ClearOwners(int[] owners)
+    {
+        var set = new HashSet<int>(owners);
+        var all = new List<int>();
+        for (int i = 0; i < Size.X * Size.Y; i++)
+            if (set.Contains(Get(i))) all.Add(i);
+        return Apply(all, 0);
+    }
+
     private TerritoryEdit? Apply(List<int> pixels, int owner)
     {
         if (pixels.Count == 0) return null;

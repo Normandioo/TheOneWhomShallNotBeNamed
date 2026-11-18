@@ -693,6 +693,17 @@ if __name__ == "__main__":
     print("mundo", round(time.time() - t), "s;", len(d["seeds"]), "países;", len(d["s_lat"]), "povoados")
     if not os.path.exists(os.path.join(OUT, "mundo.png")):
         overview(d)
+    if sys.argv[1:] == ["paises"]:  # para tools/paises_ficticios.gd: os países do protótipo como cadastros do jogo
+        import json
+        rng = np.random.default_rng(99)
+        taken = set(d["names"].tolist())
+        rows = [dict(nome=str(d["names"][c]), oficial=str(d["formal"][c]), capital=make_name(rng, taken),
+                     lat=round(float(LAT[y]), 4), lon=round(float(LON[x]), 4), cor=PALETTE[d["color"][c] - 1][0])
+                for c, (y, x) in enumerate(d["seeds"], start=1)]
+        with open(os.path.join(OUT, "paises.json"), "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False, indent=0)
+        print(len(rows), "países em", os.path.join(OUT, "paises.json"))
+        sys.exit()
     for name in sys.argv[1:] or VIEWS:
         t = time.time()
         render(d, name, **VIEWS[name])

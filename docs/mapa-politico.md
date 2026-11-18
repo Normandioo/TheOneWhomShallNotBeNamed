@@ -9,6 +9,8 @@ povoados, capitais e nomes grandes ao longo do país, e a dica com o nome formal
 ```
 python tools/mapa_politico.py            todas as vistas (golfo, oeste, sul, leste, norte)
 python tools/mapa_politico.py oeste      uma vista
+python tools/mapa_politico.py paises     os 424 países como JSON (data/evron/politico/paises.json)
+godot --headless --path . -s tools/paises_ficticios.gd [-- remover]   põe (ou tira) esses países no banco do jogo, com a etiqueta "fictício"
 ```
 
 Saída em `data/evron/politico/` (fora do git, como os mapas): `<vista>.png` (1920×1440, 5.000 km de largura,
