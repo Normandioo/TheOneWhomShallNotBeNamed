@@ -23,7 +23,7 @@ enum Op { RAISE, LOWER, FLATTEN, SMOOTH, MOUNTAINS, ERODE, VALLEYS }
 const NAMES := ["Elevar", "Rebaixar", "Nivelar", "Suavizar", "Montanhas", "Erosão", "Vales"]
 const MOUNTAIN_CAP := 1.5  # montanhas: uma pincelada sobe no máximo intensidade × ganho × 1,5 em cada pixel (sem platôs)
 const INCISION := 0.02     # vales: fração do desnível entalhada por passada, por raiz da área de captação
-const RIVER_SHARE := 0.04   # vales: o pixel vira rio se recebe a água de 4% do disco (mínimo RIVER_MIN pixels)
+const RIVER_SHARE := 0.008  # vales: o pixel vira rio se recebe a água de 0,8% da região pintada (mínimo RIVER_MIN pixels)
 const RIVER_MIN := 12.0
 const SPACING := 0.25      # nova marca do pincel a cada 1/4 do raio percorrido
 const MOUNTAIN_GAIN := 6.0 # a intensidade (até 1000) vale ×6 em montanhas: picos de milhares de metros
@@ -41,6 +41,7 @@ var _terrain: Terrain
 var _stack: CommandStack
 var _before := {}       # índice do pixel -> altura antes da pincelada
 var _before_r := {}     # índice do pixel -> rio antes da pincelada
+var _stroke_w := {}     # vales: pixel -> maior peso do pincel na pincelada (a região onde o rio é calculado)
 var _target := 0.0      # nivelar: a altura do ponto onde a pincelada começou
 var _last := Vector3.ZERO
 var last_flow := {}     # vales: pixel -> área de captação da última marca (para os testes e para estudar)
@@ -55,6 +56,7 @@ func begin(n: Vector3) -> void:
 	active = true
 	_before = {}
 	_before_r = {}
+	_stroke_w = {}
 	_target = _terrain.height_at(n)
 	_noise.set_seed(seed_value if seed_value >= 0 else randi())
 	_dab(n)
@@ -69,6 +71,8 @@ func drag(n: Vector3) -> void:
 ## Termina a pincelada e a registra como comando. Retorna quantos pixels mudaram.
 func end() -> int:
 	active = false
+	if op == Op.VALLEYS:
+		_mark_rivers()
 	if _before.is_empty() and _before_r.is_empty():
 		return 0
 	var before := _before
@@ -174,12 +178,13 @@ func _erode_pass(idx: PackedInt32Array, w: PackedFloat32Array) -> void:
 ##  3) cada pixel que escoa é entalhado em proporção a raiz(área − 1) × desnível (espigão não entalha, canal sim);
 ##  4) o sedimento entalhado desce o rio e deposita onde o terreno achata (planícies aluviais); um poço retém 60% e o
 ##     resto é levado embora (suspenso, rumo ao mar ou lago). Terra continua terra (piso de 1 m).
-## No fim, os pixels com água suficiente (tronco principal com captação ≥ RIVER_SHARE do disco) viram rio na camada de rios.
+## Os rios são marcados ao soltar o mouse (_mark_rivers), sobre a região de toda a pincelada.
 func _valleys(idx: PackedInt32Array, w: PackedFloat32Array) -> void:
 	var gain := clampf(strength / 100.0, 0.1, 10.0)
 	var width := _terrain.size.x
+	for i in idx.size():
+		_stroke_w[idx[i]] = maxf(_stroke_w.get(idx[i], 0.0), w[i])
 	var area := {}
-	var recv_last := {}
 	for pass_i in 4:
 		var recv := {}
 		var drop := {}
@@ -216,7 +221,6 @@ func _valleys(idx: PackedInt32Array, w: PackedFloat32Array) -> void:
 			if recv.has(p):
 				area[recv[p]] = area.get(recv[p], 0.0) + a
 		last_flow = area
-		recv_last = recv
 		# Entalhe e sedimento, do alto para baixo, sobre as alturas de antes da passada.
 		var delta := {}
 		var sediment := {}
@@ -240,17 +244,60 @@ func _valleys(idx: PackedInt32Array, w: PackedFloat32Array) -> void:
 				var h := _terrain.get_h(p)
 				_remember(p, h)
 				_terrain.set_h(p, h + delta[p])
-	# Rios: tronco principal onde passa água de sobra. Só conta o afluente de maior captação em cada confluência
-	# (senão vários afluentes quase iguais viram uma mancha larga), e só em terra.
-	var threshold := maxf(RIVER_SHARE * idx.size(), RIVER_MIN)
+
+
+## Rios da pincelada inteira, marcados ao soltar o mouse (o terreno já está entalhado). A captação é acumulada na
+## REGIÃO de todas as marcas, não em cada disco: o rio é contínuo ao longo do traço. Só o tronco principal de cada
+## confluência conta (senão afluentes quase iguais viram uma mancha), e só em terra.
+func _mark_rivers() -> void:
+	var idx := PackedInt32Array(_stroke_w.keys())
+	if idx.is_empty():
+		return
+	var width := _terrain.size.x
+	var recv := {}
+	var order: Array = []
+	var smooth := {}  # altura suavizada (5x5): sem os degraus do Gleba, a água não fica presa em platôs
+	var hs := func(q: int) -> float:
+		if not smooth.has(q):
+			smooth[q] = _terrain.neighbor_mean(q, 2)
+		return smooth[q]
+	for p in idx:
+		var x: int = p % width
+		var y: int = p / width
+		var h: float = hs.call(p)
+		var best := -1
+		var best_drop := 0.0
+		for dy in [-1, 0, 1]:
+			var yy: int = y + dy
+			if yy < 0 or yy >= _terrain.size.y:
+				continue
+			for dx in [-1, 0, 1]:
+				if dx == 0 and dy == 0:
+					continue
+				var q := yy * width + posmod(x + dx, width)
+				var dd: float = (h - hs.call(q)) / (1.414 if dx != 0 and dy != 0 else 1.0)
+				if dd > best_drop:
+					best_drop = dd
+					best = q
+		if best >= 0:
+			recv[p] = best
+		order.append([h, p])
+	order.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])
+	var area := {}
+	for it in order:
+		var p: int = it[1]
+		var a: float = area.get(p, 0.0) + 1.0
+		area[p] = a
+		if recv.has(p):
+			area[recv[p]] = area.get(recv[p], 0.0) + a
 	var biggest_in := {}
-	for p in recv_last:
-		biggest_in[recv_last[p]] = maxf(biggest_in.get(recv_last[p], 0.0), area.get(p, 1.0))
-	for i in idx.size():
-		var p := idx[i]
+	for p in recv:
+		biggest_in[recv[p]] = maxf(biggest_in.get(recv[p], 0.0), area[p])
+	var threshold := maxf(RIVER_SHARE * idx.size(), RIVER_MIN)
+	for p in idx:
 		var a: float = area.get(p, 1.0)
-		var main_stem: bool = not recv_last.has(p) or area.get(p, 1.0) >= biggest_in.get(recv_last[p], 0.0)
-		if a >= threshold and main_stem and w[i] > 0.15 and _terrain.get_h(p) > 1.0:
+		var main_stem: bool = not recv.has(p) or a >= biggest_in.get(recv[p], 0.0)
+		if a >= threshold and main_stem and _stroke_w[p] > 0.15 and _terrain.get_h(p) > 1.0:
 			if not _before_r.has(p):
 				_before_r[p] = _terrain.get_river(p)
 			_terrain.set_river(p, maxf(_terrain.get_river(p), minf(0.4 + sqrt(a) * 0.03, 1.0)))

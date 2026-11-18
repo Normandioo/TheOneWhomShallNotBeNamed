@@ -90,17 +90,18 @@ func dir_of(idx: int) -> Vector3:
 	return EvronGeo.dir(90.0 - (y + 0.5) * 180.0 / size.y, ((x + 0.5) / size.x - 0.5) * 360.0)
 
 
-## Média das alturas em volta de um pixel (3x3, com a volta na longitude): para o pincel de suavizar.
-func neighbor_mean(idx: int) -> float:
+## Média das alturas num quadrado (2r+1)² em volta de um pixel, com a volta na longitude: para suavizar e para
+## rotear a água sobre um relevo sem os degraus do Gleba.
+func neighbor_mean(idx: int, r := 1) -> float:
 	var x := idx % size.x
 	var y := idx / size.x
 	var s := 0.0
 	var count := 0
-	for dy in [-1, 0, 1]:
+	for dy in range(-r, r + 1):
 		var yy: int = y + dy
 		if yy < 0 or yy >= size.y:
 			continue
-		for dx in [-1, 0, 1]:
+		for dx in range(-r, r + 1):
 			s += img.get_pixel(posmod(x + dx, size.x), yy).r
 			count += 1
 	return s / count

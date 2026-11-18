@@ -111,7 +111,9 @@ func run() -> void:
 		return
 	if not _valleys(terrain, stack, brush):
 		return
-	_cap(terrain, stack, brush)
+	if not _cap(terrain, stack, brush):
+		return
+	_long_river(terrain, stack, brush)
 
 
 ## Montanhas: mais rugoso que Elevar, mesma semente = mesmo relevo, e desfazer exato.
@@ -341,6 +343,68 @@ func _valleys(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> boo
 		return false
 	ok("vales: canais -%.1f m (espigões %.1f m), %.0f m removidos e %.0f m depositados (%.0f%%), %d pixels de rio, sem água, desfazer exato" % [
 		mean_high, mean_low, removed, deposited, 100.0 * deposited / removed, river_px])
+	return true
+
+
+## Rio contínuo: uma pincelada longa de Vales dá um rio conectado e comprido (não trechos de um disco só).
+func _long_river(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> bool:
+	var start := EvronGeo.dir(33.0, -45.0)  # cordilheira
+	brush.op = TerrainBrush.Op.VALLEYS
+	brush.radius_km = 200.0
+	brush.strength = 300.0
+	brush.begin(start)
+	for i in range(1, 25):  # 25 marcas, ~1.250 km de traço
+		brush.drag(EvronGeo.dir(33.0, -45.0 + i * 0.35))
+	brush.end()
+	# Maior componente conectada (8 vizinhos) dos pixels de rio, perto do traço.
+	var pts := {}
+	var width := terrain.size.x
+	for i in terrain.disk(EvronGeo.dir(33.0, -41.0), 900.0)[0]:
+		if terrain.get_river(i) > 0.0:
+			pts[i] = true
+	var seen := {}
+	var best := 0
+	var best_span := 0
+	var best_rows := 0
+	for p in pts:
+		if seen.has(p):
+			continue
+		var stack_px := [p]
+		seen[p] = true
+		var size := 0
+		var xmin := 1 << 30
+		var xmax := -(1 << 30)
+		var ymin := 1 << 30
+		var ymax := -(1 << 30)
+		while not stack_px.is_empty():
+			var c: int = stack_px.pop_back()
+			size += 1
+			xmin = mini(xmin, c % width)
+			xmax = maxi(xmax, c % width)
+			ymin = mini(ymin, c / width)
+			ymax = maxi(ymax, c / width)
+			for dy in [-1, 0, 1]:
+				for dx in [-1, 0, 1]:
+					var q: int = (c / width + dy) * width + posmod(c % width + dx, width)
+					if pts.has(q) and not seen.has(q):
+						seen[q] = true
+						stack_px.append(q)
+		if size > best:
+			best = size
+			best_span = xmax - xmin
+			best_rows = ymax - ymin
+	stack.undo()
+	var left := 0
+	for i in terrain.disk(EvronGeo.dir(33.0, -41.0), 900.0)[0]:
+		if terrain.get_river(i) > 0.0:
+			left += 1
+	if left > 0:
+		fail("desfazer deveria apagar o rio inteiro: sobraram %d pixels" % left)
+		return false
+	if best < 25:
+		fail("a pincelada longa deveria dar um rio conectado de >= 25 pixels, o maior tem %d" % best)
+		return false
+	ok("rio contínuo: maior trecho conectado de %d pixels (~%.0f km de extensão), desfeito por inteiro" % [best, maxi(best_span, best_rows) * 12.7])
 	return true
 
 
