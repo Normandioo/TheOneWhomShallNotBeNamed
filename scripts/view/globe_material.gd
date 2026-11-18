@@ -19,12 +19,6 @@ func set_height(height: Image) -> void:
 	material.set_shader_parameter("height_map", height_texture)
 
 
-## Reenvia a altitude editada para a GPU (a imagem inteira: 32 MiB). Os blocos usam a mesma textura.
-## shortcut: sem atualização parcial de textura no Godot; se ficar lento, dividir a altitude em blocos editáveis.
-func refresh_height(height: Image) -> void:
-	height_texture.update(height)
-
-
 # = uniform `mode` do globe.gdshader; "tiles" mostra a imagem de base enquanto os blocos (TileLayer) não cobrem
 const MODES := {"image": 0, "altitude": 1, "natural": 2, "tiles": 0}
 
