@@ -9,6 +9,7 @@ const HEADLESS_SUITES := [
 ]
 const SCENE_SUITES := [
 	"res://tests/suites/globe_suite.gd",
+	"res://tests/suites/tiles_suite.gd",
 ]
 
 

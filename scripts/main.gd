@@ -60,6 +60,7 @@ func _unhandled_input(e: InputEvent) -> void:
 func set_layer(index: int) -> void:
 	layer = index
 	material.show_layer(MapLayers.LAYERS[index])
+	globe.set_tiles(MapLayers.LAYERS[index].get("tiles", ""), material.height_texture)
 	legend.show_layer(MapLayers.LAYERS[index])
 	layer_panel.show_layer(index)
 

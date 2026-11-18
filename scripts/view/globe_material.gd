@@ -5,6 +5,7 @@ const GLOBE_SHADER = preload("res://shaders/globe.gdshader")
 const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 
 var material: ShaderMaterial
+var height_texture: ImageTexture  # também usada pelos blocos (TileLayer), para o mesmo relevo
 var layer_file := ""  # arquivo da camada carregada ("" = nenhuma)
 
 
@@ -14,12 +15,17 @@ func _init() -> void:
 
 
 func set_height(height: Image) -> void:
-	material.set_shader_parameter("height_map", ImageTexture.create_from_image(height))
+	height_texture = ImageTexture.create_from_image(height)
+	material.set_shader_parameter("height_map", height_texture)
+
+
+# = uniform `mode` do globe.gdshader; "tiles" mostra a imagem de base enquanto os blocos (TileLayer) não cobrem
+const MODES := {"image": 0, "altitude": 1, "natural": 2, "tiles": 0}
 
 
 ## Mostra a camada `layer` (uma entrada de MapLayers.LAYERS). A altitude calibrada não precisa de imagem.
 func show_layer(layer: Dictionary) -> void:
-	material.set_shader_parameter("mode", 1 if layer["kind"] == "altitude" else 0)
+	material.set_shader_parameter("mode", MODES[layer["kind"]])
 	material.set_shader_parameter("nearest", layer.get("nearest", false))
 	var file: String = layer.get("file", "")
 	if file == "" or file == layer_file:

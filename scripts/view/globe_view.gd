@@ -5,14 +5,20 @@ extends Node
 
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const GlobeCamera = preload("res://scripts/view/globe_camera.gd")
+const TileLayer = preload("res://scripts/view/tile_layer.gd")
 
 signal surface_hovered(direction: Vector3)
 signal surface_clicked(direction: Vector3)
 
 const UNIT_KM := 1000.0  # 1 unidade da cena = 1000 km
 const RADIUS := EvronGeo.RADIUS_KM / UNIT_KM
+# Com blocos na tela, o globo de baixo desce ~10 km: as cordas dos blocos grandes afundam e ele apareceria por cima.
+# Ele continua lá para tapar qualquer fresta entre blocos de níveis diferentes (com a mesma imagem em 4K).
+const UNDER_TILES_SCALE := 0.9988
 
 var camera: GlobeCamera
+var tiles: TileLayer
+var _globe: MeshInstance3D
 var _material: ShaderMaterial
 
 
@@ -46,10 +52,12 @@ func _ready() -> void:
 	sphere.height = RADIUS * 2.0
 	sphere.radial_segments = 256
 	sphere.rings = 128
-	var globe := MeshInstance3D.new()
-	globe.mesh = sphere
-	globe.material_override = _material
-	viewport.add_child(globe)
+	_globe = MeshInstance3D.new()
+	_globe.mesh = sphere
+	_globe.material_override = _material
+	viewport.add_child(_globe)
+	tiles = TileLayer.new()
+	viewport.add_child(tiles)
 
 	camera = GlobeCamera.new()
 	camera.radius = RADIUS
@@ -60,6 +68,17 @@ func _ready() -> void:
 
 func update(delta: float) -> void:
 	camera.advance(delta)
+	tiles.update(camera.cam)
+
+
+## Mostra a pirâmide de blocos `tile_set` por cima do globo ("" = nenhuma).
+func set_tiles(tile_set: String, height_tex: Texture2D) -> void:
+	if tile_set == tiles.name_id:
+		return
+	var on := tile_set != "" and tiles.open(tile_set, RADIUS, height_tex)
+	if not on:
+		tiles.close()
+	_globe.scale = Vector3.ONE * (UNDER_TILES_SCALE if on else 1.0)
 
 
 func handle_input(e: InputEvent) -> void:

@@ -1,5 +1,6 @@
 ## As camadas do mapa: nome no menu, arquivo em data/evron/ e legenda. A ordem é a do menu.
-## "kind": "image" mostra o PNG do arquivo; "altitude" pinta a altitude calibrada no shader (globe.gdshader).
+## "kind": "image" mostra o PNG do arquivo; "altitude" pinta a altitude calibrada no shader (globe.gdshader);
+## "natural" usa natural.png (terra e gelo, de tools/build_natural.py) e pinta a água pela profundidade.
 ## "nearest": cores que são categorias ou identificadores (sem misturar pixels vizinhos).
 ## Legenda: "items" = cores soltas; "gradient" = [offsets, cores] com 3 rótulos (esquerda, centro, direita).
 ## Os valores vêm da calibração (docs/calibracao): a confiança de cada uma está lá e no texto da legenda.
@@ -20,11 +21,18 @@ const T_REL := "Só a ordem dos valores é conhecida (0 a 1); a unidade ainda n�
 const T_IDS := "Cada cor é uma entidade diferente (identificador), não um valor."
 
 static var LAYERS := [  # static var (não const): Color8 não é aceito em expressão constante
-	{"group": "Visão geral", "menu": "Satélite", "file": "Satelite.png", "kind": "image", "title": "Cor natural",
-		"text": "Aparência aproximada do planeta, gerada pelo Gleba. Não representa uma variável medida."},
+	{"group": "Visão geral", "menu": "Satélite (Gleba)", "file": "Satelite.png", "kind": "image", "title": "Satélite do Gleba",
+		"text": "Imagem de cor natural exportada pelo Gleba, como veio."},
+	{"group": "Visão geral", "menu": "Satélite experimental", "file": "natural.png", "kind": "natural", "title": "Cor natural (experimental)",
+		"text": "Montada a partir dos dados: vegetação, biomas, chuva, temperatura e declividade na terra; rios pelo fluxo de água; o mar pela profundidade; gelo pelo clima. Ilustração, não uma variável medida.",
+		"items": [[Color(0.11, 0.31, 0.43), "Mar raso (plataforma)"], [Color(0.03, 0.09, 0.24), "Mar profundo"],
+		[Color(0.10, 0.24, 0.33), "Rio e lago"],
+		[Color(0.84, 0.72, 0.52), "Deserto"], [Color(0.10, 0.26, 0.08), "Floresta densa"], [Color(0.93, 0.95, 0.98), "Gelo"]]},
 	{"group": "Relevo", "menu": "Altitude (calibrada)", "kind": "altitude", "title": "Altitude",
 		"text": "Altitude de Evron em metros, da calibração do projeto. O mar ocupa a metade esquerda da escala.",
 		"gradient": [ALTITUDE_OFFSETS, ALTITUDE_COLORS], "labels": ["−13.500 m", "0 m", "+9.103 m"]},
+	{"group": "Relevo", "menu": "Relevo 16K (em blocos)", "file": "Elevação.png", "kind": "tiles", "tiles": "relevo",
+		"title": "Relevo em alta resolução", "text": "Relevo colorido do Gleba em 16384 × 8192 (≈ 3,2 km por pixel no equador), carregado em blocos conforme o zoom: só o que está na tela fica na memória."},
 	{"group": "Relevo", "menu": "Elevação (cores do Gleba)", "file": "Elevação.png", "kind": "image", "title": "Elevação do Gleba",
 		"text": "Paleta hipsométrica original do Gleba, inclui gelo. Para valores, use Altitude (calibrada)."},
 	{"group": "Relevo", "menu": "Elevação sem gelo", "file": "Elevation no Ice Age.png", "kind": "image", "title": "Elevação sem gelo",

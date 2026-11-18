@@ -1,0 +1,32 @@
+// Relevo na iluminação, comum ao globo e aos blocos: a altitude calibrada entorta a normal.
+// Convenção de EvronGeo: dir = (cos lat · sin lon, sin lat, cos lat · cos lon); u = lon/360 + 0,5; v = 0,5 - lat/180.
+
+const float RADIUS = 8282300.0; // metros (EvronGeo.RADIUS_KM)
+
+uniform sampler2D height_map : filter_linear, repeat_enable; // altitude em metros (calibrada)
+uniform float relief = 6.0;      // exagero do relevo na iluminação
+
+float height(vec2 uv) {
+	return textureLod(height_map, vec2(uv.x, clamp(uv.y, 0.0, 1.0)), 0.0).r;
+}
+
+vec2 globe_uv(vec3 n) {
+	return vec2(atan(n.x, n.z) / TAU + 0.5, clamp(0.5 - asin(clamp(n.y, -1.0, 1.0)) / PI, 0.0, 1.0));
+}
+
+// Normal do terreno em `n` (direção no planeta), já no espaço da vista. Só em terra; o fundo do mar fica liso.
+vec3 relief_normal(vec3 n, vec2 uv, float h, vec3 fallback, mat4 view_model) {
+	if (h <= 0.0) {
+		return fallback;
+	}
+	float lat = asin(clamp(n.y, -1.0, 1.0));
+	vec2 texel = 1.0 / vec2(textureSize(height_map, 0));
+	float coslat = max(cos(lat), 0.05);
+	float gx = (height(uv + vec2(texel.x, 0.0)) - height(uv - vec2(texel.x, 0.0))) / (2.0 * TAU * texel.x * coslat * RADIUS);
+	float gy = (height(uv - vec2(0.0, texel.y)) - height(uv + vec2(0.0, texel.y))) / (2.0 * PI * texel.y * RADIUS);
+	vec3 c = cross(vec3(0.0, 1.0, 0.0), n);
+	vec3 east = length(c) > 0.0001 ? normalize(c) : vec3(1.0, 0.0, 0.0);
+	vec3 north = cross(n, east);
+	vec3 pn = normalize(n - relief * (gx * east + gy * north));
+	return normalize((view_model * vec4(pn, 0.0)).xyz);
+}

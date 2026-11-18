@@ -3,8 +3,10 @@
 Saída em data/evron/ (fora do git; o zip original é a fonte e não é alterado):
   - os PNGs da raiz do zip, como estão (camadas de exibição);
   - height_4096x2048.f32 = float32 little-endian (Image.FORMAT_RF do Godot), altitude em metros,
-    convertida de "Elevation GrayScale.png" pela calibração de docs/calibracao/calibracao_evron.json.
-Os .xcf e a pasta resized/ ficam de fora (decisão do autor; o relevo de 16K entra depois, em blocos).
+    convertida de "Elevation GrayScale.png" pela calibração de docs/calibracao/calibracao_evron.json;
+  - natural.png = cor natural da terra e do gelo (tools/build_natural.py);
+  - tiles/relevo/ = o relevo de 16K (resized/relevo.png) em pirâmide de blocos (tools/build_tiles.py).
+Os .xcf ficam de fora (decisão do autor).
 
 Requer Pillow e numpy:  python -m pip install pillow numpy
 Rodar a partir da raiz do projeto:  python tools/import_maps.py D:/downloads/mapas.zip
@@ -15,6 +17,9 @@ import zipfile
 
 import numpy as np
 from PIL import Image
+
+import build_natural
+import build_tiles
 
 OUT = "data/evron"
 SEA_PIXEL = 32767          # nível do mar (medido: nenhum pixel de terra abaixo disto)
@@ -52,6 +57,9 @@ def main(zip_path: str) -> None:
     print(f"altitude: min {h.min():.1f} m, max {h.max():.1f} m, terra abaixo de 0 m: {(h[land] < 0).sum()} px")
     assert abs(h.min() - BOTTOM_M) < 0.5 and abs(h.max() - TOP_M) < 0.5, "extremos fora da calibração"
     assert (h[land] < 0).sum() == 0, "terra abaixo do nível do mar: calibração errada"
+
+    build_natural.build()  # cor natural (usa a altitude recém-gravada)
+    build_tiles.build_from_zip(zip_path)  # relevo de 16K em blocos
 
 
 if __name__ == "__main__":

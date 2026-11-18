@@ -16,13 +16,18 @@ scripts/
     globe_material.gd  o material (globe.gdshader); único lugar que escreve nos uniforms; guarda só a camada da tela
     globe_camera.gd    gira em volta do globo e dá zoom logarítmico, da órbita a ~17 km do chão; a luz vai junto
     globe_view.gd      SubViewport com a esfera e a câmera; converte a tela em ponto da superfície (hover e clique)
+    tile_layer.gd      camada em blocos: escolhe os blocos da pirâmide pelo zoom, carrega em threads, cache limitado
   ui/              painéis: mostram valores e avisam por sinais.
     map_layers.gd    o catálogo das camadas: arquivo, grupo, legenda e o texto com a confiança da calibração
     layer_panel.gd   escolha da camada e leitura do cursor (lat/lon, altitude, terra/mar)
     legend_panel.gd, ui_kit.gd
 scenes/main.tscn   Main e o Hud (os painéis); a vista 3D é criada em código pelo GlobeView
 shaders/globe.gdshader  camada de imagem ou altitude calibrada, com o relevo na iluminação
+shaders/globe_tile.gdshader  um bloco da pirâmide; relief.gdshaderinc tem o relevo comum aos dois
+tools/build_tiles.py    imagem equiretangular grande -> pirâmide de blocos de 512 px (data/evron/tiles/<nome>/)
 tools/import_maps.py    mapas.zip -> data/evron/ (PNGs + altitude em metros); roda uma vez
+tools/build_natural.py  cor natural da terra e do gelo (natural.png) a partir de vegetação, biomas, clima e declividade;
+                        o mar não é pintado ali: o shader o pinta pela profundidade ao vivo
 tests/             shot.gd (executor) + suites/ (uma por assunto)
 docs/calibracao/   calibração dos mapas do Gleba (JSON, PDF e os scripts que a reproduzem)
 ```
@@ -60,9 +65,20 @@ godot --headless --path . -s tests/run_suite.gd -- tests/suites/geo_suite.gd
 godot --path . -s tests/shot.gd -- <pasta_das_capturas>      (com janela: tira capturas)
 ```
 
+## Blocos (pirâmide de níveis)
+
+- Nível z: 2^(z+1) × 2^z blocos de 512 px; o relevo de 16K tem os níveis 0 a 4 (682 blocos, 19 MB em JPEG).
+- A cada quadro, uma árvore de quatro filhos a partir dos 2 blocos do nível 0 escolhe, por região visível, o nível
+  em que 1 texel ≈ 1 pixel da tela. Blocos atrás do horizonte saem. Um bloco só é trocado pelos filhos quando os
+  4 já chegaram: nunca abre buraco. O globo de 4K fica ~10 km abaixo, tapando frestas entre níveis.
+- Carga em threads (`WorkerThreadPool`), no máximo 4 texturas criadas por quadro, cache de 160 blocos (~213 MiB de
+  vídeo), o nível 0 nunca sai. Medido no autoteste: o nível 4 chega em ~150 ms; processo com ~90 MiB de RAM.
+- O "16K" do Gleba é o mapa de 4K ampliado 4× (sem detalhe novo). A pirâmide é a estrutura que vai receber o
+  detalhe de edição, dados novos ou geração procedural.
+
 ## Limites conhecidos (próximas etapas da E0)
 
-- O globo usa os mapas de 4096 px (12,7 km por pixel no equador): de perto fica borrado. O relevo de 16K e os
-  blocos (pirâmide de níveis) vêm a seguir.
+- O globo usa os mapas de 4096 px (12,7 km por pixel no equador): de perto fica borrado; os blocos existem, mas o
+  dado de 16K disponível não tem mais detalhe que o de 4K.
 - Ainda não há edição, desfazer, banco (SQLite), histórico nem calendário.
 - As camadas são lidas de `data/evron/`, que não entra no export do Godot.

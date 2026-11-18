@@ -12,6 +12,8 @@ func run() -> void:
 	var cam = main.globe.camera
 	cam.look_at_dir(EvronGeo.dir(20.0, 0.0), 3.0)
 	await save("1_satelite")
+	cam.look_at_dir(EvronGeo.dir(-24.0, -118.0), 1.35)  # rio grande atravessando um deserto
+	await save("1_satelite_rio")
 
 	# Trocar de camada muda o material e a legenda.
 	for want in ["Altitude (calibrada)", "Temperatura — janeiro", "Biomas"]:
