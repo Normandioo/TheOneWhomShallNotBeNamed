@@ -74,6 +74,7 @@ public partial class Registry : RefCounted
         create index relation_dst on relation(dst, type);
         """,
         FieldsMigration,  // RegistrySheet.cs
+        CalendarsMigration,  // RegistryCalendar.cs
     };
 
     WorldDb _db = new();

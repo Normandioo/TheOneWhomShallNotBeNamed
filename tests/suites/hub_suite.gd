@@ -5,6 +5,8 @@ extends "res://tests/test_suite.gd"
 
 const SearchPanel = preload("res://scripts/ui/search_panel.gd")
 const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
+const CalendarPanel = preload("res://scripts/ui/calendar_panel.gd")
+const Calendar = preload("res://scripts/world/calendar.gd")
 const DomainHub = preload("res://scripts/world/domain_hub.gd")
 
 var hub: DomainHub
@@ -33,8 +35,10 @@ func run() -> void:
 		sheet = SheetPanel.new()
 		host.add_child(search)
 		host.add_child(sheet)
+		var cal_panel := CalendarPanel.new()
+		host.add_child(cal_panel)
 		hub = DomainHub.new()
-		hub.setup(":memory:", search, sheet)
+		hub.setup(":memory:", search, sheet, cal_panel)
 	await frames(2)
 	var reg = hub.registry
 
@@ -190,12 +194,102 @@ func run() -> void:
 		return fail("filtro de tipo na busca")
 	ok("sociedade (país+cultura+etnia) e busca com filtro de tipo")
 
+	# Calendários: criar pelo painel, usar na ficha, e a data local acompanha a data mostrada.
+	var cp = hub.calendars
+	search.calendars_requested.emit()
+	if not cp.visible or cp._list.item_count != 1:
+		return fail("o painel de calendários deveria abrir, ainda sem calendários")
+	cp._name.text = "Calendário de Aren"
+	cp._era.text = "Era de Aren"
+	cp._abbr.text = "EA"
+	cp._year.value = 100
+	cp._month.select(2)  # março
+	cp._day.value = 15
+	cp._first.value = 1
+	cp._hour.value = 6
+	cp._months.text = "Gelo
+Neve
+Brota
+Chuva
+Flor
+Sol
+Calor
+Seca
+Colheita
+Névoa
+Geada
+Longa noite"
+	cp._on_create()
+	var cals: Array = reg.Calendars()
+	if cals.size() != 1 or cp._message.text != "Calendário criado." or cp._list.item_count != 1:
+		return fail("criar calendário pelo painel: %s / %s" % [cals, cp._message.text])
+	var cal_id: int = cals[0].id
+	var marco := Calendar.to_seconds(100, 3, 15) + 6 * Calendar.HOUR  # a meia-noite local (o dia vira às 6h)
+	var def: Dictionary = reg.CalendarDef(cal_id)
+	if def.eras[0].start != marco or def.day_offset != 6 * Calendar.HOUR or def.month_names[2] != "Brota":
+		return fail("a definição criada: %s" % [def])
+	cp._months.text = "Gelo
+Neve"  # só 2 nomes
+	cp._on_create()
+	cp._name.text = "Outro"
+	cp._on_create()
+	cp._month.select(1)  # fevereiro
+	cp._day.value = 30
+	cp._months.text = ""
+	cp._on_create()
+	if reg.Calendars().size() != 1:
+		return fail("um calendário inválido foi criado pelo painel (%d)" % reg.Calendars().size())
+	ok("painel de calendários: cria com era, virada às 6h e nomes de mês; recusa 2 nomes de mês e 30 de fevereiro")
+
+	hub.open(pais)
+	if sheet._calendars.choices.size() != 1 or sheet._calendars.uses.size() != 0:
+		return fail("a ficha deveria oferecer o calendário novo")
+	sheet.calendar_use_added.emit(cal_id, "civil")
+	var uso: Dictionary = reg.CalendarsOf(pais, hub.shown_t)[0]
+	if uso.calendar_id != cal_id or uso.purpose != "civil" or not sheet._date_labels.has(int(uso.use_id)):
+		return fail("usar o calendário pela ficha")
+	hub.set_time(marco)
+	var local_text: String = sheet._date_labels[int(uso.use_id)].text
+	if local_text != "15 de Brota de 1 EA · 00:00" or sheet._universal_label.text != "Data universal: 15 de março de 100 · 06:00":
+		return fail("data universal e local lado a lado: '%s' | '%s'" % [sheet._universal_label.text, local_text])
+	hub.set_time(marco + 3 * Calendar.YEAR - 1)  # 1 s antes de completar 3 anos do marco: 14 de Brota (23:59) do ano 4 EA
+	if not sheet._date_labels[int(uso.use_id)].text.begins_with("14 de Brota de 4 EA"):
+		return fail("a data local deveria andar com o relógio: %s" % sheet._date_labels[int(uso.use_id)].text)
+	if not hub._pending:
+		return fail("mudar o tempo deveria marcar a ficha para ser relida")
+	hub._last_rebuild_ms -= 1000
+	hub.tick()
+	if hub._pending:
+		return fail("o tick deveria reler a ficha depois do intervalo")
+	ok("ficha: usar um calendário, data universal e local lado a lado, segue o relógio e a ficha é relida pelo tick")
+
+	var gen: int = reg.UseCalendar(pais, cal_id, "ritual", 0)
+	hub.open(pais)
+	sheet.calendar_use_removed.emit(gen)
+	if reg.CalendarsOf(pais, hub.shown_t).size() != 1:
+		return fail("apagar um uso pela ficha")
+	if main != null:  # com a cena: o hub segue o relógio de verdade
+		var t_consulta: int = Calendar.to_seconds(50, 6, 1)
+		main.clock.enter_view(t_consulta)
+		if hub.shown_t != t_consulta:
+			return fail("o hub deveria mostrar a data de consulta do relógio: %d" % hub.shown_t)
+		main.clock.exit_view()
+		if hub.shown_t != main.clock.now:
+			return fail("ao voltar ao presente o hub deveria mostrar o presente")
+		ok("o hub segue o relógio do mundo (consulta e presente)")
+
 	if DisplayServer.get_name() != "headless":
 		search._filter.select(0)
 		search._query.text = ""
 		search._query.text_changed.emit("")
+		cp.visible = false
 		hub.open(pais)
+		await frames(2)
+		sheet._scroll.scroll_vertical = 100000
 		await save("fichas_dominios")
+		search.calendars_requested.emit()
+		await save("calendarios_dominios")
+		cp.visible = false
 	if main == null:
 		hub.close()
 		host.queue_free()

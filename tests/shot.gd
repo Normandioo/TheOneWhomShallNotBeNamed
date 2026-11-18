@@ -12,6 +12,8 @@ const HEADLESS_SUITES := [
 	"res://tests/suites/registry_suite.gd",
 	"res://tests/suites/sheet_suite.gd",
 	"res://tests/suites/hub_suite.gd",
+	"res://tests/suites/local_calendar_suite.gd",
+	"res://tests/suites/calendar_use_suite.gd",
 	"res://tests/suites/calendar_suite.gd",
 ]
 const SCENE_SUITES := [
@@ -20,6 +22,7 @@ const SCENE_SUITES := [
 	"res://tests/suites/brush_suite.gd",
 	"res://tests/suites/brush_gallery_suite.gd",
 	"res://tests/suites/time_suite.gd",
+	"res://tests/suites/hub_suite.gd",  # com a cena: o hub segue o relógio
 ]
 
 

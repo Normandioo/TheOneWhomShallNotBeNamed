@@ -27,6 +27,7 @@ const LayerPanel = preload("res://scripts/ui/layer_panel.gd")
 const LegendPanel = preload("res://scripts/ui/legend_panel.gd")
 const SearchPanel = preload("res://scripts/ui/search_panel.gd")
 const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
+const CalendarPanel = preload("res://scripts/ui/calendar_panel.gd")
 const DomainHub = preload("res://scripts/world/domain_hub.gd")
 const ToolPanel = preload("res://scripts/ui/tool_panel.gd")
 const TimeBar = preload("res://scripts/ui/time_bar.gd")
@@ -84,8 +85,10 @@ func _ready() -> void:
 	var sheet := SheetPanel.new()
 	hud.add_child(search)
 	hud.add_child(sheet)
+	var calendar_panel := CalendarPanel.new()
+	hud.add_child(calendar_panel)  # por último: abre por cima dos outros painéis
 	domains = DomainHub.new()
-	domains.setup(domains_db, search, sheet)
+	domains.setup(domains_db, search, sheet, calendar_panel)
 	if save_path != "":
 		WorldStore.load_into(clock, save_path)  # sem salvamento válido, abre o cenário técnico, pausado
 	demo.attach(clock)
@@ -131,6 +134,7 @@ func _exit_tree() -> void:
 
 func _process(delta: float) -> void:
 	clock.tick(delta)
+	domains.tick()
 	globe.update(delta)
 	layer_panel.show_camera_altitude(globe.camera_altitude_km())
 	_since_upload += delta
@@ -229,6 +233,7 @@ func _use_model(model_name: String, version: int) -> void:
 
 
 func _on_clock_changed() -> void:
+	domains.set_time(clock.shown())
 	material.set_season(SeasonalTemperature.july_weight(clock.shown()))
 	time_bar.show_clock(clock)
 	if selected_dir != Vector3.ZERO:  # o ponto fixado mostra os dados da data exibida

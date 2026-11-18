@@ -20,7 +20,9 @@ scripts/
                      entrega as imagens para a GPU copiando só as linhas mexidas
     Registry.cs      (C#) os seis cadastros de domínio: entidades, nomes com papel e validade, vínculos tipados e datados
     RegistrySheet.cs (C#, parte do Registry) a ficha: campos como dados, valores, etiquetas, busca, duplicar, excluir, sociedade
-    domain_hub.gd    liga os painéis de busca e de ficha ao Registry (sinal do painel -> chamada ao núcleo -> resposta ao painel)
+    RegistryCalendar.cs (C#, parte do Registry) calendários locais, eras e o uso por entidade, com validade
+    local_calendar.gd conversão universal <-> calendário local (funções sobre uma definição; usa o calendar.gd)
+    domain_hub.gd    liga os painéis de busca, ficha e calendários ao Registry; segue o relógio (set_time/tick)
     calendar.gd      o calendário universal: só conversões (365 dias, sem bissextos); tempo = segundos int64 desde a época
     world_clock.gd   o relógio oficial: presente, consulta, pausa, velocidade, eventos e o contrato dos módulos
     world_store.gd   salva e lê o relógio em JSON (user://evron_world.json), com .bak e troca atômica
@@ -41,7 +43,8 @@ scripts/
     layer_panel.gd   escolha da camada e leitura do cursor (lat/lon, altitude, terra/mar)
     tool_panel.gd    barra de ferramentas: navegar ou pincel, raio, intensidade, desfazer e refazer
     search_panel.gd  busca nos cadastros (nome, filtro de tipo) e o menu "Novo" (seis tipos e a sociedade)
-    sheet_panel.gd   a ficha: identidade, resumo, etiquetas, nomes, conteúdo gerado dos campos, relações, duplicar e excluir
+    sheet_panel.gd   a ficha: identidade, resumo, etiquetas, nomes, conteúdo gerado dos campos, relações, calendários, duplicar e excluir
+    calendar_panel.gd janela dos calendários locais: os cadastrados e o formulário de um novo (com a primeira era)
     time_bar.gd      barra de tempo (embaixo à esquerda) e janela do calendário: data, pausa, velocidade, avanços, consulta
     legend_panel.gd, ui_kit.gd
 scenes/main.tscn   Main e o Hud (os painéis); a vista 3D é criada em código pelo GlobeView
@@ -129,13 +132,33 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
   cultura e/ou etnia ligados, que é o começo da ficha antiga; raça, idioma e religião não são criados.
 - **Fluxo:** painel emite sinal → `DomainHub` chama o Registry → o hub devolve ao painel. Só mudanças estruturais (nome alternativo, etiqueta,
   vínculo, abrir outra ficha) refazem a ficha; editar campo não, para não tirar o foco de quem digita.
-- **Ficha em outra data:** `DomainHub.shown_t` ("o que não tem fim" por enquanto) é o instante lido; quando o relógio do mundo estiver nesta
-  ramificação, ele passa a ser a data mostrada.
-- **Ainda não feito:** desfazer/refazer dos cadastros (a pilha de comandos está no ramo `pfv`); mudança de nome **com data** na interface
-  (`RenameAt` existe no núcleo, falta o seletor de data do calendário, etapa 3); a "visão composta" completa da ficha antiga (hoje: criar a
-  sociedade e navegar pelas relações, sem abas lado a lado); escolher registros existentes ao criar a sociedade; selecionar no mapa
-  (etapa 5); fontes, `property_version` para o restante dos campos, demografia e lugares estruturados, importação. Duas migrações paralelas em
-  ramos diferentes precisam ser renumeradas ao integrar.
+- **Ainda não feito:** desfazer/refazer dos cadastros (a pilha de comandos está no ramo `pfv`, hoje na `main`; falta escrever os comandos); mudança de nome **com data** na interface (`RenameAt` existe no núcleo; falta o seletor de data); a "visão composta" completa da ficha antiga (hoje: criar a sociedade e navegar pelas relações, sem abas lado a lado); escolher registros existentes ao criar a sociedade; selecionar no mapa (etapa 5); fontes, `property_version` para o restante dos campos, demografia e lugares estruturados, importação. Duas migrações paralelas em ramos diferentes precisam ser renumeradas ao integrar.
+
+### Calendários locais (etapa 3)
+
+- **O que é um calendário local aqui:** conserva os 12 meses e os 365 dias do universal (o `calendar.gd` da ramificação `calendario` continua sendo
+  a única regra de dias e meses) e varia a **numeração dos anos** (eras), a **virada do dia** (`day_offset`: o mês e o ano viram junto), os **nomes
+  dos meses** e o formato. Outra duração de ano ou outra sequência de meses é a etapa 7 do plano.
+- **Cadastros** (migração 3): `calendar` (definição, confiabilidade `exata | aproximada | indisponivel`, fonte), `era` (marco em segundos
+  universais, direção `up | down`, número do ano do marco), `calendar_era` (a era que o calendário usa em cada período, com prioridade) e `calendar_use`
+  (entidade + calendário + finalidade civil/ritual/tradicional/administrativo/outro + validade `[início, fim)` + prioridade de exibição).
+  Era e calendário são cadastros separados: vários calendários podem usar a mesma era. Um calendário serve a várias entidades e uma entidade usa
+  vários; só se recusa repetir entidade + calendário + finalidade em períodos sobrepostos. Trocar o calendário civil numa data = `EndCalendarUse(t)`
+  + novo uso começando em t (consulta antes e depois dá o vínculo certo, fim excluído).
+- **Conversão** (`local_calendar.gd`, só funções sobre o `Dictionary` de `Registry.CalendarDef`): `to_local(def, t)`, `to_universal(def, era, ano, mês, dia…)`
+  e `span(def, era, ano[, mês])`. O ano de uma era conta a partir do ano universal em que cai o marco (um marco no meio do ano faz do ano parcial o
+  número `first`); "antes de" é uma era `down` com `first = 0`, válida até o marco; duas eras no mesmo instante: vale a de maior prioridade na ida e a volta
+  é sempre exata. **Exato ou nada:** sem era válida, calendário indisponível, data inexistente ou fora da validade da era devolvem um status com o motivo
+  e nunca um instante; data só com ano ou mês vira um intervalo (`span`), não um instante. Testado: ida e volta exata em milhares de instantes (inclusive antes
+  da época), virada de dia, mês, ano e era.
+- **Interface:** a ficha ganhou "Calendários" (data universal e, abaixo, a data local de cada calendário que a entidade usa, por prioridade; "Usar" liga outro).
+  O botão "Calendários…" do painel de busca abre a janela para criar um calendário com a primeira era (nome, marco, numeração, direção, hora da virada e nomes
+  dos meses). O formulário cria calendários com a era valendo **para sempre**: datas muito antes do marco mostram anos negativos; períodos de era e várias eras
+  existem no núcleo e ainda não têm tela.
+- **O hub segue o relógio:** `Main._on_clock_changed` chama `DomainHub.set_time(clock.shown())` (presente ou consulta). As datas escritas na ficha atualizam na hora;
+  a ficha em si (nomes, vínculos e usos válidos na data) é relida por `tick()` no máximo 2 vezes por segundo e só quando o usuário não está digitando.
+- **Ainda não feito:** editar ou apagar calendário e era; períodos de era e reformas na interface; calendários aritméticos (ano ≠ 365 dias), datas ambíguas
+  por reforma e viradas locais por lugar (etapas 7 e seguintes); nomes de mês por idioma (hoje um conjunto por calendário); semanas; região do uso.
 
 ## Testes
 

@@ -296,7 +296,8 @@ public partial class Registry
         }
 
         return new Dictionary { ["id"] = id, ["kind"] = kind, ["name"] = NameAt(id, t) is { Length: > 0 } n ? n : Name(id), ["summary"] = Str(e[0][1]),
-                                ["names"] = names, ["tags"] = Tags(id), ["fields"] = fields, ["links"] = links };
+                                ["names"] = names, ["tags"] = Tags(id), ["fields"] = fields, ["links"] = links,
+                                ["calendars"] = CalendarsOf(id, t) };
     }
 
     /// Tipos de vínculo que uma ficha desse tipo pode criar como origem: code, label e dst_kind ("" = qualquer).
@@ -324,6 +325,7 @@ public partial class Registry
             _db.Run("insert into entity_tag(entity_id, tag) select @1, tag from entity_tag where entity_id = @0", id, copy);
             if (copyLinks)
             {
+                _db.Run("insert into calendar_use(entity_id, calendar_id, purpose, valid_from, valid_to, priority) select @1, calendar_id, purpose, valid_from, valid_to, priority from calendar_use where entity_id = @0 and valid_to = @2", id, copy, Forever);
                 _db.Run("insert into relation(type, src, dst, valid_from, valid_to, note) select type, @1, dst, valid_from, valid_to, note from relation where src = @0 and valid_to = @2", id, copy, Forever);
                 _db.Run("insert into relation(type, src, dst, valid_from, valid_to, note) select type, src, @1, valid_from, valid_to, note from relation where dst = @0 and valid_to = @2", id, copy, Forever);
             }
@@ -342,6 +344,7 @@ public partial class Registry
         _db.Tx(() =>
         {
             _db.Run("delete from relation where src = @0 or dst = @0", id);
+            _db.Run("delete from calendar_use where entity_id = @0", id);
             _db.Run("update entity_name set lang_id = null where lang_id = @0", id);
             _db.Run("delete from entity_name where entity_id = @0", id);
             _db.Run("delete from field_value where entity_id = @0", id);

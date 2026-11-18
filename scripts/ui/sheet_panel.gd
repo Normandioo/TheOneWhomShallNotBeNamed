@@ -19,11 +19,14 @@ signal duplicate_requested(copy_links: bool)
 signal delete_requested
 signal delete_confirmed
 signal closed
+signal calendar_use_added(calendar_id: int, purpose: String)
+signal calendar_use_removed(use_id: int)
 
 const WIDTH := 440
 const FOREVER := 9223372036854775807
 const STATES := ["known", "unknown", "na"]
 const STATE_LABELS := ["Valor", "Desconhecido", "Não se aplica"]
+const PURPOSES := {"civil": "Civil", "ritual": "Ritual", "tradicional": "Tradicional", "administrativo": "Administrativo", "outro": "Outro"}
 const ROLES := [
 	["alternativo", "Nome alternativo"], ["historico", "Nome histórico"], ["autodenominacao", "Autodenominação"],
 	["exonimo", "Exônimo"], ["oficial", "Nome oficial"], ["popular", "Nome popular"], ["gentilico", "Gentílico"],
@@ -41,6 +44,9 @@ var _types: Array = []     # tipos de vínculo que esta ficha pode criar
 var _link_type: OptionButton
 var _link_query: LineEdit
 var _link_candidates: OptionButton
+var _calendars := {}       # o que o hub mandou: universal, uses, choices
+var _universal_label: Label
+var _date_labels := {}     # id do uso -> Label com a data local
 
 
 func _init() -> void:
@@ -84,10 +90,11 @@ func current_id() -> int:
 
 
 ## Mostra a ficha (o Dictionary de Registry.Sheet) e os tipos de vínculo que ela pode criar (Registry.LinkTypesFor).
-func show_sheet(sheet: Dictionary, link_types: Array) -> void:
+func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}) -> void:
 	var keep := _scroll.scroll_vertical if int(sheet.id) == current_id() else 0
 	_sheet = sheet
 	_types = link_types
+	_calendars = calendars
 	visible = true
 	_title.text = "Ficha · " + UiKit.kind_label(sheet.kind)
 	if _body != null:
@@ -101,8 +108,24 @@ func show_sheet(sheet: Dictionary, link_types: Array) -> void:
 	_build_names()
 	_build_content()
 	_build_links()
+	_build_calendars()
 	_build_footer()
 	_scroll.set_deferred("scroll_vertical", keep)
+
+
+## Atualiza só as datas (universal e locais) quando o relógio anda, sem refazer a ficha. texts: id do uso -> texto.
+func show_calendar_dates(universal: String, texts: Dictionary) -> void:
+	if _universal_label != null:
+		_universal_label.text = "Data universal: " + universal
+	for use_id in texts:
+		if _date_labels.has(use_id):
+			_date_labels[use_id].text = texts[use_id]
+
+
+## O usuário está digitando na ficha? Quem refaz a ficha (o hub) espera, para não tirar o foco de quem escreve.
+func is_editing() -> bool:
+	var f := get_viewport().gui_get_focus_owner() if is_inside_tree() else null
+	return f != null and is_ancestor_of(f) and (f is LineEdit or f is TextEdit)
 
 
 func hide_sheet() -> void:
@@ -385,6 +408,57 @@ func _build_links() -> void:
 	_link_query.text_changed.connect(func(_t: String) -> void: search.call())
 	_link_type.item_selected.connect(func(_i: int) -> void: search.call())
 	search.call()
+
+
+func _build_calendars() -> void:
+	_universal_label = null
+	_date_labels.clear()
+	if _calendars.is_empty():
+		return
+	var box := _section("Calendários")
+	_universal_label = _note("Data universal: " + _calendars.universal)
+	box.add_child(_universal_label)
+	if _calendars.uses.is_empty():
+		box.add_child(_note("Nenhum calendário em uso."))
+	for u in _calendars.uses:
+		var row := HBoxContainer.new()
+		box.add_child(row)
+		var label := Label.new()
+		label.text = "%s · %s" % [PURPOSES.get(u.purpose, u.purpose), u.name]
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.tooltip_text = "Prioridade de exibição: %d" % u.priority
+		row.add_child(label)
+		var del := Button.new()
+		del.text = "✕"
+		del.flat = true
+		del.tooltip_text = "Apagar este uso (criado por engano)"
+		del.pressed.connect(func() -> void: calendar_use_removed.emit(int(u.use_id)))
+		row.add_child(del)
+		var date := Label.new()
+		date.text = u.text
+		date.autowrap_mode = TextServer.AUTOWRAP_WORD
+		_date_labels[int(u.use_id)] = date
+		box.add_child(date)
+	if _calendars.choices.is_empty():
+		box.add_child(_note("Nenhum calendário cadastrado: crie um em Calendários… (painel de busca)."))
+		return
+	var add := HBoxContainer.new()
+	box.add_child(add)
+	var cal := OptionButton.new()
+	cal.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for c in _calendars.choices:
+		cal.add_item(c.name)
+		cal.set_item_metadata(cal.item_count - 1, int(c.id))
+	add.add_child(cal)
+	var purpose := OptionButton.new()
+	for p in PURPOSES:
+		purpose.add_item(PURPOSES[p])
+		purpose.set_item_metadata(purpose.item_count - 1, p)
+	add.add_child(purpose)
+	var go := Button.new()
+	go.text = "Usar"
+	go.pressed.connect(func() -> void: calendar_use_added.emit(int(cal.get_item_metadata(cal.selected)), purpose.get_item_metadata(purpose.selected)))
+	add.add_child(go)
 
 
 func _build_footer() -> void:

@@ -8,6 +8,7 @@ signal query_changed(text: String, kind: String)
 signal entity_chosen(id: int)
 signal create_requested(kind: String, name: String)
 signal society_requested(name: String)
+signal calendars_requested
 
 const WIDTH := 320
 const SOCIETY_ID := 100  # item do menu "Novo" que não é um tipo
@@ -44,6 +45,11 @@ func _init() -> void:
 	pop.id_pressed.connect(_on_new)
 	new_menu.tooltip_text = "Cria com o texto da busca como nome (pode ser provisório)."
 	head.add_child(new_menu)
+	var cal_btn := Button.new()
+	cal_btn.text = "Calendários…"
+	cal_btn.tooltip_text = "Criar e ver calendários locais"
+	cal_btn.pressed.connect(func() -> void: calendars_requested.emit())
+	head.add_child(cal_btn)
 
 	_query = LineEdit.new()
 	_query.placeholder_text = "Buscar por nome"
