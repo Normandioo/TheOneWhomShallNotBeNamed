@@ -6,10 +6,12 @@ extends SceneTree
 
 const HEADLESS_SUITES := [
 	"res://tests/suites/geo_suite.gd",
+	"res://tests/suites/calendar_suite.gd",
 ]
 const SCENE_SUITES := [
 	"res://tests/suites/globe_suite.gd",
 	"res://tests/suites/tiles_suite.gd",
+	"res://tests/suites/time_suite.gd",
 ]
 
 
@@ -24,6 +26,7 @@ func _run() -> void:
 		if not await _run_suite(path, null, out):
 			return
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.save_path = ""  # o teste não lê nem grava o salvamento do usuário
 	root.add_child(main)
 	for path in SCENE_SUITES:
 		if not await _run_suite(path, main, out):

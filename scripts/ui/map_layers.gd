@@ -43,6 +43,9 @@ static var LAYERS := [  # static var (não const): Color8 não é aceito em expr
 		"text": "Referência: o projeto vai recalcular a declividade com a altitude e o raio de Evron.",
 		"gradient": [NINE, VIRIDIS], "labels": ["plano", "", "íngreme"]},
 
+	{"group": "Clima", "menu": "Temperatura — sazonal (estimada)", "kind": "season", "title": "Temperatura sazonal (estimada)",
+		"text": "ESTIMATIVA, não observação: mistura linear dos °C de janeiro e julho (âncoras em 15 jan e 15 jul, 12h), repetida todo ano. Sem tempestades nem frentes. Calibração de Köppen: ±0,5 °C; o início da escala significa −20 °C ou menos.",
+		"gradient": [NINE, MAGMA], "labels": ["≤ −20 °C", "+10 °C", "+40 °C"]},
 	{"group": "Clima", "menu": "Temperatura — janeiro", "file": "Temperatura Janeiro.png", "kind": "image", "title": "Temperatura de janeiro",
 		"text": "Média do mês. Calibrada pelos limiares de Köppen (erro ≤ 0,5 °C). O início da escala significa −20 °C ou menos.",
 		"gradient": [NINE, MAGMA], "labels": ["≤ −20 °C", "+10 °C", "+40 °C"]},

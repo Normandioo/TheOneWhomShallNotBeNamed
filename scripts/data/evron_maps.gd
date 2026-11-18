@@ -7,6 +7,9 @@ const DIR := "res://data/evron/"
 # shortcut: data/evron/ não entra no export (tem .gdignore); ao distribuir, ler de uma pasta do projeto do usuário.
 const HEIGHT_FILE := "height_4096x2048.f32"
 const HEIGHT_SIZE := Vector2i(4096, 2048)
+# Temperatura média de janeiro e julho em °C (tools/build_temperature.py): mesma grade da altitude, NaN = sem dado,
+# -20,0 = "-20 °C ou menos" (a escala do Gleba satura ali).
+const TEMPERATURE_FILES := {"jan": "temperature_jan_4096x2048.f32", "jul": "temperature_jul_4096x2048.f32"}
 
 
 ## Os mapas foram importados? (sem eles o globo não tem o que mostrar)
@@ -18,6 +21,17 @@ static func available() -> bool:
 static func load_height() -> Image:
 	var bytes := FileAccess.get_file_as_bytes(DIR + HEIGHT_FILE)
 	return Image.create_from_data(HEIGHT_SIZE.x, HEIGHT_SIZE.y, false, Image.FORMAT_RF, bytes)
+
+
+## Os dois mapas de temperatura (FORMAT_RF, °C) ou {} se não foram gerados (rode tools/import_maps.py).
+static func load_temperature() -> Dictionary:
+	var out := {}
+	for key in TEMPERATURE_FILES:
+		if not FileAccess.file_exists(DIR + TEMPERATURE_FILES[key]):
+			return {}
+		var bytes := FileAccess.get_file_as_bytes(DIR + TEMPERATURE_FILES[key])
+		out[key] = Image.create_from_data(HEIGHT_SIZE.x, HEIGHT_SIZE.y, false, Image.FORMAT_RF, bytes)
+	return out
 
 
 ## Uma camada PNG de data/evron/ (por exemplo "Satelite.png"), ou null se o arquivo não existe.

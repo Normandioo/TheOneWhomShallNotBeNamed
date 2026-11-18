@@ -9,6 +9,7 @@ func _run() -> void:
 	var main: Node = null
 	if args.size() > 2 and args[2] == "scene":
 		main = load("res://scenes/main.tscn").instantiate()
+		main.save_path = ""  # o teste não lê nem grava o salvamento do usuário
 		root.add_child(main)
 	var suite = script.new()
 	suite.setup(self, main, out)

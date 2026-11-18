@@ -9,7 +9,13 @@ render_mode specular_disabled;
 uniform sampler2D layer_linear : source_color, filter_linear, repeat_enable;   // camada atual, valores contínuos
 uniform sampler2D layer_nearest : source_color, filter_nearest, repeat_enable; // a mesma camada, para categorias
 uniform bool nearest = false;
-uniform int mode = 0;            // 0 camada de imagem, 1 altitude calibrada, 2 cor natural (GlobeMaterial.MODES)
+uniform int mode = 0;            // 0 camada de imagem, 1 altitude calibrada, 2 cor natural, 3 temperatura sazonal (GlobeMaterial.MODES)
+// Temperatura sazonal: °C de janeiro e de julho, misturados pelo peso de julho (SeasonalTemperature.july_weight) e só
+// então pintados com a escala magma da legenda (misturar as cores da legenda daria valores sem sentido).
+uniform sampler2D temp_jan : filter_linear, repeat_enable;
+uniform sampler2D temp_jul : filter_linear, repeat_enable;
+uniform sampler2D temp_ramp : source_color, filter_linear;
+uniform float season_july = 0.0;
 // Rampa da altitude: mesmos pontos de MapLayers.ALTITUDE_OFFSETS/COLORS (mar à esquerda do centro, terra à direita).
 const float SEA_FLOOR = -13500.0;
 const float PEAK = 9103.4;
@@ -57,6 +63,11 @@ void fragment() {
 		col = mix(pow(water_color(h), vec3(2.2)), col, solid);
 		// Halo azul da atmosfera na borda do disco.
 		EMISSION = vec3(0.10, 0.22, 0.55) * pow(1.0 - clamp(dot(geo_normal, VIEW), 0.0, 1.0), 4.0);
+	}
+	if (mode == 3) {
+		vec2 tuv = vec2(uv.x, clamp(uv.y, 0.0, 1.0));
+		float c = mix(textureLod(temp_jan, tuv, 0.0).r, textureLod(temp_jul, tuv, 0.0).r, season_july);
+		col = textureLod(temp_ramp, vec2(clamp((c + 20.0) / 60.0, 0.0, 1.0), 0.5), 0.0).rgb;
 	}
 	ALBEDO = col;
 	ROUGHNESS = 1.0;
