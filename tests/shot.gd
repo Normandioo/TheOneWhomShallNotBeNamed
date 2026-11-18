@@ -6,10 +6,12 @@ extends SceneTree
 
 const HEADLESS_SUITES := [
 	"res://tests/suites/geo_suite.gd",
+	"res://tests/suites/edit_suite.gd",
 ]
 const SCENE_SUITES := [
 	"res://tests/suites/globe_suite.gd",
 	"res://tests/suites/tiles_suite.gd",
+	"res://tests/suites/brush_suite.gd",
 ]
 
 

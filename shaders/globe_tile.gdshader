@@ -5,6 +5,7 @@ render_mode specular_disabled, cull_disabled;
 // cull_disabled: os blocos atrás do horizonte já saem pela escolha da TileLayer; assim a ordem dos vértices não importa.
 
 #include "res://shaders/relief.gdshaderinc"
+#include "res://shaders/brush.gdshaderinc"
 
 uniform sampler2D tile : source_color, filter_linear_mipmap, repeat_disable;
 
@@ -18,6 +19,7 @@ void fragment() {
 	vec3 n = normalize(obj_pos);
 	vec2 guv = globe_uv(n);
 	ALBEDO = texture(tile, UV).rgb;
+	ALBEDO = brush_preview(n, ALBEDO);
 	ROUGHNESS = 1.0;
 	NORMAL = relief_normal(n, guv, height(guv), NORMAL, VIEW_MATRIX * MODEL_MATRIX);
 }

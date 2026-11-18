@@ -5,6 +5,7 @@ render_mode specular_disabled;
 // A posição na esfera vira lat/lon e daí a coordenada do mapa equiretangular (convenção de EvronGeo).
 
 #include "res://shaders/relief.gdshaderinc"
+#include "res://shaders/brush.gdshaderinc"
 
 uniform sampler2D layer_linear : source_color, filter_linear, repeat_enable;   // camada atual, valores contínuos
 uniform sampler2D layer_nearest : source_color, filter_nearest, repeat_enable; // a mesma camada, para categorias
@@ -59,6 +60,7 @@ void fragment() {
 		EMISSION = vec3(0.10, 0.22, 0.55) * pow(1.0 - clamp(dot(geo_normal, VIEW), 0.0, 1.0), 4.0);
 	}
 	ALBEDO = col;
+	ALBEDO = brush_preview(n, ALBEDO);
 	ROUGHNESS = 1.0;
 	NORMAL = relief_normal(n, uv, h, NORMAL, VIEW_MATRIX * MODEL_MATRIX);
 }

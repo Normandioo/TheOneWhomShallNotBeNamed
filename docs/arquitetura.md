@@ -12,6 +12,12 @@ scripts/
   data/            o planeta e os mapas. Só funções estáticas.
     evron_geo.gd     raio (8.282,3 km), lat/lon <-> direção <-> pixel, distância pela superfície
     evron_maps.gd    lê data/evron/: a altitude calibrada (float32) e as camadas PNG
+  world/           o estado do mundo, sem tela.
+    terrain.gd       a altitude em memória (a mesma imagem do globo); disco do pincel na esfera; ler e gravar alturas
+  edit/            comandos de edição: toda mudança é um comando com desfazer e refazer.
+    command_stack.gd pilha de desfazer/refazer (até 200 comandos); cada comando = nome + como desfazer + como refazer
+    terrain_brush.gd pincel de terreno (elevar, rebaixar, nivelar, suavizar); uma pincelada = um comando, que guarda
+                     só os pixels mexidos (antes e depois)
   view/            o globo na tela.
     globe_material.gd  o material (globe.gdshader); único lugar que escreve nos uniforms; guarda só a camada da tela
     globe_camera.gd    gira em volta do globo e dá zoom logarítmico, da órbita a ~17 km do chão; a luz vai junto
@@ -20,10 +26,12 @@ scripts/
   ui/              painéis: mostram valores e avisam por sinais.
     map_layers.gd    o catálogo das camadas: arquivo, grupo, legenda e o texto com a confiança da calibração
     layer_panel.gd   escolha da camada e leitura do cursor (lat/lon, altitude, terra/mar)
+    tool_panel.gd    barra de ferramentas: navegar ou pincel, raio, intensidade, desfazer e refazer
     legend_panel.gd, ui_kit.gd
 scenes/main.tscn   Main e o Hud (os painéis); a vista 3D é criada em código pelo GlobeView
 shaders/globe.gdshader  camada de imagem ou altitude calibrada, com o relevo na iluminação
 shaders/globe_tile.gdshader  um bloco da pirâmide; relief.gdshaderinc tem o relevo comum aos dois
+shaders/brush.gdshaderinc    círculo de prévia do pincel; lê o parâmetro global "brush" (project.godot, shader_globals)
 tools/build_tiles.py    imagem equiretangular grande -> pirâmide de blocos de 512 px (data/evron/tiles/<nome>/)
 tools/import_maps.py    mapas.zip -> data/evron/ (PNGs + altitude em metros); roda uma vez
 tools/build_natural.py  cor natural da terra e do gelo (natural.png) a partir de vegetação, biomas, clima e declividade;
@@ -76,9 +84,22 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>      (com janela: tira c
 - O "16K" do Gleba é o mapa de 4K ampliado 4× (sem detalhe novo). A pirâmide é a estrutura que vai receber o
   detalhe de edição, dados novos ou geração procedural.
 
+## Edição do terreno
+
+- Ferramentas: Navegar, Elevar, Rebaixar, Nivelar (puxa para a altura do ponto inicial), Suavizar (média 3×3).
+  Com um pincel ativo, o botão esquerdo pinta e o direito gira a câmera. Ctrl+Z desfaz, Ctrl+Y ou Ctrl+Shift+Z refaz.
+- O peso do pincel cai de 1 no centro a 0 na borda sem degrau; o disco é medido pela superfície da esfera, atravessa
+  a longitude 180° e cobre os polos.
+- Uma marca de 200 km custa ~3 ms. A altitude inteira (32 MiB) volta para a GPU em ~5–9 ms, no máximo 10 vezes por
+  segundo durante a pincelada e uma vez ao soltar.
+- O que muda com a edição: a camada Altitude, o relevo na luz de todas as camadas, a cor do mar no satélite
+  experimental e a leitura do cursor. As imagens do Gleba (clima, biomas…) **não** mudam: são derivados que ficam
+  desatualizados até haver recálculo (a proposta pede para marcá-los).
+- Ainda só em memória: fechar o programa perde as edições (a persistência em SQLite é o próximo passo).
+
 ## Limites conhecidos (próximas etapas da E0)
 
 - O globo usa os mapas de 4096 px (12,7 km por pixel no equador): de perto fica borrado; os blocos existem, mas o
   dado de 16K disponível não tem mais detalhe que o de 4K.
-- Ainda não há edição, desfazer, banco (SQLite), histórico nem calendário.
+- Ainda não há banco (SQLite), histórico nem calendário: as edições ficam só em memória.
 - As camadas são lidas de `data/evron/`, que não entra no export do Godot.

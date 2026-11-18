@@ -1,6 +1,7 @@
 extends Node3D
 ## Câmera que gira em volta do globo e dá zoom em escala logarítmica, da órbita até perto do chão.
-## Arrastar = girar · roda = zoom · clique parado = `clicked`. A entrada vem de handle_input (o SubViewport não
+## Arrastar (esquerdo ou direito) = girar · roda = zoom · clique parado (esquerdo) = `clicked`. Com um pincel ativo
+## o Main fica com o botão esquerdo e só o direito gira. A entrada vem de handle_input (o SubViewport não
 ## recebe mouse). A luz vai junto com a câmera: o lado que se olha está sempre iluminado, como num mapa.
 
 ## O usuário clicou (sem arrastar) na posição da janela.
@@ -66,11 +67,11 @@ func handle_input(e: InputEvent) -> void:
 			target_dist = radius + (target_dist - radius) / WHEEL_FACTOR
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
 			target_dist = radius + (target_dist - radius) * WHEEL_FACTOR
-		elif mb.button_index == MOUSE_BUTTON_LEFT:
+		elif mb.button_index == MOUSE_BUTTON_LEFT or mb.button_index == MOUSE_BUTTON_RIGHT:
 			_dragging = mb.pressed
 			if mb.pressed:
 				_drag_moved = 0.0
-			elif _drag_moved < 4.0:
+			elif _drag_moved < 4.0 and mb.button_index == MOUSE_BUTTON_LEFT:
 				clicked.emit(mb.position)
 	elif e is InputEventMouseMotion and _dragging:
 		var mm := e as InputEventMouseMotion
