@@ -37,6 +37,7 @@ W, H = 8192, 4096       # saída
 BAND = 128              # linhas de saída por vez: limita a memória (~1 GB por faixa)
 SEED = 20261117
 WARP_PX = 2.0           # deslocamento máximo dos limites interiores, em pixels do Gleba (~25 km)
+COAST_WARP_PX = 1.1     # idem para a costa, mais fino: quebra o serrilhado das células sem mudar a geografia
 
 VIRIDIS = np.array([(0.267, 0.005, 0.329), (0.279, 0.175, 0.483), (0.230, 0.322, 0.546), (0.173, 0.449, 0.558), (0.128, 0.567, 0.551),
                     (0.158, 0.684, 0.502), (0.369, 0.789, 0.383), (0.678, 0.864, 0.190), (0.993, 0.906, 0.144)])
@@ -335,6 +336,9 @@ def fields():
     n_xlow = noise_grid(SW, SH, 5, 3, SEED + 7)     # meandros da borda do gelo marinho (~1.600 km)
     ice_t, ice_coast = sea_ice_fields(land, np.maximum(t_jan, t_jul))
     warp = np.stack([noise_grid(SW, SH, 200, 2, SEED + 4), noise_grid(SW, SH, 200, 2, SEED + 5)], -1)
+    # Warp só da costa: mais fino que o dos biomas, para desfazer o serrilhado reto das células do Gleba
+    # (quebra em baías e pontas, não desloca a geografia em larga escala).
+    warp_coast = np.stack([noise_grid(SW, SH, 55, 4, SEED + 12), noise_grid(SW, SH, 55, 4, SEED + 13)], -1)
 
     landf = [shrub, grass, trees, *bw, tex[..., 0], tex[..., 1], tex[..., 2], depth, rich, *np.moveaxis(rock, -1, 0),
              slope, orogeny, volc, lip, playa, land_ice, valley, riparian]
@@ -345,9 +349,10 @@ def fields():
     keys = ["shrub", "grass", "trees", *GROUPS, "sand", "silt", "clay", "depth", "rich", "rock_r", "rock_g", "rock_b",
             "slope", "orogeny", "volc", "lip", "playa", "land_ice", "valley", "riparian",
             "t_mean", "t_max", "rain", "rain_min", "hum", "n_low", "n_mid", "n_mid2", "n_xlow", "ice_t", "ice_coast"]
-    # Geografia fixa (amostrada sem deslocamento): costa, lagos e rios ficam onde o Gleba pôs.
-    G = np.stack([blur(land, 1), blur(lake, 1), saline, blur(river, 1)], -1).astype(np.float32)  # river = vale
-    return F, {k: i for i, k in enumerate(keys)}, G, warp
+    # Geografia fixa (amostrada sem deslocamento): lagos e rios ficam onde o Gleba pôs. A costa (abaixo) tem um
+    # warp fino próprio para não ficar com cara de hexágono.
+    G = np.stack([blur(land, 2), blur(lake, 1), saline, blur(river, 1)], -1).astype(np.float32)  # river = vale
+    return F, {k: i for i, k in enumerate(keys)}, G, warp, warp_coast
 
 
 # --- etapa 2: imagem final em 8K, por faixas -----------------------------------------------------------------------
@@ -365,7 +370,7 @@ def smooth(e0, e1, x):
     return t * t * (3 - 2 * t)
 
 
-def render_band(F, ix, G, warp, y0, y1):
+def render_band(F, ix, G, warp, warp_coast, y0, y1):
     rows = np.arange(y0, y1)
     dirs = sphere_dirs(rows, W, H)
     sx = np.broadcast_to((np.arange(W) + 0.5) * SW / W - 0.5, (y1 - y0, W)).astype(np.float32)
@@ -373,6 +378,8 @@ def render_band(F, ix, G, warp, y0, y1):
     wv = sample(warp, sx, sy) * WARP_PX
     f = sample(F, sx + wv[..., 0], sy + wv[..., 1])
     g = sample(G, sx, sy)
+    wvc = sample(warp_coast, sx, sy) * COAST_WARP_PX
+    land_a = sample(G[..., :1], sx + wvc[..., 0], sy + wvc[..., 1])[..., 0]
     c = {k: f[..., i] for k, i in ix.items()}
     n_fine = fbm(dirs, 650, 2, SEED + 6)  # ~12 e ~6 km: o grão de um pixel desta imagem
     n_mid, n_low = c["n_mid"], c["n_low"]
@@ -443,7 +450,6 @@ def render_band(F, ix, G, warp, y0, y1):
     rgb = lerp(rgb, mix(1 - 0.04 * n_fine, SNOW), snow)
 
     # Gelo marinho onde nem o mês mais quente passa de -2 °C, em placas: borda larga por ruído médio, rachaduras finas.
-    land_a = g[..., 0]
     # Gelo marinho: extensão média do Gleba (ice_t, em °C), entortada pelas correntes junto às costas (ice_coast) e
     # por meandros de ~1.000 km; na borda (zona marginal) o gelo se quebra em placas pelo ruído médio e fino.
     # O ruído fractal tem desvio ~0,3: 14 °C de amplitude = meandros de ~±3° de latitude.
@@ -473,12 +479,12 @@ def render_band(F, ix, G, warp, y0, y1):
 
 
 def build():
-    F, ix, G, warp = fields()
+    F, ix, G, warp, warp_coast = fields()
     out = np.empty((H, W, 4), np.uint8)
     stats = {"desert": [], "jungle": [], "ice_top": 0.0, "ice_bottom": 0.0}
     print("imagem 8K...")
     for y in range(0, H, BAND):
-        band, snow, sea_ice, bw = render_band(F, ix, G, warp, y, min(y + BAND, H))
+        band, snow, sea_ice, bw = render_band(F, ix, G, warp, warp_coast, y, min(y + BAND, H))
         out[y:y + BAND] = np.round(band * 255).astype(np.uint8)
         if y < 40:
             stats["ice_top"] = np.maximum(snow, sea_ice)[: 40 - y].mean()
@@ -510,7 +516,9 @@ def check(out, stats):
     near = blur(land, 1)
     coast = (near > 0.05) & (near < 0.95) & tropic
     coast_ok = ((alpha > 127) == land)[coast].mean()
-    assert coast_ok > 0.85, f"a costa saiu do lugar ({coast_ok:.0%} dos pixels de costa batem com o Landmask)"
+    # A faixa `coast` tem só ~1 célula de largura, e o warp fino da costa (COAST_WARP_PX) mexe nela de propósito
+    # (baías e pontas em vez do serrilhado reto): por isso o limite é mais baixo que os 99% de um pixel exato.
+    assert coast_ok > 0.75, f"a costa saiu do lugar ({coast_ok:.0%} dos pixels de costa batem com o Landmask)"
     # Só onde a cor aparece (terra ou gelo dos dois lados); no mar aberto o RGB é só o preenchimento da terra.
     def step(a, b):
         vis = (out[:, a, 3] > 127) & (out[:, b, 3] > 127)
