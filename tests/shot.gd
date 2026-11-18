@@ -6,6 +6,10 @@ extends SceneTree
 
 const HEADLESS_SUITES := [
 	"res://tests/suites/geo_suite.gd",
+	"res://tests/suites/db_suite.gd",
+	"res://tests/suites/registry_suite.gd",
+	"res://tests/suites/sheet_suite.gd",
+	"res://tests/suites/hub_suite.gd",
 ]
 const SCENE_SUITES := [
 	"res://tests/suites/globe_suite.gd",
@@ -24,6 +28,7 @@ func _run() -> void:
 		if not await _run_suite(path, null, out):
 			return
 	var main: Node = load("res://scenes/main.tscn").instantiate()
+	main.domains_db = ":memory:"  # os cadastros do usuário não entram nos testes
 	root.add_child(main)
 	for path in SCENE_SUITES:
 		if not await _run_suite(path, main, out):

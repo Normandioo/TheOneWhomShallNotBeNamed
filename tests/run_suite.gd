@@ -9,6 +9,7 @@ func _run() -> void:
 	var main: Node = null
 	if args.size() > 2 and args[2] == "scene":
 		main = load("res://scenes/main.tscn").instantiate()
+		main.domains_db = ":memory:"  # os cadastros do usuário não entram nos testes
 		root.add_child(main)
 	var suite = script.new()
 	suite.setup(self, main, out)

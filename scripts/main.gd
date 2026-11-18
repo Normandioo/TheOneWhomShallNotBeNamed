@@ -14,14 +14,21 @@ const GlobeView = preload("res://scripts/view/globe_view.gd")
 const MapLayers = preload("res://scripts/ui/map_layers.gd")
 const LayerPanel = preload("res://scripts/ui/layer_panel.gd")
 const LegendPanel = preload("res://scripts/ui/legend_panel.gd")
+const SearchPanel = preload("res://scripts/ui/search_panel.gd")
+const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
+const DomainHub = preload("res://scripts/world/domain_hub.gd")
 
 @onready var hud: Control = $Hud
+
+## Banco dos cadastros de domínio (país, cultura, etnia...). Os testes com cena usam ":memory:" para não tocar no do usuário.
+var domains_db := "user://evron_world.db"
 
 var height_img: Image
 var material := GlobeMaterial.new()
 var globe: GlobeView
 var layer_panel: LayerPanel
 var legend: LegendPanel
+var domains: DomainHub
 
 var layer := 0                    # índice em MapLayers.LAYERS
 var selected_dir := Vector3.ZERO  # ponto fixado pelo clique (ZERO = nenhum)
@@ -40,10 +47,21 @@ func _ready() -> void:
 	legend = LegendPanel.new()
 	hud.add_child(layer_panel)
 	hud.add_child(legend)
+	var search := SearchPanel.new()
+	var sheet := SheetPanel.new()
+	hud.add_child(search)
+	hud.add_child(sheet)
+	domains = DomainHub.new()
+	domains.setup(domains_db, search, sheet)
 	layer_panel.layer_selected.connect(set_layer)
 	globe.surface_hovered.connect(func(n: Vector3) -> void: layer_panel.show_cursor(describe(n)))
 	globe.surface_clicked.connect(select)
 	set_layer(0)
+
+
+func _exit_tree() -> void:
+	if domains != null:
+		domains.close()
 
 
 func _process(delta: float) -> void:
