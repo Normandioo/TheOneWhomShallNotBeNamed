@@ -1,2 +1,3 @@
 .godot/
-data/mola/128/
+# Mapas importados de mapas.zip por tools/import_maps.py (o zip é a fonte)
+data/evron/

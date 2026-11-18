@@ -1,0 +1,328 @@
+{
+  "versao": 1,
+  "data": "2026-11-17",
+  "origem": "mapas.zip (Gleba 0.3.5) + Guia_Mapas_Legendas_Gleba.html + valores do autor",
+  "convencoes": {
+    "confianca": "definido = informado pelo autor; medido = verificado pixel a pixel; estimado = calibrado por regras físicas; hipotese = nome provável sem confirmação",
+    "t": "posição 0..1 na escala de cores, obtida pela cor mais próxima da tabela do matplotlib; valores negativos = extensão escura abaixo do início da escala"
+  },
+  "planeta": {
+    "forma": "esfera",
+    "raio_km": 8282.3,
+    "circunferencia_km": 52039,
+    "superficie_km2": 862000000,
+    "projecao_mapas": "equiretangular, 4096x2048 cobre 360x180 graus",
+    "km_por_pixel_equador": {
+      "4096": 12.705,
+      "16384": 3.176
+    },
+    "calendario": "gregoriano (igual ao da Terra)",
+    "confianca": "definido"
+  },
+  "camadas": {
+    "Elevation GrayScale.png": {
+      "tipo": "continuo",
+      "unidade": "m",
+      "codificacao": "uint16",
+      "formula": "p >= 32767: (p-32767)*9103.40/17336 ; p < 32767: (p-32767)*13500/32767",
+      "faixa": [
+        -13500,
+        9103.4
+      ],
+      "nivel_do_mar_pixel": 32767,
+      "confianca": "definido (extremos) + medido (nível do mar)"
+    },
+    "Elevation Grayscale Land.png": {
+      "tipo": "derivado",
+      "relacao": "≈ 2*(p_combinado-32767)",
+      "uso": "ignorar; usar o mapa combinado",
+      "confianca": "medido"
+    },
+    "Elevation Greyscale Bathy.png": {
+      "tipo": "derivado",
+      "relacao": "≈ 2*p_combinado",
+      "uso": "ignorar; usar o mapa combinado",
+      "confianca": "medido"
+    },
+    "Temperatura Janeiro.png": {
+      "tipo": "continuo",
+      "unidade": "°C (média do mês)",
+      "escala_cores": "magma",
+      "formula": "T = -20 + 60*t",
+      "saturacao": "t=0 significa <= -20 °C (7,9% da terra em janeiro)",
+      "metodo": "5 limiares de Köppen (18, 10, 0, 0, 22 °C) separam as classes do Clima.png com 97-99,6% de acerto; resíduo máximo 0,5 °C",
+      "confianca": "estimado (alta)"
+    },
+    "Temperatura Julho.png": {
+      "tipo": "continuo",
+      "unidade": "°C (média do mês)",
+      "escala_cores": "magma",
+      "formula": "T = -20 + 60*t",
+      "saturacao": "t=0 => <= -20 °C (4,4% da terra)",
+      "confianca": "estimado (alta)"
+    },
+    "Average Rainfall.png": {
+      "tipo": "continuo",
+      "unidade": "mm por mês (média mensal, NÃO total anual)",
+      "escala_cores": "viridis + extensão escura",
+      "formula": "t >= 0: P = 20 + 298*t ; t < 0 (roxo escurecido): P = 20*(1+t)",
+      "faixa_plausivel": "início 20-30 mm/mês, topo 250-330 mm/mês",
+      "metodo": "ajuste das regras de Köppen para B, BW/BS, Af, Am/Aw e s/w/f; acerto médio 95%; escala linear superou logarítmica (93%) e potências",
+      "confianca": "estimado (média)"
+    },
+    "January Rainfall.png": {
+      "tipo": "continuo",
+      "unidade": "mm no mês",
+      "escala_cores": "viridis + extensão escura",
+      "formula": "igual a Average Rainfall",
+      "confianca": "estimado (média)"
+    },
+    "July Rainfall.png": {
+      "tipo": "continuo",
+      "unidade": "mm no mês",
+      "escala_cores": "viridis + extensão escura",
+      "formula": "igual a Average Rainfall",
+      "confianca": "estimado (média)"
+    },
+    "Umidade Média.png": {
+      "tipo": "continuo",
+      "unidade": "%",
+      "escala_cores": "viridis",
+      "formula": "U = 100*t",
+      "metodo": "o Gleba multiplica o valor interno por 100; nenhuma regra física disponível para calibrar",
+      "confianca": "estimado (baixa)"
+    },
+    "Umidade Janeiro.png": {
+      "tipo": "continuo",
+      "unidade": "%",
+      "escala_cores": "viridis",
+      "formula": "U = 100*t",
+      "confianca": "estimado (baixa)"
+    },
+    "Umidade Julho.png": {
+      "tipo": "continuo",
+      "unidade": "%",
+      "escala_cores": "viridis",
+      "formula": "U = 100*t",
+      "confianca": "estimado (baixa)"
+    },
+    "Slope.png": {
+      "tipo": "referencia",
+      "escala_cores": "viridis",
+      "uso": "substituir pela declividade calculada da elevação oficial e do raio de Evron",
+      "observacao": "correlação com a declividade calculada 0,61 (0,71 com raiz quadrada): o Gleba usou outra escala vertical/raio ou uma rampa não linear; aproximação t ≈ 0,13*sqrt(graus)",
+      "declividade_calculada_4k": "mediana 0,08°, p90 1,3°, p99 5,7° (pixel de 12,7 km achata as encostas)",
+      "confianca": "medido (declividade própria); a rampa do Gleba é hipótese"
+    },
+    "Profundidade de Aquíferos.png": {
+      "tipo": "continuo",
+      "unidade": "m",
+      "escala_cores": "viridis",
+      "formula": "1500*t",
+      "observacao": "maior valor em Evron ≈ 890 m",
+      "confianca": "estimado (média): faixa do guia, linearidade suposta"
+    },
+    "Aquifer Thickness.png": {
+      "tipo": "continuo",
+      "unidade": "m",
+      "escala_cores": "viridis",
+      "formula": "100*t",
+      "confianca": "estimado (média): faixa do guia, linearidade suposta"
+    },
+    "Soil Richness.png": {
+      "tipo": "continuo",
+      "unidade": "índice %",
+      "escala_cores": "viridis",
+      "formula": "100*t",
+      "confianca": "estimado (baixa)"
+    },
+    "Soil Depth.png": {
+      "tipo": "relativo",
+      "unidade": "m (faixa desconhecida)",
+      "escala_cores": "viridis",
+      "formula": "t (0..1)",
+      "pendente": "dois pontos do inspetor do Gleba (F1)",
+      "confianca": "relativo"
+    },
+    "Soil Permeability.png": {
+      "tipo": "relativo",
+      "escala_cores": "viridis",
+      "formula": "t (0..1)",
+      "confianca": "relativo"
+    },
+    "Waterflow.png": {
+      "tipo": "relativo",
+      "escala_cores": "viridis",
+      "formula": "t (0..1)",
+      "observacao": "sem unidade no Gleba",
+      "confianca": "relativo"
+    },
+    "Rain shadows.png": {
+      "tipo": "relativo",
+      "escala_cores": "viridis",
+      "formula": "t (0..1)",
+      "confianca": "relativo"
+    },
+    "Orogeny Strenght.png": {
+      "tipo": "relativo",
+      "escala_cores": "viridis",
+      "formula": "t (0..1)",
+      "confianca": "relativo"
+    },
+    "Inacessibilidade.png": {
+      "tipo": "referencia",
+      "escala_cores": "viridis (contínua, não em degraus)",
+      "uso": "recalcular a distância ao oceano sobre a esfera de Evron",
+      "confianca": "medido"
+    },
+    "Soil Texture.png": {
+      "tipo": "composicao_rgb",
+      "canais": {
+        "R": "areia",
+        "G": "silte",
+        "B": "argila"
+      },
+      "confianca": "guia"
+    },
+    "Vegetação.png": {
+      "tipo": "composicao_rgb",
+      "canais": {
+        "G": "gramíneas",
+        "R": "arbustos",
+        "B": "árvores",
+        "preto": "sem vegetação"
+      },
+      "confianca": "guia"
+    },
+    "Landmask.png": {
+      "tipo": "categorico",
+      "classes": {
+        "30,30,30": "água",
+        "80,80,80": "terra"
+      },
+      "confianca": "medido"
+    },
+    "Bedrock.png": {
+      "tipo": "categorico",
+      "legenda": "37 rochas do guia (map_color); no mar a cor é multiplicada por 0,2",
+      "acerto": "100% da terra e do mar",
+      "confianca": "medido"
+    },
+    "BiomasGleba.png": {
+      "tipo": "categorico",
+      "legenda": "24 biomas do guia; cores repetidas não separam deserto/rochoso nem águas",
+      "acerto": "100% da terra",
+      "confianca": "medido"
+    },
+    "Clima.png": {
+      "tipo": "categorico",
+      "esquema": "Köppen-Geiger, paleta padrão de Beck et al. (2018)",
+      "validacao": "taiga só em ET/Dfc e vegetação mediterrânea só em Csa/Csb, como exigem as regras de bioma do Gleba (100%); limiares de temperatura coerentes",
+      "classes": {
+        "0,0,255": "Af",
+        "0,119,255": "Am",
+        "70,169,255": "Aw",
+        "255,0,0": "BWh",
+        "255,150,150": "BWk",
+        "245,163,0": "BSh",
+        "255,219,99": "BSk",
+        "255,255,0": "Csa",
+        "198,199,0": "Csb",
+        "150,150,0": "Csc",
+        "150,255,150": "Cwa",
+        "99,199,100": "Cwb",
+        "50,150,51": "Cwc",
+        "198,255,78": "Cfa",
+        "102,255,51": "Cfb",
+        "51,191,1": "Cfc",
+        "198,1,199": "Dsb",
+        "150,50,149": "Dsc",
+        "76,81,181": "Dwc",
+        "0,255,255": "Dfa",
+        "56,199,255": "Dfb",
+        "0,126,126": "Dfc",
+        "178,178,178": "ET",
+        "104,104,104": "EF",
+        "255,255,255": "água"
+      },
+      "confianca": "estimado (alta); Cfb e Cfc com cor um pouco diferente da paleta padrão"
+    },
+    "Provincias geologicas.png": {
+      "tipo": "categorico",
+      "classes": {
+        "50,50,50": {
+          "nome": "Crosta continental comum / plataforma (inclui plataformas submersas)",
+          "evidencia": "71% do mapa; rochas sedimentares; elevação mediana -113 m"
+        },
+        "136,153,170": {
+          "nome": "Bacia oceânica",
+          "evidencia": "100% mar; basalto; mediana -4693 m"
+        },
+        "170,187,204": {
+          "nome": "Crosta oceânica, variante 2",
+          "evidencia": "mar; basalto; -4323 m; latitudes altas"
+        },
+        "204,221,238": {
+          "nome": "Crosta oceânica, variante 3",
+          "evidencia": "mar; basalto; -4144 m; latitudes altas"
+        },
+        "153,255,204": {
+          "nome": "Orógeno (cinturão de montanhas)",
+          "evidencia": "96% terra; mediana +3719 m; orogenia alta; rochas intrusivas"
+        },
+        "153,102,153": {
+          "nome": "Grande província ígnea (derrames basálticos)",
+          "evidencia": "82% terra; 81% basalto/extrusivas; sem orogenia"
+        }
+      },
+      "confianca": "hipotese"
+    },
+    "Vulcanismo.png": {
+      "tipo": "categorico",
+      "observacao": "cada tipo aparece em cor forte e em versão com 25% do brilho; a versão escura também ocorre em terra, então provavelmente indica atividade menor/extinta, não mar",
+      "classes": {
+        "30,30,30": {
+          "nome": "mar sem vulcanismo"
+        },
+        "80,80,80": {
+          "nome": "terra sem vulcanismo"
+        },
+        "0,250,50": {
+          "nome": "Vulcanismo de arco/montanha (provável subducção), ativo",
+          "evidencia": "orogenia alta, +1438 m"
+        },
+        "0,62,12": {
+          "nome": "mesmo tipo, menos ativo/extinto"
+        },
+        "255,255,255": {
+          "nome": "Vulcanismo em zona de colisão/orógeno, ativo",
+          "evidencia": "orogenia 0,76, +1342 m"
+        },
+        "63,63,63": {
+          "nome": "mesmo tipo, menos ativo/extinto"
+        },
+        "250,0,0": {
+          "nome": "Vulcanismo fissural de rifte/dorsal",
+          "evidencia": "metade em terra, nível do mar, 82% junto a limites de placa"
+        },
+        "62,0,0": {
+          "nome": "mesmo tipo, menos ativo/extinto"
+        },
+        "250,150,0": {
+          "nome": "Ponto quente (hotspot)",
+          "evidencia": "4 pixels isolados, longe de orogenia"
+        },
+        "62,37,0": {
+          "nome": "mesmo tipo, menos ativo/extinto"
+        }
+      },
+      "confianca": "hipotese"
+    }
+  },
+  "pendente_do_autor": [
+    "texto de Fāhīmium",
+    "região de teste",
+    "data atual da campanha e forma de contar os anos",
+    "confirmação dos nomes marcados como hipótese"
+  ]
+}

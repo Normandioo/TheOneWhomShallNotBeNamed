@@ -1,0 +1,34 @@
+## O material do globo (globe.gdshader). É o único lugar que escreve nos uniforms: o resto pede por aqui.
+## Mantém na memória só a camada que está na tela (cada PNG de 4096x2048 ocupa ~24 MB na RAM e outro tanto na GPU).
+
+const GLOBE_SHADER = preload("res://shaders/globe.gdshader")
+const EvronMaps = preload("res://scripts/data/evron_maps.gd")
+
+var material: ShaderMaterial
+var layer_file := ""  # arquivo da camada carregada ("" = nenhuma)
+
+
+func _init() -> void:
+	material = ShaderMaterial.new()
+	material.shader = GLOBE_SHADER
+
+
+func set_height(height: Image) -> void:
+	material.set_shader_parameter("height_map", ImageTexture.create_from_image(height))
+
+
+## Mostra a camada `layer` (uma entrada de MapLayers.LAYERS). A altitude calibrada não precisa de imagem.
+func show_layer(layer: Dictionary) -> void:
+	material.set_shader_parameter("mode", 1 if layer["kind"] == "altitude" else 0)
+	material.set_shader_parameter("nearest", layer.get("nearest", false))
+	var file: String = layer.get("file", "")
+	if file == "" or file == layer_file:
+		return
+	var img := EvronMaps.load_layer(file)
+	if img == null:
+		push_error("camada não encontrada: " + file)
+		return
+	var tex := ImageTexture.create_from_image(img)
+	material.set_shader_parameter("layer_linear", tex)
+	material.set_shader_parameter("layer_nearest", tex)
+	layer_file = file

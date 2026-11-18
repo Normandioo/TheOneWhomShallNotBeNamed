@@ -1,10 +1,9 @@
 extends PanelContainer
-## Legenda do modo de mapa atual, no canto inferior direito: o que as cores e os símbolos significam.
+## Legenda da camada atual, no canto inferior direito: o que as cores significam.
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
-const MapLegends = preload("res://scripts/ui/map_legends.gd")
 
-const WIDTH := 236
+const WIDTH := 260
 
 var _title: Label
 var _body: VBoxContainer
@@ -31,8 +30,8 @@ func _init() -> void:
 	box.add_child(_text)
 
 
-func show_mode(mode: int) -> void:
-	var data: Dictionary = MapLegends.MODES[mode]
+## `data` é uma entrada de MapLayers.LAYERS.
+func show_layer(data: Dictionary) -> void:
 	_title.text = data["title"]
 	_text.text = data["text"]
 	for c in _body.get_children():
@@ -40,7 +39,7 @@ func show_mode(mode: int) -> void:
 	for item in data.get("items", []):
 		_add_swatch(item[0], item[1])
 	if data.has("gradient"):
-		_add_gradient(data["gradient"], data["labels"])
+		_add_gradient(data["gradient"][0], data["gradient"][1], data["labels"])
 
 
 func _add_swatch(color: Color, text: String) -> void:
@@ -55,10 +54,10 @@ func _add_swatch(color: Color, text: String) -> void:
 	_body.add_child(row)
 
 
-func _add_gradient(colors: Array, labels: Array) -> void:
+func _add_gradient(offsets: Array, colors: Array, labels: Array) -> void:
 	var gr := Gradient.new()
+	gr.offsets = PackedFloat32Array(offsets)
 	gr.colors = PackedColorArray(colors)
-	gr.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
 	var gt := GradientTexture1D.new()
 	gt.gradient = gr
 	gt.width = WIDTH

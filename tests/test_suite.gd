@@ -34,17 +34,11 @@ func frames(n: int) -> void:
 
 ## Salva uma captura da janela inteira em out_dir/<name>.png.
 func save(name: String) -> void:
-	var speed := 1.0
-	if main != null:  # o tempo para enquanto a captura é feita, para a luz e os planetas não mudarem entre quadros
-		speed = main.clock.time_scale
-		main.clock.set_speed(0.0)
 	await frames(5)
 	await RenderingServer.frame_post_draw
 	var path := out_dir.path_join(name + ".png")
 	tree.root.get_texture().get_image().save_png(path)
 	print("captura: ", path)
-	if main != null:
-		main.clock.set_speed(speed)
 
 
 ## Envia um evento de entrada pelo caminho de verdade (janela -> Main) e espera um quadro.
