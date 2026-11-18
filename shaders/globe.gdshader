@@ -40,9 +40,9 @@ vec3 water_color(float h, float lat) {
 	// Contraste baixo de propósito: o fundo do mar do Gleba é em degraus, e cores muito diferentes viram manchas.
 	// Só a lâmina bem rasa (< ~200 m): a plataforma do Gleba é larga, e turquesa nela toda vira mancha clara.
 	float reef = smoothstep(0.6, 0.35, abs(lat)) * (1.0 - smoothstep(15.0, 200.0, d));
-	vec3 shelf = mix(vec3(0.11, 0.31, 0.43), vec3(0.10, 0.38, 0.45), reef);
-	vec3 col = mix(shelf, vec3(0.05, 0.17, 0.34), smoothstep(80.0, 2500.0, d));
-	return mix(col, vec3(0.03, 0.09, 0.24), smoothstep(2000.0, 7000.0, d));
+	vec3 shelf = mix(vec3(0.06, 0.28, 0.46), vec3(0.07, 0.37, 0.47), reef);  // mais saturado: menos "água rasa pálida"
+	vec3 col = mix(shelf, vec3(0.03, 0.15, 0.37), smoothstep(80.0, 2500.0, d));
+	return mix(col, vec3(0.02, 0.08, 0.27), smoothstep(2000.0, 7000.0, d));
 }
 
 // Ruído de valor 3D com hash inteiro (o mesmo de tools/build_natural.py): sem padrão repetido em escala de planeta.
