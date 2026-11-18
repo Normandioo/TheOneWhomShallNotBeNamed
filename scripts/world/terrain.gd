@@ -64,6 +64,13 @@ func disk(n: Vector3, radius_km: float) -> Array:
 	return [idx, weight]
 
 
+## Direção na esfera do centro do pixel idx.
+func dir_of(idx: int) -> Vector3:
+	var x := idx % size.x
+	var y := idx / size.x
+	return EvronGeo.dir(90.0 - (y + 0.5) * 180.0 / size.y, ((x + 0.5) / size.x - 0.5) * 360.0)
+
+
 ## Média das alturas em volta de um pixel (3x3, com a volta na longitude): para o pincel de suavizar.
 func neighbor_mean(idx: int) -> float:
 	var x := idx % size.x

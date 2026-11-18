@@ -8,6 +8,7 @@ const TerrainBrush = preload("res://scripts/edit/terrain_brush.gd")
 signal tool_selected(op: int)  # -1 = navegar; senão TerrainBrush.Op
 signal radius_changed(km: float)
 signal strength_changed(value: float)
+signal roughness_changed(value: float)
 signal undo_requested
 signal redo_requested
 
@@ -15,14 +16,16 @@ const NAVIGATE := -1
 
 var radius: HSlider
 var strength: HSlider
+var roughness: HSlider
 var _buttons: Array[Button] = []
 var _undo: Button
 var _redo: Button
 var _radius_label: Label
 var _strength_label: Label
+var _roughness_label: Label
 
 
-func _init(radius_km: float, strength_m: float) -> void:
+func _init(radius_km: float, strength_m: float, roughness_value := 0.5) -> void:
 	add_theme_stylebox_override("panel", UiKit.panel_style())
 	set_anchors_preset(Control.PRESET_CENTER_TOP)
 	grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -53,6 +56,8 @@ func _init(radius_km: float, strength_m: float) -> void:
 	radius = _add_slider(sliders, _radius_label, 20.0, 1000.0, 10.0, radius_km, radius_changed)
 	_strength_label = Label.new()
 	strength = _add_slider(sliders, _strength_label, 10.0, 1000.0, 10.0, strength_m, strength_changed)
+	_roughness_label = Label.new()
+	roughness = _add_slider(sliders, _roughness_label, 0.0, 1.0, 0.05, roughness_value, roughness_changed)
 	_show_values()
 	show_history(false, false, "", "")
 
@@ -80,6 +85,8 @@ func _brush_items() -> Array:
 func _show_values() -> void:
 	_radius_label.text = "Raio %d km" % roundi(radius.value)
 	_strength_label.text = "  Intensidade %d" % roundi(strength.value)
+	_roughness_label.text = "  Rugosidade %d%%" % roundi(roughness.value * 100.0)
+	roughness.tooltip_text = "Quanto o ruído manda na forma. Elevar/Rebaixar/Nivelar: de liso a irregular. Montanhas: de maciço arredondado a cristas finas."
 	strength.tooltip_text = "Elevar/rebaixar: metros por marca no centro. Nivelar/suavizar: força (1000 = máxima)."
 
 

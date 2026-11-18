@@ -23,6 +23,7 @@ func run() -> void:
 
 	# Pincel ativo: passar o mouse mostra o círculo.
 	main.set_tool(TerrainBrush.Op.RAISE)
+	main.brush.roughness = 0.0
 	main.brush.radius_km = 250.0
 	main.brush.strength = 400.0
 	await send(motion(CENTER, Vector2(1, 0)))
@@ -75,6 +76,25 @@ func run() -> void:
 	b = main.brush_preview
 	if b.w != 0.0:
 		return fail("navegar deveria esconder o círculo do pincel")
+
+	# Montanhas: uma pincelada arrastada cria uma cordilheira com cristas e vales.
+	main.set_tool(TerrainBrush.Op.MOUNTAINS)
+	main.brush.radius_km = 280.0
+	main.brush.strength = 450.0
+	main.brush.seed_value = 11
+	main.brush.roughness = 0.5
+	cam.look_at_dir(spot, 1.3)
+	await frames(3)
+	await send(button(MOUSE_BUTTON_LEFT, true, CENTER + Vector2(-150, 40)))
+	for i in range(1, 16):
+		await send(motion(CENTER + Vector2(-150 + i * 20, 40 - i * 6), Vector2(20, -6)))
+	await send(button(MOUSE_BUTTON_LEFT, false, CENTER + Vector2(150, -50)))
+	main._show_brush(Vector3.ZERO)
+	await frames(3)
+	await save("8_montanhas")
+	main.commands.undo()
+	main.set_tool(TerrainBrush.Op.RAISE)
+	main.brush.seed_value = -1
 
 	# Quanto custa reenviar a altitude para a GPU (a cada 0,1 s durante a pincelada).
 	var t0 := Time.get_ticks_usec()

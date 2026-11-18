@@ -56,13 +56,14 @@ func _ready() -> void:
 	move_child(globe, 0)  # por baixo dos painéis
 	layer_panel = LayerPanel.new()
 	legend = LegendPanel.new()
-	tool_panel = ToolPanel.new(brush.radius_km, brush.strength)
+	tool_panel = ToolPanel.new(brush.radius_km, brush.strength, brush.roughness)
 	for panel in [layer_panel, legend, tool_panel]:
 		hud.add_child(panel)
 	layer_panel.layer_selected.connect(set_layer)
 	tool_panel.tool_selected.connect(set_tool)
 	tool_panel.radius_changed.connect(func(km: float) -> void: brush.radius_km = km)
 	tool_panel.strength_changed.connect(func(v: float) -> void: brush.strength = v)
+	tool_panel.roughness_changed.connect(func(v: float) -> void: brush.roughness = v)
 	tool_panel.undo_requested.connect(undo)
 	tool_panel.redo_requested.connect(redo)
 	commands.changed.connect(_on_history_changed)
@@ -111,6 +112,7 @@ func set_layer(index: int) -> void:
 	material.show_layer(MapLayers.LAYERS[index])
 	globe.set_tiles(MapLayers.LAYERS[index].get("tiles", ""), material.height_texture)
 	legend.show_layer(MapLayers.LAYERS[index])
+	_refresh_stale()
 	layer_panel.show_layer(index)
 
 
@@ -168,4 +170,10 @@ func _show_brush(n: Vector3) -> void:
 
 
 func _on_history_changed() -> void:
+	_refresh_stale()
 	tool_panel.show_history(commands.can_undo(), commands.can_redo(), commands.undo_name(), commands.redo_name())
+
+
+## Só a camada Altitude acompanha as edições; as imagens do Gleba (clima, biomas, rios...) ficam desatualizadas.
+func _refresh_stale() -> void:
+	legend.show_stale(commands.can_undo() and MapLayers.LAYERS[layer]["kind"] != "altitude")

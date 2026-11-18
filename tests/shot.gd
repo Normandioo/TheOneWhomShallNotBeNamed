@@ -12,6 +12,7 @@ const SCENE_SUITES := [
 	"res://tests/suites/globe_suite.gd",
 	"res://tests/suites/tiles_suite.gd",
 	"res://tests/suites/brush_suite.gd",
+	"res://tests/suites/brush_gallery_suite.gd",
 ]
 
 

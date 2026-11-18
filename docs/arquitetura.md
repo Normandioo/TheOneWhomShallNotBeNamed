@@ -86,10 +86,21 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>      (com janela: tira c
 
 ## Edição do terreno
 
-- Ferramentas: Navegar, Elevar, Rebaixar, Nivelar (puxa para a altura do ponto inicial), Suavizar (média 3×3).
+- Ferramentas: Navegar, Elevar, Rebaixar, Nivelar (puxa para a altura do ponto inicial), Suavizar (média 3×3) e
+  **Montanhas** e **Erosão** (procedurais, ver abaixo). Controle de *Rugosidade* (quanto o ruído manda na forma).
   Com um pincel ativo, o botão esquerdo pinta e o direito gira a câmera. Ctrl+Z desfaz, Ctrl+Y ou Ctrl+Shift+Z refaz.
 - O peso do pincel cai de 1 no centro a 0 na borda sem degrau; o disco é medido pela superfície da esfera, atravessa
   a longitude 180° e cobre os polos.
+- **Montanhas:** soma ao terreno um ruído de cristas (ridged multifractal, 6 oitavas, cristas de ~20 a 320 km, com
+  deslocamento de domínio para serpentear), calculado na posição 3D da esfera: sem emenda em 180° nem estiramento nos
+  polos. A intensidade vale ×6 (1000 = picos de milhares de metros). A semente é sorteada a cada pincelada: as marcas
+  de uma mesma pincelada se somam (a crista cresce), outra pincelada cria outro relevo; `seed_value` fixo repete o
+  mesmo relevo (testes). O ruído medido vai de −0,67 a 0,92 (mediana 0,3) e é normalizado para essa faixa.
+- **Montanhas só somam** (`max(0, crista)`): vale = sem mudança. Antes os vales eram negativos e criavam água no
+  meio do continente (teste `edit_suite`: nenhum pixel baixa e nenhum vira água).
+- **Elevar/Rebaixar/Nivelar** usam fBm (colinas, ~100 km) pela rugosidade; **Erosão** é térmica (conserva massa,
+  ângulo de repouso 150 m entre pixels, 3 passadas por marca). Ruídos em `edit/terrain_noise.gd`.
+  Estudo completo e limites no cofre: *Pincéis Procedurais de Terreno*.
 - Uma marca de 200 km custa ~3 ms. A altitude inteira (32 MiB) volta para a GPU em ~5–9 ms, no máximo 10 vezes por
   segundo durante a pincelada e uma vez ao soltar.
 - O que muda com a edição: a camada Altitude, o relevo na luz de todas as camadas, a cor do mar no satélite
