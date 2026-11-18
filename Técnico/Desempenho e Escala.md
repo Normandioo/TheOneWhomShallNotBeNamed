@@ -24,4 +24,6 @@ tags: [tecnico]
 - Testar sessão longa: memória crescendo sem parar, travamento ou perda de edição reprovam a entrega.
 
 ## Hoje
-O globo carrega só a camada da tela (~24 MB de RAM e outro tanto de VRAM por PNG) e a altitude (32 MB). Medições na máquina de referência ainda não feitas ([[E0 - Prova Técnica]]).
+- O globo carrega só a camada da tela (~24 MB de RAM e outro tanto de VRAM por PNG) e a altitude (32 MB).
+- Relevo em blocos (autoteste, no PC de desenvolvimento): nível mais detalhado em ~150 ms; cache cheio de 160 blocos ≈ 213 MiB de vídeo; texturas no total ≈ 302 MiB; processo ≈ 90 MiB de RAM.
+- Medições na máquina de referência ainda não feitas ([[E0 - Prova Técnica]]).

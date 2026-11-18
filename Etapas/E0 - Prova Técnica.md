@@ -12,7 +12,8 @@ status: em andamento
 - [x] Globo de Evron (raio 8.282,3 km) que gira e dá zoom da órbita a ~17 km do chão
 - [x] 49 camadas com legenda calibrada ([[Camadas do Mapa]])
 - [x] Cursor: latitude, longitude e altitude; clique fixa um ponto (certo também perto de 180° e a 70°N)
-- [ ] Relevo de 16K por blocos (pirâmide de níveis); de perto o globo ainda fica borrado (12,7 km por pixel)
+- [x] Relevo de 16K por blocos: pirâmide de 5 níveis (682 blocos de 512 px), escolha pelo zoom, carga em threads, cache de 160 blocos (~213 MiB de vídeo); o detalhe máximo chega em ~150 ms. O "16K" do Gleba é o 4K ampliado, sem detalhe novo ([[Desempenho e Escala]])
+- [ ] Satélite em cor natural: a versão experimental não agradou; o do Gleba voltou a ser o padrão
 - [ ] Editar um trecho de terreno com pincel, com desfazer
 - [ ] Persistência: SQLite pela extensão do Godot, salvar e reabrir
 - [ ] Medir CPU, RAM, GPU e latência na máquina de referência ([[Desempenho e Escala]])
