@@ -16,7 +16,7 @@ Programa para **criar, administrar e simular o mundo de Evron**, o mundo do RPG:
 - Áreas do mundo: [[Geografia e Ambiente]] · [[Assentamentos e Infraestrutura]] · [[Territórios e Política]] · [[Populações e Identidades]] · [[Tecnologia e Economia]] · [[Personagens e Conteúdo do RPG]]
 
 ## Arte e técnica
-- [[Estilo Visual]] · [[Decisões Técnicas]] · [[Estrutura do Projeto Godot]] · [[Desempenho e Escala]]
+- [[Estilo Visual]] · [[Decisões Técnicas]] · [[Estrutura do Projeto Godot]] · [[Desempenho e Escala]] · [[Pincéis Procedurais de Terreno]]
 
 ## Etapas
 - [[E0 - Prova Técnica]] → [[Etapas e Entregas]] · [[Critérios de Aceite]]
