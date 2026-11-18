@@ -367,17 +367,27 @@ def coast_patch(land):
     """Etapa 3 do plano de costa (docs/coast_proto/relatorio.md), só no recorte "continental" por enquanto:
     fora dele, devolve exatamente blur(land, 2) como antes. Dentro, troca a máscara quadriculada por uma
     versão corrigida (tools/coast_fix.fix_coast, numa grade 4x mais fina) reamostrada para a grade nativa como
-    fração de terra (não 0/1): a costa ganha forma nova sem que o resto do planeta mude um pixel."""
+    fração de terra (não 0/1): a costa ganha forma nova sem que o resto do planeta mude um pixel.
+    A correção roda só num recorte (com margem) em volta do recorte, nunca no planeta inteiro: protect_features
+    testa conectividade peça por peça, e no planeta inteiro isso significa relabelar uma imagem de 16384x8192
+    milhares de vezes (travou ~30 min numa tentativa; aqui o recorte upsampled tem <1 Mpx)."""
     base = blur(land, 2)
     cy, cx, half = coast_prototype.pick_crops(land)["continental"]
-    land_hi = np.repeat(np.repeat(land, 4, 0), 4, 1)
+    pad = coast_prototype.MARGIN
+    rows = np.clip(np.arange(cy - half - pad, cy + half + pad), 0, SH - 1)
+    cols = (cx - half - pad + np.arange(2 * (half + pad))) % SW
+    land_crop = land[rows][:, cols]
+    land_hi = np.repeat(np.repeat(land_crop, 4, 0), 4, 1)
     fixed_hi = coast_fix.fix_coast(land_hi)
-    land_fixed = blur(fixed_hi.reshape(SH, 4, SW, 4).mean((1, 3)).astype(np.float32), 1)  # 1 px: combina
-    # com o blur(land, 2) do resto do mapa (a média do bloco 4x4 sozinha antialiasa só dentro do pixel nativo,
-    # sem suavizar entre pixels vizinhos; fica mais "duro" que o resto da costa sem isso)
+    h, w = land_crop.shape
+    fixed_crop = blur(fixed_hi.reshape(h, 4, w, 4).mean((1, 3)).astype(np.float32), 1)  # 1 px: combina com o
+    # blur(land, 2) do resto do mapa (a média do bloco 4x4 sozinha antialiasa só dentro do pixel nativo, sem
+    # suavizar entre pixels vizinhos; fica mais "duro" que o resto da costa sem isso)
+    land_fixed = base.copy()
+    land_fixed[np.ix_(rows, cols)] = fixed_crop
     yy, xx = np.ogrid[:SH, :SW]
     dx = np.minimum(np.abs(xx - cx), SW - np.abs(xx - cx))  # distância em longitude, com a emenda
-    feather = 16  # px nativos de transição, para o patch não aparecer como um degrau
+    feather = 16  # px nativos de transição, para o patch não aparecer como um degrau (menor que `pad`)
     t = smooth(half + feather, half, np.maximum(np.abs(yy - cy), dx).astype(np.float32))
     return base * (1 - t) + land_fixed * t
 

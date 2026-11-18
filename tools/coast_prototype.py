@@ -27,6 +27,8 @@ from PIL import Image
 from scipy import ndimage
 from skimage import measure
 
+import coast_fix
+
 D = "data/evron"
 OUT = "docs/coast_proto"
 SW, SH = 4096, 2048
@@ -84,8 +86,7 @@ def crop_wrapped(a: np.ndarray, cy: int, cx: int, half: int) -> np.ndarray:
     return np.repeat(np.repeat(crop, UPSAMPLE, 0), UPSAMPLE, 1)
 
 
-def signed_dist(land: np.ndarray) -> np.ndarray:
-    return ndimage.distance_transform_edt(land) - ndimage.distance_transform_edt(~land)
+signed_dist = coast_fix.signed_dist
 
 
 def boundary_shift_km(a: np.ndarray, b: np.ndarray, km_px: float) -> tuple:
@@ -100,10 +101,7 @@ def boundary_shift_km(a: np.ndarray, b: np.ndarray, km_px: float) -> tuple:
     return float(vals.mean()), float(vals.max())
 
 
-def regularize(land: np.ndarray, sigma: float) -> np.ndarray:
-    sdf = signed_dist(land)
-    smooth = ndimage.gaussian_filter(sdf, sigma)
-    return smooth > 0
+regularize = coast_fix.regularize
 
 
 def protect(land: np.ndarray, safe: np.ndarray, strong: np.ndarray) -> np.ndarray:
@@ -126,24 +124,7 @@ def protect(land: np.ndarray, safe: np.ndarray, strong: np.ndarray) -> np.ndarra
     return np.where(fragile, safe, strong)
 
 
-def protect_features(land: np.ndarray, sigma: float) -> np.ndarray:
-    """Proteção de feições autoral (seção 14), por tipo em vez de por falha: ilhas pequenas e qualquer istmo ou
-    canal mais estreito que o que a suavização de `sigma` arrisca apagar (abertura morfológica: o que some ao
-    abrir com raio ~sigma é "fino" nessa escala). Decisão de quem desenha: os dois parâmetros abaixo."""
-    neck_r = int(round(sigma))
-    struct = np.ones((3, 3), bool)
-    opened_land = ndimage.binary_dilation(ndimage.binary_erosion(land, struct, iterations=neck_r), struct, iterations=neck_r)
-    thin_land = land & ~opened_land  # istmos, cabos e penínsulas finas
-    water = ~land
-    opened_water = ndimage.binary_dilation(ndimage.binary_erosion(water, struct, iterations=neck_r), struct, iterations=neck_r)
-    thin_water = water & ~opened_water  # estreitos e canais finos
-
-    lbl, n = ndimage.label(land, struct)
-    sizes = ndimage.sum(np.ones_like(lbl), lbl, index=np.arange(1, n + 1))
-    small_islands = np.isin(lbl, np.where(sizes < 8 * neck_r * neck_r)[0] + 1)
-
-    protected = small_islands | thin_land | thin_water
-    return ndimage.binary_dilation(protected, struct, iterations=UPSAMPLE)  # margem de ~1 px da fonte
+protect_features = coast_fix.protect_features  # a implementação mora em coast_fix.py (build_natural.py usa a mesma)
 
 
 def validate(before: np.ndarray, after: np.ndarray) -> dict:
