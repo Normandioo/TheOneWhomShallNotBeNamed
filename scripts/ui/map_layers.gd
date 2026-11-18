@@ -32,7 +32,7 @@ static var LAYERS := [  # static var (não const): Color8 não é aceito em expr
 		"text": "Altitude de Evron em metros, da calibração do projeto. O mar ocupa a metade esquerda da escala.",
 		"gradient": [ALTITUDE_OFFSETS, ALTITUDE_COLORS], "labels": ["−13.500 m", "0 m", "+9.103 m"]},
 	{"group": "Relevo", "menu": "Relevo 16K (em blocos)", "file": "Elevação.png", "kind": "tiles", "tiles": "relevo",
-		"title": "Relevo em alta resolução", "text": "Relevo colorido do Gleba em 16384 × 8192 (≈ 3,2 km por pixel no equador), carregado em blocos conforme o zoom: só o que está na tela fica na memória."},
+		"title": "Relevo em alta resolução", "text": "Relevo colorido do Gleba em 16384 × 8192 (≈ 2,4 km por pixel no equador), carregado em blocos conforme o zoom: só o que está na tela fica na memória."},
 	{"group": "Relevo", "menu": "Elevação (cores do Gleba)", "file": "Elevação.png", "kind": "image", "title": "Elevação do Gleba",
 		"text": "Paleta hipsométrica original do Gleba, inclui gelo. Para valores, use Altitude (calibrada)."},
 	{"group": "Relevo", "menu": "Elevação sem gelo", "file": "Elevation no Ice Age.png", "kind": "image", "title": "Elevação sem gelo",

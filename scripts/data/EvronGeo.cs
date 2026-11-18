@@ -7,7 +7,7 @@ namespace Evron;
 /// dir = (cos lat · sin lon, sin lat, cos lat · cos lon); u = lon/360 + 0,5; v = 0,5 − lat/180. Ângulos em graus.
 internal static class EvronGeo
 {
-    public const double RadiusKm = 8282.3;
+    public const double RadiusKm = 6371.0;  // a Terra (definido pelo autor em 18/11/2026; antes 8.282,3 km)
 
     public static Vector3 Dir(double latDeg, double lonDeg)
     {

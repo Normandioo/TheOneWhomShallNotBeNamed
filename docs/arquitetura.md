@@ -11,7 +11,7 @@ interface) escuta. Assim dá para testar o mundo sem nenhum nó, e trocar a inte
 scripts/
   main.gd          raiz de composição: cria os módulos, liga os sinais, roda o quadro. Sem regra do mundo.
   data/            o planeta e os mapas. Só funções estáticas.
-    evron_geo.gd     raio (8.282,3 km), lat/lon <-> direção <-> pixel, distância pela superfície
+    evron_geo.gd     raio (6.371 km, a Terra), lat/lon <-> direção <-> pixel, distância pela superfície
     EvronGeo.cs      a mesma convenção para o núcleo em C#
     evron_maps.gd    lê data/evron/: a altitude calibrada (float32) e as camadas PNG
   world/           o estado do mundo, sem tela.
@@ -146,11 +146,11 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>                         
 
 ## Limites conhecidos (próximas etapas da E0)
 
-- O globo usa os mapas de 4096 px (12,7 km por pixel no equador): de perto fica borrado; os blocos existem, mas o
+- O globo usa os mapas de 4096 px (9,8 km por pixel no equador): de perto fica borrado; os blocos existem, mas o
   dado de 16K disponível não tem mais detalhe que o de 4K.
 - Ainda não há banco (SQLite), histórico nem calendário: as edições ficam só em memória.
 - As camadas são lidas de `data/evron/`, que não entra no export do Godot.
-- Erosão e rios rodam na grade de 4K (12,7 km por pixel): um vale de verdade não cabe num pixel, e por isso o rio
+- Erosão e rios rodam na grade de 4K (9,8 km por pixel): um vale de verdade não cabe num pixel, e por isso o rio
   ainda se interrompe nos platôs em degraus do Gleba. O passo seguinte é a altitude em blocos editáveis (a mesma
   pirâmide), com a erosão rodando na resolução do bloco.
 - A camada Relevo (16K, em blocos) é uma imagem pronta: a edição muda a luz, não a cor. A legenda a marca como

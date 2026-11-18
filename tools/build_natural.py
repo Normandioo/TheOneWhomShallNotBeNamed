@@ -100,12 +100,12 @@ def build():
         + grass[..., None] * grass_col + bare[..., None] * bare_col
 
     # Encostas íngremes mostram rocha; sem isso a terra fica lisa como pintura. Declividade da altitude calibrada
-    # (pixel de ~12,7 km achata as encostas: 3° já é íngreme nesta escala).
+    # (pixel de ~9,8 km achata as encostas: 3° já é íngreme nesta escala).
     rng = np.random.default_rng(7)  # semente fixa: a importação dá sempre a mesma imagem
     # O mar conta como 0 m: senão o degrau da costa até o fundo vira "encosta" e toda costa ganha uma borda de rocha.
     h = np.maximum(np.fromfile(os.path.join(D, "height_4096x2048.f32"), "<f4").reshape(2048, 4096), 0).astype(np.float32)
     lat = np.deg2rad(90 - (np.arange(2048) + 0.5) * 180 / 2048)[:, None]
-    dy = 8282.3e3 * np.pi / 2048
+    dy = 6371.0e3 * np.pi / 2048
     dx = np.maximum(np.cos(lat), 0.05) * dy * 2
     gx = (np.roll(h, -1, 1) - np.roll(h, 1, 1)) / (2 * dx)
     gy = (np.pad(h, ((1, 1), (0, 0)), mode="edge")[2:] - np.pad(h, ((1, 1), (0, 0)), mode="edge")[:-2]) / (2 * dy)
@@ -144,7 +144,7 @@ def build():
     # Alfa: superfície sólida (terra ou gelo) = 1, água aberta = 0. Suavizado junto (uma máscara só), senão a junta
     # entre terra e gelo marinho fica meio transparente e aparece como linha.
     # Os rios grandes entram como água: o shader corta o alfa em 0,5 com suavização, e a linha borrada de 1 pixel
-    # vira um rio de curvas lisas (em vez de degraus de 12,7 km), mais largo onde o fluxo é maior.
+    # vira um rio de curvas lisas (em vez de degraus de 9,8 km), mais largo onde o fluxo é maior.
     river_water = np.clip(blur(river, 1) * 1.6, 0, 1) * (1 - ice)
     alpha = np.clip(blur(land | sea_ice_mask, 1), 0, 1) * (1 - river_water)
     out = np.dstack([np.clip(rgb, 0, 1), alpha]) * 255
