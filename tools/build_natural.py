@@ -77,6 +77,7 @@ ROCKS = {
     (0, 100, 0): (75, 150, 100), (0, 50, 0): (140, 200, 125), (0, 75, 0): (70, 140, 90), (0, 25, 0): (70, 80, 110),
 }
 HALITE = (255, 235, 235)
+LAND_DARKEN = 0.6  # calibrado contra o brilho médio da terra em Satelite.png do Gleba
 GROUPS = ["wet_jungle", "dry_jungle", "temperate", "conifer", "mediterranean", "montane",
           "tundra", "desert", "savanna", "steppe", "glacier"]
 BIOMES = {  # cor em "BiomasGleba.png" -> grupo de tom do dossel ou de cobertura
@@ -424,6 +425,7 @@ def render_band(F, ix, G, warp, y0, y1):
 
     rgb = trees[..., None] * tree_col + shrub[..., None] * shrub_col \
         + grass[..., None] * grass_col + bare[..., None] * ground
+    rgb *= LAND_DARKEN  # a paleta acima sai clara demais perto do Satelite.png do Gleba
     rgb = lerp(rgb, np.broadcast_to(np.array(LAVA, np.float32), rgb.shape), np.clip(c["volc"], 0, 1) * (0.35 + 0.25 * n_mid))
     rgb = lerp(rgb, np.broadcast_to(np.array(SALT, np.float32), rgb.shape),
                np.clip(c["playa"] * (0.75 + 0.35 * n_mid + 0.2 * n_fine), 0, 1))
