@@ -19,6 +19,7 @@ import numpy as np
 from PIL import Image
 
 import build_natural
+import build_temperature
 import build_tiles
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "evron")  # de qualquer pasta
@@ -59,6 +60,7 @@ def main(zip_path: str) -> None:
     assert (h[land] < 0).sum() == 0, "terra abaixo do nível do mar: calibração errada"
 
     build_natural.build()  # cor natural (usa a altitude recém-gravada)
+    build_temperature.build()  # temperatura de janeiro e julho em °C, para o ciclo sazonal
     build_tiles.build_from_zip(zip_path)  # relevo de 16K em blocos
 
 

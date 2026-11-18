@@ -25,6 +25,31 @@ func refresh_rivers(rivers: Image) -> void:
 	river_texture.update(rivers)
 
 
+## Peso de julho (0 = só janeiro, 1 = só julho) da temperatura sazonal; vem de SeasonalTemperature.july_weight.
+func set_season(july_weight: float) -> void:
+	material.set_shader_parameter("season_july", july_weight)
+
+
+## Carrega os dois mapas de °C e a escala magma na primeira vez que a camada sazonal aparece (2 × 32 MiB).
+func _load_season() -> bool:
+	if _season_loaded:
+		return true
+	var maps := EvronMaps.load_temperature()
+	if maps.is_empty():
+		return false
+	material.set_shader_parameter("temp_jan", ImageTexture.create_from_image(maps["jan"]))
+	material.set_shader_parameter("temp_jul", ImageTexture.create_from_image(maps["jul"]))
+	var g := Gradient.new()
+	g.offsets = PackedFloat32Array(MapLayers.NINE)
+	g.colors = PackedColorArray(MapLayers.MAGMA)
+	var ramp := GradientTexture1D.new()
+	ramp.gradient = g
+	ramp.width = 256
+	material.set_shader_parameter("temp_ramp", ramp)
+	_season_loaded = true
+	return true
+
+
 func set_height(height: Image) -> void:
 	height_texture = ImageTexture.create_from_image(height)
 	material.set_shader_parameter("height_map", height_texture)
@@ -37,13 +62,18 @@ func refresh_height(height: Image) -> void:
 
 
 # = uniform `mode` do globe.gdshader; "tiles" mostra a imagem de base enquanto os blocos (TileLayer) não cobrem
-const MODES := {"image": 0, "altitude": 1, "natural": 2, "tiles": 0}
+const MODES := {"image": 0, "altitude": 1, "natural": 2, "tiles": 0, "season": 3}
+const MapLayers = preload("res://scripts/ui/map_layers.gd")
+
+var _season_loaded := false
 
 
 ## Mostra a camada `layer` (uma entrada de MapLayers.LAYERS). A altitude calibrada não precisa de imagem.
 func show_layer(layer: Dictionary) -> void:
 	material.set_shader_parameter("mode", MODES[layer["kind"]])
 	material.set_shader_parameter("nearest", layer.get("nearest", false))
+	if layer["kind"] == "season" and not _load_season():
+		push_error("temperatura sazonal: rode python tools/import_maps.py (faltam os mapas em °C)")
 	var file: String = layer.get("file", "")
 	if file == "" or file == layer_file:
 		return

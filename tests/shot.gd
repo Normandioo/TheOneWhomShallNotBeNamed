@@ -12,12 +12,14 @@ const HEADLESS_SUITES := [
 	"res://tests/suites/registry_suite.gd",
 	"res://tests/suites/sheet_suite.gd",
 	"res://tests/suites/hub_suite.gd",
+	"res://tests/suites/calendar_suite.gd",
 ]
 const SCENE_SUITES := [
 	"res://tests/suites/globe_suite.gd",
 	"res://tests/suites/tiles_suite.gd",
 	"res://tests/suites/brush_suite.gd",
 	"res://tests/suites/brush_gallery_suite.gd",
+	"res://tests/suites/time_suite.gd",
 ]
 
 
@@ -33,6 +35,7 @@ func _run() -> void:
 			return
 	var main: Node = load("res://scenes/main.tscn").instantiate()
 	main.domains_db = ":memory:"  # os cadastros do usuário não entram nos testes
+	main.save_path = ""  # o teste não lê nem grava o salvamento do usuário
 	root.add_child(main)
 	for path in SCENE_SUITES:
 		if not await _run_suite(path, main, out):

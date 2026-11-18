@@ -14,6 +14,7 @@ func _run() -> void:
 	if args.size() > 2 and args[2] == "scene":
 		main = load("res://scenes/main.tscn").instantiate()
 		main.domains_db = ":memory:"  # os cadastros do usuário não entram nos testes
+		main.save_path = ""  # o teste não lê nem grava o salvamento do usuário
 		root.add_child(main)
 	var suite = script.new()
 	suite.setup(self, main, out)

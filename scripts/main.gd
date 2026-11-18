@@ -5,7 +5,7 @@ extends Node
 ##
 ## Raiz de composição: cria os módulos, liga um ao outro por sinais e roda o quadro. Não tem regra do mundo.
 ##   data/   os mapas de Evron e a geografia (só funções estáticas).
-##   world/  o estado do mundo (a altitude), sem tela.
+##   world/  o estado do mundo, sem tela: a altitude, o calendário universal e o relógio oficial (presente, consulta, eventos).
 ##   edit/   comandos de edição: pincel e a pilha de desfazer/refazer.
 ##   view/   o globo: material, câmera, blocos e a vista 3D.
 ##   ui/     os painéis: mostram valores e avisam por sinais quando o usuário mexe.
@@ -15,6 +15,11 @@ const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 const Terrain = preload("res://scripts/world/Terrain.cs")
 const CommandStack = preload("res://scripts/edit/command_stack.gd")
 const TerrainBrush = preload("res://scripts/edit/terrain_brush.gd")
+const Calendar = preload("res://scripts/world/calendar.gd")
+const WorldClock = preload("res://scripts/world/world_clock.gd")
+const WorldStore = preload("res://scripts/world/world_store.gd")
+const DemoModule = preload("res://scripts/world/demo_module.gd")
+const SeasonalTemperature = preload("res://scripts/world/seasonal_temperature.gd")
 const GlobeMaterial = preload("res://scripts/view/globe_material.gd")
 const GlobeView = preload("res://scripts/view/globe_view.gd")
 const MapLayers = preload("res://scripts/ui/map_layers.gd")
@@ -24,8 +29,10 @@ const SearchPanel = preload("res://scripts/ui/search_panel.gd")
 const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
 const DomainHub = preload("res://scripts/world/domain_hub.gd")
 const ToolPanel = preload("res://scripts/ui/tool_panel.gd")
+const TimeBar = preload("res://scripts/ui/time_bar.gd")
 
 const HEIGHT_UPLOAD_SECONDS := 0.1  # durante a pincelada a altitude vai para a GPU no máximo 10x por segundo
+const AUTOSAVE_SECONDS := 30.0  # reais; o relógio também é salvo a cada comando e ao fechar
 
 @onready var hud: Control = $Hud
 
@@ -41,6 +48,12 @@ var layer_panel: LayerPanel
 var legend: LegendPanel
 var domains: DomainHub
 var tool_panel: ToolPanel
+var clock := WorldClock.new()
+var demo := DemoModule.new()
+var seasonal: SeasonalTemperature  # null se os mapas em °C não foram gerados (tools/import_maps.py)
+var time_bar: TimeBar
+var save_path := WorldStore.DEFAULT_PATH  # "" = não grava nem lê (os testes o esvaziam antes de pôr a cena na árvore)
+var _since_save := 0.0
 
 var layer := 0                    # índice em MapLayers.LAYERS
 var tool := ToolPanel.NAVIGATE    # -1 navegar; senão TerrainBrush.Op
@@ -64,7 +77,8 @@ func _ready() -> void:
 	layer_panel = LayerPanel.new()
 	legend = LegendPanel.new()
 	tool_panel = ToolPanel.new(brush.radius_km, brush.strength, brush.roughness)
-	for panel in [layer_panel, legend, tool_panel]:
+	time_bar = TimeBar.new()
+	for panel in [layer_panel, legend, tool_panel, time_bar]:
 		hud.add_child(panel)
 	var search := SearchPanel.new()
 	var sheet := SheetPanel.new()
@@ -72,6 +86,31 @@ func _ready() -> void:
 	hud.add_child(sheet)
 	domains = DomainHub.new()
 	domains.setup(domains_db, search, sheet)
+	if save_path != "":
+		WorldStore.load_into(clock, save_path)  # sem salvamento válido, abre o cenário técnico, pausado
+	demo.attach(clock)
+	var temperature := EvronMaps.load_temperature()
+	if not temperature.is_empty():
+		seasonal = SeasonalTemperature.new(temperature)
+		_use_model(SeasonalTemperature.NAME, SeasonalTemperature.VERSION)
+	clock.state_changed.connect(_on_clock_changed)
+	clock.time_changed.connect(_on_clock_changed)
+	time_bar.play_toggled.connect(func() -> void:
+		if clock.running:
+			clock.pause()
+		else:
+			clock.play()
+		save_clock())
+	time_bar.speed_selected.connect(func(s: int) -> void: clock.set_speed(s))
+	time_bar.advance_seconds.connect(func(s: int) -> void: _command(clock.advance_by(s)))
+	time_bar.advance_months.connect(func(n: int) -> void: _command(clock.advance_months(n)))
+	time_bar.advance_to.connect(func(t: int) -> void:
+		_command(clock.advance_to(t), "Só dá para avançar até uma data depois do presente."))
+	time_bar.view_date.connect(func(t: int) -> void: clock.enter_view(t))
+	time_bar.back_to_present.connect(clock.exit_view)
+	clock.event_fired.connect(func(e: Dictionary) -> void:
+		time_bar.show_message("Marco: %s (%s)" % [e["name"], Calendar.format(e["at"])]))
+	_on_clock_changed()
 	layer_panel.layer_selected.connect(set_layer)
 	tool_panel.tool_selected.connect(set_tool)
 	tool_panel.radius_changed.connect(func(km: float) -> void: brush.radius_km = km)
@@ -91,6 +130,7 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
+	clock.tick(delta)
 	globe.update(delta)
 	layer_panel.show_camera_altitude(globe.camera_altitude_km())
 	_since_upload += delta
@@ -101,6 +141,14 @@ func _process(delta: float) -> void:
 	if terrain.RiversDirty and not brush.active:  # os rios só mudam ao soltar o mouse, desfazer ou refazer
 		material.refresh_rivers(terrain.RiversImage())
 		terrain.RiversDirty = false
+	_since_save += delta
+	if _since_save >= AUTOSAVE_SECONDS:
+		save_clock()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		save_clock()
 
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -159,6 +207,34 @@ func redo() -> void:
 	commands.redo()
 
 
+func save_clock() -> void:
+	_since_save = 0.0
+	if save_path != "" and not WorldStore.save(clock, save_path):
+		push_error("Não consegui salvar o calendário em " + save_path)
+
+
+## Resultado de um comando de avanço: recusado mostra o aviso; aceito limpa o aviso e salva.
+func _command(accepted: bool, refusal := "") -> void:
+	time_bar.show_message("" if accepted else refusal)
+	if accepted:
+		save_clock()
+
+
+## Registra a versão de um modelo no relógio (vai para o salvamento) e avisa se o mundo foi salvo com outra.
+func _use_model(model_name: String, version: int) -> void:
+	var saved := int(clock.models.get(model_name, version))
+	if saved != version:
+		time_bar.show_message("%s: salvo com a versão %d do modelo, esta é a %d." % [model_name, saved, version])
+	clock.models[model_name] = version
+
+
+func _on_clock_changed() -> void:
+	material.set_season(SeasonalTemperature.july_weight(clock.shown()))
+	time_bar.show_clock(clock)
+	if selected_dir != Vector3.ZERO:  # o ponto fixado mostra os dados da data exibida
+		layer_panel.show_selection("Ponto fixado:\n" + describe(selected_dir))
+
+
 func select(n: Vector3) -> void:
 	selected_dir = n
 	layer_panel.show_selection("Ponto fixado:\n" + describe(n) if n != Vector3.ZERO else "Clique para fixar um ponto.")
@@ -172,7 +248,23 @@ func describe(n: Vector3) -> String:
 	var h := terrain.HeightAt(n)
 	var coords := ("Lat %.2f° %s · Lon %.2f° %s" % [
 		absf(ll.x), "N" if ll.x >= 0.0 else "S", absf(ll.y), "L" if ll.y >= 0.0 else "O"]).replace(".", ",")
-	return "%s\nAltitude %s m (%s)" % [coords, LayerPanel._thousands(roundi(h)), "terra" if h >= 0.0 else "mar"]
+	var head := "%s\nAltitude %s m (%s · estático)" % [coords, LayerPanel._thousands(roundi(h)), "terra" if h >= 0.0 else "mar"]
+	if seasonal != null and MapLayers.LAYERS[layer]["kind"] == "season":
+		return head + "\n" + _season_line(n)
+	var test := DemoModule.value_at(n, clock.shown())
+	if not test.has("value"):
+		return "%s\n%s: indisponível em %s" % [head, DemoModule.NAME, test["date"]]
+	return (head + "\n%s: %+.1f %s (%s · %s)" % [DemoModule.NAME, test["value"], test["unit"], test["state"], test["date"]]).replace(".", ",")
+
+
+## A temperatura estimada em n na data exibida, com condição, origem e incerteza (nunca como se fosse medida).
+func _season_line(n: Vector3) -> String:
+	var r := seasonal.value_at(n, clock.shown())
+	if not r.has("value"):
+		return "Temperatura: indisponível em %s" % r["date"]
+	# Uma referência cortada em −20 °C só dá um limite: o real é menor ou igual ao valor mostrado.
+	var value := ("%s%+.1f °C" % ["≤ " if r["saturated"] else "", r["value"]]).replace(".", ",")
+	return "Temperatura: %s · %s · %s\nOrigem: %s\nIncerteza: %s" % [value, r["state"], r["date"], r["source"], r["uncertainty"]]
 
 
 # --- Reações ---------------------------------------------------------------------------------------------------
