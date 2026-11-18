@@ -52,8 +52,8 @@ func _init() -> void:
 	anchor_bottom = 1.0
 	offset_left = -(WIDTH + 320 + 24)  # à esquerda do painel de busca
 	offset_right = -(320 + 24)
-	offset_top = 12
-	offset_bottom = -12
+	offset_top = 80      # abaixo da barra de ferramentas (topo, no centro)
+	offset_bottom = -128  # acima da barra de tempo (embaixo, à esquerda)
 	var root := VBoxContainer.new()
 	add_child(root)
 	var head := HBoxContainer.new()
