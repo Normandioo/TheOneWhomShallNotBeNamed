@@ -7,6 +7,8 @@ const DIR := "res://data/evron/"
 # shortcut: data/evron/ não entra no export (tem .gdignore); ao distribuir, ler de uma pasta do projeto do usuário.
 const HEIGHT_FILE := "height_4096x2048.f32"
 const HEIGHT_SIZE := Vector2i(4096, 2048)
+const RIVERS_FILE := "rivers_8192x4096.rgh"  # tools/build_rivers.py
+const RIVERS_SIZE := Vector2i(8192, 4096)
 
 
 ## Os mapas foram importados? (sem eles o globo não tem o que mostrar)
@@ -18,6 +20,15 @@ static func available() -> bool:
 static func load_height() -> Image:
 	var bytes := FileAccess.get_file_as_bytes(DIR + HEIGHT_FILE)
 	return Image.create_from_data(HEIGHT_SIZE.x, HEIGHT_SIZE.y, false, Image.FORMAT_RF, bytes)
+
+
+## Rios (tools/build_rivers.py): vetor em km (leste, norte) até a linha central do rio mais próximo (FORMAT_RGH),
+## ou null se o arquivo não existe. A largura de cada rio está em rivers_width.png (load_layer).
+static func load_rivers() -> Image:
+	if not FileAccess.file_exists(DIR + RIVERS_FILE):
+		return null
+	var bytes := FileAccess.get_file_as_bytes(DIR + RIVERS_FILE)
+	return Image.create_from_data(RIVERS_SIZE.x, RIVERS_SIZE.y, false, Image.FORMAT_RGH, bytes)
 
 
 ## Uma camada PNG de data/evron/ (por exemplo "Satelite.png"), ou null se o arquivo não existe.

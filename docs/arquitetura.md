@@ -26,8 +26,12 @@ shaders/globe.gdshader  camada de imagem ou altitude calibrada, com o relevo na 
 shaders/globe_tile.gdshader  um bloco da pirâmide; relief.gdshaderinc tem o relevo comum aos dois
 tools/build_tiles.py    imagem equiretangular grande -> pirâmide de blocos de 512 px (data/evron/tiles/<nome>/)
 tools/import_maps.py    mapas.zip -> data/evron/ (PNGs + altitude em metros); roda uma vez
-tools/build_natural.py  cor natural da terra e do gelo (natural.png) a partir de vegetação, biomas, clima e declividade;
-                        o mar não é pintado ali: o shader o pinta pela profundidade ao vivo
+tools/build_natural.py  cor natural em 8K (natural.png) a partir de vegetação, biomas, clima, solos, rochas, vulcanismo,
+                        bacias endorreicas, lagos e rios; limites interiores com ruído na esfera (semente fixa), costa intacta.
+                        O mar não é pintado ali: o shader o pinta pela profundidade ao vivo, com brilho do sol e
+                        detalhe procedural abaixo de 6 km que aparece só de perto
+tools/build_rivers.py   rios com largura em metros: rede pelas linhas de fluxo do Gleba (que têm a largura de um vale,
+                        12,7 km), linha central suavizada e o vetor até ela em cada texel de 8K; o shader desenha o rio
 tests/             shot.gd (executor) + suites/ (uma por assunto)
 docs/calibracao/   calibração dos mapas do Gleba (JSON, PDF e os scripts que a reproduzem)
 ```

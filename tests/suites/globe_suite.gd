@@ -15,6 +15,29 @@ func run() -> void:
 	cam.look_at_dir(EvronGeo.dir(-24.0, -118.0), 1.35)  # rio grande atravessando um deserto
 	await save("1_satelite_rio")
 
+	# Cor natural (natural.png, 8K com mipmaps): longe, média distância e perto (detalhe procedural do shader).
+	for i in MapLayers.LAYERS.size():
+		if MapLayers.LAYERS[i]["kind"] == "natural":
+			main.set_layer(i)
+	var tex: Texture2D = main.material.material.get_shader_parameter("layer_linear")
+	if main.material.layer_file != "natural.png" or tex.get_width() != 8192 or not tex.get_image().has_mipmaps():
+		return fail("a cor natural deveria estar em 8192 px com mipmaps: %s %d" % [main.material.layer_file, tex.get_width()])
+	cam.look_at_dir(EvronGeo.dir(20.0, 0.0), 3.0)
+	await save("1_natural")
+	cam.look_at_dir(EvronGeo.dir(-24.0, -118.0), 1.35)
+	await save("1_natural_rio")
+	cam.look_at_dir(EvronGeo.dir(-12.5, -123.5), 1.04)  # cordilheira de ~8 km
+	await save("1_natural_perto")
+	cam.look_at_dir(EvronGeo.dir(-12.5, -123.5), 1.004)
+	await save("1_natural_rente")
+	if not main.material.material.get_shader_parameter("rivers_on"):
+		return fail("os rios (tools/build_rivers.py) deveriam estar carregados na cor natural")
+	cam.look_at_dir(EvronGeo.dir(-26.17, -117.22), 1.03)  # o rio grande do deserto: ~2,8 km de largura
+	await save("1_natural_rio_perto")
+	cam.look_at_dir(EvronGeo.dir(-26.17, -117.22), 1.003)
+	await save("1_natural_rio_rente")
+	ok("cor natural em 8K com mipmaps, rios com largura em metros")
+
 	# Trocar de camada muda o material e a legenda.
 	for want in ["Altitude (calibrada)", "Temperatura — janeiro", "Biomas"]:
 		var i := _layer_index(want)

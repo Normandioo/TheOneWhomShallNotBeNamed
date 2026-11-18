@@ -1,5 +1,6 @@
 ## O material do globo (globe.gdshader). É o único lugar que escreve nos uniforms: o resto pede por aqui.
-## Mantém na memória só a camada que está na tela (cada PNG de 4096x2048 ocupa ~24 MB na RAM e outro tanto na GPU).
+## Mantém na memória só a camada que está na tela (cada PNG de 4096x2048 ocupa ~24 MB na RAM e outro tanto na GPU;
+## a cor natural, 8192x4096 RGBA com mipmaps, ~170 MB, mais os rios: 128 MB + 32 MB, carregados uma vez).
 
 const GLOBE_SHADER = preload("res://shaders/globe.gdshader")
 const EvronMaps = preload("res://scripts/data/evron_maps.gd")
@@ -34,7 +35,25 @@ func show_layer(layer: Dictionary) -> void:
 	if img == null:
 		push_error("camada não encontrada: " + file)
 		return
+	if layer["kind"] == "natural":
+		img.generate_mipmaps()  # 8K num disco de ~700 px: sem mipmaps a imagem cintila ao girar
+		_load_rivers()
 	var tex := ImageTexture.create_from_image(img)
 	material.set_shader_parameter("layer_linear", tex)
 	material.set_shader_parameter("layer_nearest", tex)
 	layer_file = file
+
+
+## Os rios com largura em metros (só na cor natural). Sem mipmaps: a média de vetores de lados opostos do rio daria
+## zero e pintaria água onde não há; de longe o shader afina a linha pelo tamanho do pixel.
+func _load_rivers() -> void:
+	if material.get_shader_parameter("rivers_on"):
+		return
+	var off := EvronMaps.load_rivers()
+	var width := EvronMaps.load_layer("rivers_width.png")
+	if off == null or width == null:
+		push_warning("rios não encontrados em data/evron/: rode python tools/build_rivers.py")
+		return
+	material.set_shader_parameter("river_offset", ImageTexture.create_from_image(off))
+	material.set_shader_parameter("river_width", ImageTexture.create_from_image(width))
+	material.set_shader_parameter("rivers_on", true)
