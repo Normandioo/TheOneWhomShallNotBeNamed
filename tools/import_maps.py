@@ -6,7 +6,9 @@ Saída em data/evron/ (fora do git; o zip original é a fonte e não é alterado
     convertida de "Elevation GrayScale.png" pela calibração de docs/calibracao/calibracao_evron.json;
   - natural.png = cor natural da terra e do gelo, 8192x4096 (tools/build_natural.py, ~5 min);
   - rivers_8192x4096.rgh + rivers_width.png = rios com largura em metros (tools/build_rivers.py, ~1 min);
-  - tiles/relevo/ = o relevo de 16K (resized/relevo.png) em pirâmide de blocos (tools/build_tiles.py).
+  - tiles/relevo/ = o relevo de 16K (resized/relevo.png) em pirâmide de blocos (tools/build_tiles.py);
+  - tiles/natural/ = a cor natural de novo, em 16K e com mais grão fino, na mesma pirâmide de blocos
+    (tools/build_natural_tiles.py, ~8-10 min): perto da câmera substitui o natural.png de 8K.
 Os .xcf ficam de fora (decisão do autor).
 
 Requer Pillow e numpy:  python -m pip install pillow numpy
@@ -20,6 +22,7 @@ import numpy as np
 from PIL import Image
 
 import build_natural
+import build_natural_tiles
 import build_rivers
 import build_tiles
 
@@ -63,6 +66,7 @@ def main(zip_path: str) -> None:
     build_natural.build()  # cor natural (usa a altitude recém-gravada)
     build_rivers.build()
     build_tiles.build_from_zip(zip_path)  # relevo de 16K em blocos
+    build_natural_tiles.build()  # cor natural de novo, em 16K, para perto da câmera
 
 
 if __name__ == "__main__":

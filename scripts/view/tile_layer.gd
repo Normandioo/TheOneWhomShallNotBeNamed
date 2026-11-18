@@ -25,6 +25,7 @@ var tile_px := 512
 var name_id := ""
 
 var drawn: Array[String] = []     # blocos na tela no último quadro (para os testes e as medições)
+var ext := "jpg"                  # extensão dos blocos (manifest "format"): "natural" usa png, para ter alfa
 var _tiles := {}                  # chave "z/y/x" -> {"node": MeshInstance3D, "used": int}
 var _loading := {}                # chave -> id da tarefa
 var _ready_images: Array = []     # [chave, Image] vindos das threads
@@ -43,6 +44,7 @@ func open(tile_set: String, globe_radius: float, height_tex: Texture2D) -> bool:
 	name_id = tile_set
 	levels = int(manifest["levels"])
 	tile_px = int(manifest["tile"])
+	ext = String(manifest.get("format", "jpg"))
 	radius = globe_radius
 	_height_tex = height_tex
 	for x in 2:
@@ -171,7 +173,7 @@ func _request(key: String) -> void:
 
 func _load_image(key: String) -> Image:
 	var z := key.get_slice("/", 0)
-	var path := ProjectSettings.globalize_path("%s%s/%s/%s_%s.jpg" % [ROOT, name_id, z, key.get_slice("/", 1), key.get_slice("/", 2)])
+	var path := ProjectSettings.globalize_path("%s%s/%s/%s_%s.%s" % [ROOT, name_id, z, key.get_slice("/", 1), key.get_slice("/", 2), ext])
 	var img := Image.load_from_file(path)
 	if img != null:
 		img.generate_mipmaps()  # na thread: de longe o bloco não cintila
@@ -199,6 +201,7 @@ func _add_tile(key: String, img: Image) -> void:
 	mat.shader = TILE_SHADER
 	mat.set_shader_parameter("tile", ImageTexture.create_from_image(img))
 	mat.set_shader_parameter("height_map", _height_tex)
+	mat.set_shader_parameter("natural", name_id == "natural")
 	var node := MeshInstance3D.new()
 	node.mesh = _patch(_bounds(z, int(key.get_slice("/", 1)), int(key.get_slice("/", 2))), SEGMENTS[mini(z, SEGMENTS.size() - 1)])
 	node.material_override = mat

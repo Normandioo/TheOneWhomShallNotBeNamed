@@ -94,7 +94,7 @@ func run() -> void:
 	cam.look_at_dir(EvronGeo.dir(10.0, 30.0), 1.01)
 	await save("3_perto")
 	if main.globe.camera_altitude_km() > 100.0:
-		return fail("a 1,01 raio a câmera deveria estar a ~83 km do chão")
+		return fail("a 1,01 raio a câmera deveria estar a ~64 km do chão")
 	ok("vista de perto a %.0f km do chão" % main.globe.camera_altitude_km())
 
 

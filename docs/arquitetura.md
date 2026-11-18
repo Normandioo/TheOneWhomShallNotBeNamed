@@ -23,15 +23,20 @@ scripts/
     legend_panel.gd, ui_kit.gd
 scenes/main.tscn   Main e o Hud (os painéis); a vista 3D é criada em código pelo GlobeView
 shaders/globe.gdshader  camada de imagem ou altitude calibrada, com o relevo na iluminação
-shaders/globe_tile.gdshader  um bloco da pirâmide; relief.gdshaderinc tem o relevo comum aos dois
+shaders/globe_tile.gdshader  um bloco da pirâmide; "natural" repinta a água e o grão fino como o globo
+shaders/natural.gdshaderinc  água do mar pela profundidade e grão fino sintetizado, comuns ao globo e aos blocos
 tools/build_tiles.py    imagem equiretangular grande -> pirâmide de blocos de 512 px (data/evron/tiles/<nome>/)
 tools/import_maps.py    mapas.zip -> data/evron/ (PNGs + altitude em metros); roda uma vez
 tools/build_natural.py  cor natural em 8K (natural.png) a partir de vegetação, biomas, clima, solos, rochas, vulcanismo,
-                        bacias endorreicas, lagos e rios; limites interiores com ruído na esfera (semente fixa), costa intacta.
+                        bacias endorreicas, lagos e rios; limites interiores com ruído na esfera (semente fixa), costa com
+                        um warp próprio mais fino (baías e pontas, sem deslocar a geografia em larga escala).
                         O mar não é pintado ali: o shader o pinta pela profundidade ao vivo, com brilho do sol e
                         detalhe procedural abaixo de 6 km que aparece só de perto
+tools/build_natural_tiles.py  a mesma cor natural, em 16K e com mais uma oitava de grão fino, na pirâmide de blocos
+                        (tools/build_tiles.py): perto da câmera substitui o grão sintetizado na tela por mais grão de
+                        verdade; os dados do Gleba não têm mais detalhe que 9,77 km, então isso não é dado novo
 tools/build_rivers.py   rios com largura em metros: rede pelas linhas de fluxo do Gleba (que têm a largura de um vale,
-                        12,7 km), linha central suavizada e o vetor até ela em cada texel de 8K; o shader desenha o rio
+                        9,77 km), linha central suavizada e o vetor até ela em cada texel de 8K; o shader desenha o rio
 tests/             shot.gd (executor) + suites/ (uma por assunto)
 docs/calibracao/   calibração dos mapas do Gleba (JSON, PDF e os scripts que a reproduzem)
 ```
@@ -82,7 +87,7 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>      (com janela: tira c
 
 ## Limites conhecidos (próximas etapas da E0)
 
-- O globo usa os mapas de 4096 px (12,7 km por pixel no equador): de perto fica borrado; os blocos existem, mas o
+- O globo usa os mapas de 4096 px (9,77 km por pixel no equador): de perto fica borrado; os blocos existem, mas o
   dado de 16K disponível não tem mais detalhe que o de 4K.
 - Ainda não há edição, desfazer, banco (SQLite), histórico nem calendário.
 - As camadas são lidas de `data/evron/`, que não entra no export do Godot.

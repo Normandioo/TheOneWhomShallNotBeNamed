@@ -1,6 +1,6 @@
 """Cor natural de Evron em 8K (estilo das composições de satélite da NASA), montada a partir dos dados do Gleba.
 
-Cada pixel de saída (8192x4096, 6,35 km no equador) sai do que os mapas medem, não de uma pintura:
+Cada pixel de saída (8192x4096, 4,89 km no equador) sai do que os mapas medem, não de uma pintura:
   - vegetação: frações de "Vegetação.png" (arbustos, gramíneas, árvores); o tom das árvores vem do bioma
     (tropical úmida/seca, temperada, conífera, mediterrânea, montana), o das gramíneas da chuva, da estação seca,
     da umidade e da tundra;
@@ -10,10 +10,10 @@ Cada pixel de saída (8192x4096, 6,35 km no equador) sai do que os mapas medem, 
   - salinas: fundo das bacias endorreicas secas e afloramentos de halita;
   - gelo: calota (Köppen EF) e geleiras; neve permanente onde nem o mês mais quente passa de ~1 °C; gelo marinho
     pela temperatura, com a borda quebrada em placas;
-  - vales pelo fluxo de "Waterflow.png" (as linhas do Gleba têm a largura de um vale, 12,7 km; a água do rio, com
+  - vales pelo fluxo de "Waterflow.png" (as linhas do Gleba têm a largura de um vale, 9,77 km; a água do rio, com
     largura em metros, é desenhada pelo shader a partir de tools/build_rivers.py) e lagos por "Waterbodies.png"
     (salgados nas bacias secas).
-Os mapas são de células de 12,7 km (hexágonos do Gleba). Para a imagem não mostrar as células, os limites
+Os mapas são de células de 9,77 km (hexágonos do Gleba). Para a imagem não mostrar as células, os limites
 interiores (biomas, solos, rochas) são amostrados com um deslocamento suave por ruído (domain warp) e afinados por
 ruído fractal em várias escalas. A costa, os rios e os lagos NÃO são deslocados: a geografia de Evron fica igual.
 O ruído é uma função da posição 3D na esfera (sem emenda na longitude 180° nem estiramento nos polos) com semente
@@ -25,6 +25,9 @@ cor da água (doce ou salgada), para o shader poder usá-la.
 
 Saída: data/evron/natural.png (RGBA, 8192x4096). Rodado por import_maps.py; sozinho: python tools/build_natural.py
 Leva ~2 min e ~4 GB de RAM.
+
+build_tile_source() gera a mesma imagem em 16384x8192 com mais uma oitava de grão fino: fonte da pirâmide de
+blocos de tools/build_natural_tiles.py (mais detalhe sintetizado perto da câmera). Leva ~8 min e ~6 GB de RAM.
 """
 import os
 
@@ -36,7 +39,8 @@ SW, SH = 4096, 2048     # grade dos mapas do Gleba
 W, H = 8192, 4096       # saída
 BAND = 128              # linhas de saída por vez: limita a memória (~1 GB por faixa)
 SEED = 20261117
-WARP_PX = 2.0           # deslocamento máximo dos limites interiores, em pixels do Gleba (~25 km)
+RADIUS_KM = 6371.0      # raio médio da Terra (EvronGeo.RADIUS_KM); Evron tem o tamanho da Terra
+WARP_PX = 2.0           # deslocamento máximo dos limites interiores, em pixels do Gleba (~20 km)
 COAST_WARP_PX = 1.1     # idem para a costa, mais fino: quebra o serrilhado das células sem mudar a geografia
 
 VIRIDIS = np.array([(0.267, 0.005, 0.329), (0.279, 0.175, 0.483), (0.230, 0.322, 0.546), (0.173, 0.449, 0.558), (0.128, 0.567, 0.551),
@@ -244,7 +248,7 @@ def sea_ice_fields(land, t_max):
     def last_land(rows):  # índice da última terra à esquerda de cada pixel (em 3 voltas, para atravessar 180°)
         idx = np.where(np.tile(rows, 3), np.tile(x, 3)[None] + np.repeat(np.arange(3), SW)[None] * SW, -big)
         return np.maximum.accumulate(idx, 1)[:, SW:2 * SW] - SW
-    km_px = (2 * np.pi * 8282.3 / SW) * np.maximum(np.cos(np.deg2rad(lat)), 0.02)[:, None]
+    km_px = (2 * np.pi * RADIUS_KM / SW) * np.maximum(np.cos(np.deg2rad(lat)), 0.02)[:, None]
     d_w = (x[None] - last_land(land)) * km_px
     d_e = (x[None] - last_land(land[:, ::-1]))[:, ::-1] * km_px  # o mesmo, com o paralelo espelhado
     subpolar = np.clip((np.abs(lat) - 45) / 15, 0, 1)[:, None]
@@ -293,12 +297,12 @@ def fields():
     rock = blur(rock, 2)
     halite = is_color(bed, HALITE)
 
-    # Declividade da altitude calibrada (pixel de ~12,7 km achata as encostas: 3° já é íngreme nesta escala).
+    # Declividade da altitude calibrada (pixel de ~9,77 km achata as encostas: 3° já é íngreme nesta escala).
     # O mar conta como 0 m: senão o degrau da costa até o fundo vira "encosta".
     hraw = np.fromfile(os.path.join(D, "height_4096x2048.f32"), "<f4").reshape(SH, SW)
     h = np.maximum(hraw, 0)
     lat = np.deg2rad(90 - (np.arange(SH) + 0.5) * 180 / SH)[:, None]
-    dy = 8282.3e3 * np.pi / SH
+    dy = RADIUS_KM * 1e3 * np.pi / SH
     dx = np.maximum(np.cos(lat), 0.05) * dy * 2
     gx = (np.roll(h, -1, 1) - np.roll(h, 1, 1)) / (2 * dx)
     hp = np.pad(h, ((1, 1), (0, 0)), mode="edge")
@@ -370,7 +374,9 @@ def smooth(e0, e1, x):
     return t * t * (3 - 2 * t)
 
 
-def render_band(F, ix, G, warp, warp_coast, y0, y1):
+def render_band(F, ix, G, warp, warp_coast, y0, y1, W=W, H=H, fine_oct=2):
+    """W, H e fine_oct por parâmetro: build_tile_source() usa o dobro da resolução com mais uma oitava de grão
+    fino (ruído contínuo na esfera, independente da resolução de saída) para a pirâmide de blocos de perto."""
     rows = np.arange(y0, y1)
     dirs = sphere_dirs(rows, W, H)
     sx = np.broadcast_to((np.arange(W) + 0.5) * SW / W - 0.5, (y1 - y0, W)).astype(np.float32)
@@ -381,7 +387,7 @@ def render_band(F, ix, G, warp, warp_coast, y0, y1):
     wvc = sample(warp_coast, sx, sy) * COAST_WARP_PX
     land_a = sample(G[..., :1], sx + wvc[..., 0], sy + wvc[..., 1])[..., 0]
     c = {k: f[..., i] for k, i in ix.items()}
-    n_fine = fbm(dirs, 650, 2, SEED + 6)  # ~12 e ~6 km: o grão de um pixel desta imagem
+    n_fine = fbm(dirs, 650, fine_oct, SEED + 6)  # ~12 e ~6 km (mais oitavas: mais fino ainda, para os blocos de perto)
     n_mid, n_low = c["n_mid"], c["n_low"]
 
     # Biomas: os limites (borrados nas células) viram bordas irregulares; os pesos são renormalizados.
@@ -465,7 +471,7 @@ def render_band(F, ix, G, warp, warp_coast, y0, y1):
     lake, saline, valley = g[..., 1], np.clip(g[..., 2] * 1.5, 0, 1), g[..., 3]
     lake_ice = lake * smooth(-1, 1, -c["t_max"])
     water_col = lerp(mix(np.ones_like(lake), LAKE_FRESH), mix(np.ones_like(lake), LAKE_SALT), saline)
-    # As linhas de fluxo do Gleba têm a largura de uma célula (12,7 km): são os vales, não o rio. Aqui o vale grande
+    # As linhas de fluxo do Gleba têm a largura de uma célula (9,77 km): são os vales, não o rio. Aqui o vale grande
     # fica só um pouco mais escuro (sombra, umidade); a água do rio, com a largura certa, é desenhada pelo shader a
     # partir de tools/build_rivers.py.
     rgb *= (1 - 0.12 * np.clip(valley * 2, 0, 1) * (1 - snow))[..., None]
@@ -492,6 +498,19 @@ def build():
             stats["ice_bottom"] = np.maximum(snow, sea_ice)[-40:].mean()
     Image.fromarray(out, "RGBA").save(os.path.join(D, "natural.png"), compress_level=3)
     check(out, stats)
+
+
+def build_tile_source(w=2 * W, h=2 * H, fine_oct=3):
+    """A mesma imagem de build(), em resolução maior e com mais grão fino (independente da resolução: é ruído
+    contínuo na esfera). Fonte da pirâmide de blocos de tools/build_natural_tiles.py."""
+    F, ix, G, warp, warp_coast = fields()
+    out = np.empty((h, w, 4), np.uint8)
+    band_h = max(1, BAND * W // w)  # mesma memória por faixa de build() (escala com a largura), nessa resolução maior
+    for y in range(0, h, band_h):
+        y1 = min(y + band_h, h)
+        band, _, _, _ = render_band(F, ix, G, warp, warp_coast, y, y1, W=w, H=h, fine_oct=fine_oct)
+        out[y:y1] = np.round(band * 255).astype(np.uint8)
+    return out
 
 
 def check(out, stats):

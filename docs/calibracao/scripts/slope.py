@@ -1,7 +1,7 @@
 import sys, numpy as np, common as C
 from PIL import Image
 C.D = sys.argv[1]
-R = 8282.3e3
+R = 6371.0e3  # raio médio da Terra (EvronGeo.RADIUS_KM)
 land = C.load("Landmask.png")[..., 0] == 80
 g = np.array(Image.open(f"{C.D}/Elevation GrayScale.png")).astype(np.float64)
 h = np.where(g >= 32767, (g - 32767) * 9103.40 / 17336, (g - 32767) * 13500 / 32767)

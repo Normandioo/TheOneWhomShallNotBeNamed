@@ -19,7 +19,8 @@ TILE = 512
 QUALITY = 90  # JPEG: decodifica rápido no carregamento; a perda não aparece neste relevo de cores chapadas
 
 
-def build(img: Image.Image, name: str, out_root="data/evron/tiles") -> dict:
+def build(img: Image.Image, name: str, out_root="data/evron/tiles", fmt="jpg") -> dict:
+    """fmt "png" preserva o alfa (pirâmide "natural": A = terra/gelo sólido); "jpg" é só para imagem opaca."""
     w, h = img.size
     assert w == 2 * h and w % (2 * TILE) == 0, f"precisa ser equiretangular 2:1 e múltipla de {2 * TILE}: {img.size}"
     levels = (w // (2 * TILE)).bit_length()  # 16384 -> 5 níveis (0..4)
@@ -34,9 +35,10 @@ def build(img: Image.Image, name: str, out_root="data/evron/tiles") -> dict:
         for y in range(2 ** z):
             for x in range(2 ** (z + 1)):
                 tile = level_img.crop((x * TILE, y * TILE, (x + 1) * TILE, (y + 1) * TILE))
-                tile.save(os.path.join(out, str(z), f"{y}_{x}.jpg"), quality=QUALITY)
+                path = os.path.join(out, str(z), f"{y}_{x}.{fmt}")
+                tile.save(path, quality=QUALITY) if fmt == "jpg" else tile.save(path, compress_level=3)
                 count += 1
-    manifest = {"name": name, "tile": TILE, "levels": levels, "width": w, "height": h, "format": "jpg",
+    manifest = {"name": name, "tile": TILE, "levels": levels, "width": w, "height": h, "format": fmt,
                 "projection": "equiretangular, coluna 0 = -180°, linha 0 = 90°N (EvronGeo)"}
     with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)

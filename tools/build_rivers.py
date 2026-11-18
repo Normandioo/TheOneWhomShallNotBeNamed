@@ -1,6 +1,6 @@
 """Rios de Evron com largura em metros: a linha central de cada rio e a distância até ela, para o shader desenhar.
 
-O Gleba guarda os rios como fluxo por célula de 12,7 km ("Waterflow.png"); pintado na imagem, o rio teria no mínimo
+O Gleba guarda os rios como fluxo por célula de 9,77 km ("Waterflow.png"); pintado na imagem, o rio teria no mínimo
 um pixel de largura (6 a 13 km), de 5 a 15 vezes mais largo que os maiores rios da Terra. Aqui:
   1. cada célula com fluxo t > T0 vira um nó; o nó desce para o vizinho de maior fluxo (o fluxo acumula rio abaixo);
      o vizinho de água (mar ou lago) é a foz;
@@ -31,7 +31,8 @@ T0 = 0.60              # fluxo mínimo que vira rio desenhado (o "River.png" do 
 W_MIN, W_MAX = 0.1, 5.0  # km, em t = T0 e t = 1
 WINDOW_KM = 20.0       # até onde o vetor é gravado: cobre meio pixel da tela com o globo inteiro na tela (~25 km/px)
 FAR_KM = 30.0
-KM_PER_DEG = 2 * np.pi * 8282.3 / 360
+RADIUS_KM = 6371.0  # raio médio da Terra (EvronGeo.RADIUS_KM); Evron tem o tamanho da Terra
+KM_PER_DEG = 2 * np.pi * RADIUS_KM / 360
 
 
 def width_km(t):
@@ -96,7 +97,7 @@ def network():
     idx[ys, xs] = np.arange(n)
 
     # Rio abaixo. O fluxo do Gleba vem de uma escala de 256 cores e empata em trechos inteiros (74% dos nós têm um
-    # vizinho de fluxo igual), e a altitude de 12,7 km não desce sempre ao longo do vale: nenhum dos dois dá a direção.
+    # vizinho de fluxo igual), e a altitude de 9,77 km não desce sempre ao longo do vale: nenhum dos dois dá a direção.
     # Então cada rio corre para a sua foz pelo caminho mais curto dentro da rede (busca em largura a partir dos nós que
     # tocam água: mar ou lago); no empate, segue o vizinho de maior fluxo (o curso principal). Rede sem saída
     # (bacia endorreica) termina no seu ponto mais baixo.
@@ -147,7 +148,7 @@ def network():
     mlat = lat + 0.5 * ((90 - (by + 0.5) * 180 / sh) - lat)
 
     # Suavização ao longo do curso principal: média com o nó de cima (o afluente de maior fluxo) e o de baixo.
-    # A escada de pixels de 12,7 km vira curva; nascentes e foz ficam no lugar.
+    # A escada de pixels de 9,77 km vira curva; nascentes e foz ficam no lugar.
     up = -np.ones(n, np.int64)
     has_down = (down >= 0) & ~mouth
     order = np.argsort(t)  # o afluente de maior fluxo grava por último e fica como o principal
