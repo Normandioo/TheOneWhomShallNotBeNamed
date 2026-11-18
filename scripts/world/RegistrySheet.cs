@@ -228,7 +228,6 @@ public partial class Registry
                          .Select(r => Convert.ToInt64(r[0])).ToHashSet();
             allowed = allowed == null ? rel : allowed.Intersect(rel).ToHashSet();
         }
-        var cmp = CultureInfo.InvariantCulture.CompareInfo;
         var hits = new System.Collections.Generic.Dictionary<long, (string Kind, string? Display, string? Match)>();
         foreach (var r in _db.Rows("select e.id, e.kind, n.name, n.role, n.valid_from, n.valid_to from entity e join entity_name n on n.entity_id = e.id " +
                                    "where (@0 = '' or e.kind = @0) order by e.id, n.valid_from", kind))
@@ -240,7 +239,7 @@ public partial class Registry
             hits.TryGetValue(id, out var h);
             h.Kind = Str(r[1]);
             if (principalNow) h.Display = name;
-            if (text == "" || cmp.IndexOf(name, text, Loose) >= 0) h.Match ??= name;
+            if (Matches(name, text)) h.Match ??= name;
             hits[id] = h;
         }
         return new(hits.Where(p => p.Value.Match != null).OrderBy(p => p.Value.Display ?? p.Value.Match, StringComparer.CurrentCultureIgnoreCase).Take(200)
@@ -379,6 +378,9 @@ public partial class Registry
             return new Array<long>(kinds.Select(k => made[k]));
         });
     }
+
+    /// O nome contém o texto, sem diferenciar maiúsculas nem acentos (texto vazio casa com tudo).
+    static bool Matches(string name, string text) => text == "" || CultureInfo.InvariantCulture.CompareInfo.IndexOf(name, text, Loose) >= 0;
 
     static string Str(object? o) => o?.ToString() ?? "";
 }

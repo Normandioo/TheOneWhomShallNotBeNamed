@@ -14,12 +14,19 @@ public partial class WorldDb : RefCounted
     public void Open(string path)
     {
         Close();
-        _db = new SqliteConnection($"Data Source={path}");
-        _db.Open();
-        Execute("PRAGMA foreign_keys = ON");
+        // O builder escapa o caminho (um ';' ou aspas no nome da pasta quebraria a string montada à mão).
+        _db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path }.ToString());
+        try
+        {
+            _db.Open();
+            Execute("PRAGMA foreign_keys = ON");
+        }
+        catch { Close(); throw; }
     }
 
     public void Close() { _db?.Dispose(); _db = null; }
+
+    public bool IsOpen() => _db != null;
 
     public void Execute(string sql) => Run(sql);
 
@@ -36,7 +43,10 @@ public partial class WorldDb : RefCounted
     /// Aplica as migrações que faltam, cada uma numa transação; quem falha desfaz e deixa a versão anterior.
     internal void Migrate(string[] steps)
     {
-        for (long v = SchemaVersion(); v < steps.Length; v++)
+        long current = SchemaVersion();
+        if (current > steps.Length)  // banco criado por uma versão mais nova: escrever nele com um esquema que não se conhece o corromperia
+            throw new InvalidOperationException($"o banco é da versão {current} do esquema e este programa só conhece até a {steps.Length}");
+        for (long v = current; v < steps.Length; v++)
         {
             long i = v;
             Tx(() => { Run(steps[i]); Run($"PRAGMA user_version = {i + 1}"); return 0; });

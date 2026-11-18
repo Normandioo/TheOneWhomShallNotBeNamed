@@ -7,7 +7,7 @@ const FOREVER := 9223372036854775807
 const T1 := 1000
 const T2 := 2000
 const T3 := 3000
-var NO_LAYERS := PackedStringArray()  # vazio = todas as camadas
+var ALL_LAYERS := PackedStringArray(["politica", "cultural", "etnica", "linguistica", "religiosa", "racial"])  # lista vazia = nenhuma camada
 
 
 func run() -> void:
@@ -48,18 +48,20 @@ func run() -> void:
 	if r.Places("").size() != n:
 		return fail("reutilizar o lugar não pode duplicá-lo")
 	var camadas := {}
-	for it in r.MapItems(NO_LAYERS, 0, T1):
+	for it in r.MapItems(ALL_LAYERS, 0, T1):
 		camadas[it.layer] = true
 	if camadas.keys().size() != 6 or not camadas.has("politica") or not camadas.has("racial"):
 		return fail("deveria haver as 6 camadas, uma por tipo de entidade: %s" % [camadas.keys()])
 	if r.MapItems(PackedStringArray(["religiosa"]), 0, T1).size() != 1 or r.MapItems(PackedStringArray(["politica", "cultural"]), 0, T1).size() != 3:
 		return fail("filtro por camada")
-	if r.MapItems(NO_LAYERS, pais, T1).size() != 2 or r.PresencesOf(pais, T1)[0].place != "Valdória" or r.PresencesOf(pais, T1)[0].role != "capital":
+	if r.MapItems(ALL_LAYERS, pais, T1).size() != 2 or r.PresencesOf(pais, T1)[0].place != "Valdória" or r.PresencesOf(pais, T1)[0].role != "capital":
 		return fail("as presenças de uma entidade só")
 	r.AddPresence(pais, valdoria, "capital", "alta")                   # repetição: mesma entidade + lugar + função
 	r.AddPresence(pais, valdoria, "planeta", "alta")                   # função inválida
 	if r.PresencesOf(pais, T1).size() != 2:
 		return fail("presença repetida ou função inválida foi aceita")
+	if r.MapItems(PackedStringArray(), 0, T1).size() != 0 or r.EntitiesAt(12.5, 21.5, 0.0, PackedStringArray(), 0, T1).size() != 0:
+		return fail("sem nenhuma camada pedida não há presença (lista vazia não significa todas)")
 	ok("o mesmo lugar em duas fichas (capital do país, sede da religião); seis camadas, uma por tipo; filtro por camada e por entidade; repetição recusada")
 
 	# Presença datada: a capital muda de lugar; consultar antes e depois.
@@ -74,16 +76,16 @@ func run() -> void:
 	ok("presença datada: a capital muda de lugar numa data, fim excluído")
 
 	# O clique: acha pelo disco ou pela tolerância do ponto; o mais específico primeiro; as camadas e a entidade filtram.
-	var no_vale: Array = r.EntitiesAt(12.5, 21.5, 0.0, NO_LAYERS, 0, T1)
+	var no_vale: Array = r.EntitiesAt(12.5, 21.5, 0.0, ALL_LAYERS, 0, T1)
 	if no_vale.size() != 5 or not no_vale[0].inside:
 		return fail("dentro do Vale de Aren deveria haver 5 presenças (país, cultura, etnia, idioma, raça): %d" % no_vale.size())
-	if r.EntitiesAt(12.5, 21.5, 0.0, PackedStringArray(["politica"]), 0, T1).size() != 1 or r.EntitiesAt(12.5, 21.5, 0.0, NO_LAYERS, etnia, T1).size() != 1:
+	if r.EntitiesAt(12.5, 21.5, 0.0, PackedStringArray(["politica"]), 0, T1).size() != 1 or r.EntitiesAt(12.5, 21.5, 0.0, ALL_LAYERS, etnia, T1).size() != 1:
 		return fail("o clique também respeita a camada e a entidade")
-	if r.EntitiesAt(10.0, 20.5, 0.0, NO_LAYERS, 0, T1).filter(func(h): return h.place == "Valdória").size() != 0:
+	if r.EntitiesAt(10.0, 20.5, 0.0, ALL_LAYERS, 0, T1).filter(func(h): return h.place == "Valdória").size() != 0:
 		return fail("0,5° (~72 km) de um ponto sem tolerância não é um clique nele")
-	if r.EntitiesAt(10.0, 20.5, 100.0, NO_LAYERS, 0, T1).filter(func(h): return h.place == "Valdória" and not h.inside).size() != 2:
+	if r.EntitiesAt(10.0, 20.5, 100.0, ALL_LAYERS, 0, T1).filter(func(h): return h.place == "Valdória" and not h.inside).size() != 2:
 		return fail("com 100 km de tolerância, o ponto (capital e sede) deveria ser achado, fora do disco")
-	if r.EntitiesAt(-40.0, -100.0, 50.0, NO_LAYERS, 0, T1).size() != 0:
+	if r.EntitiesAt(-40.0, -100.0, 50.0, ALL_LAYERS, 0, T1).size() != 0:
 		return fail("um clique em lugar nenhum não acha nada")
 	ok("clique no mapa: dentro do disco, tolerância no ponto, mais específico primeiro, filtro de camada e de entidade")
 
@@ -92,9 +94,9 @@ func run() -> void:
 	var topo: int = r.AddPlace("Gelo do norte", "regiao", 89.9, 0.0, 100.0, "")
 	r.AddPresence(raca, emenda, "presenca", "baixa")
 	r.AddPresence(raca, topo, "presenca", "baixa")
-	if r.EntitiesAt(0.0, -179.9, 0.0, NO_LAYERS, raca, T1).filter(func(h): return h.place == "Linha da data").size() != 1:
+	if r.EntitiesAt(0.0, -179.9, 0.0, ALL_LAYERS, raca, T1).filter(func(h): return h.place == "Linha da data").size() != 1:
 		return fail("o disco deveria atravessar a longitude 180°")
-	if r.EntitiesAt(89.9, 180.0, 0.0, NO_LAYERS, raca, T1).filter(func(h): return h.place == "Gelo do norte").size() != 1:
+	if r.EntitiesAt(89.9, 180.0, 0.0, ALL_LAYERS, raca, T1).filter(func(h): return h.place == "Gelo do norte").size() != 1:
 		return fail("o disco deveria cobrir o polo")
 	ok("disco atravessando a longitude 180° e cobrindo o polo")
 
@@ -213,7 +215,7 @@ func run() -> void:
 	if r.PresencesOf(copia, T3).size() != 2 or r.EstimatesOf(copia, T3).size() != 0:
 		return fail("duplicar com vínculos copia as presenças em aberto e não copia estimativas")
 	r.Delete(copia)
-	if r.MapItems(NO_LAYERS, copia, T3).size() != 0:
+	if r.MapItems(ALL_LAYERS, copia, T3).size() != 0:
 		return fail("excluir a entidade leva as presenças")
 	r.DeletePlace(vale)  # em uso: recusado
 	r.DeletePlace(emenda)  # em uso pela raça

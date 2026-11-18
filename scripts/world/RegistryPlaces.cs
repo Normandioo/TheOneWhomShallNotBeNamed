@@ -126,9 +126,8 @@ public partial class Registry
     /// Lugares cujo nome contém o texto (sem diferenciar maiúsculas nem acentos); vazio lista todos (até 200), por nome.
     public Array<Dictionary> Places(string text)
     {
-        var cmp = System.Globalization.CultureInfo.InvariantCulture.CompareInfo;
         return new(_db.Rows("select id, name, kind, lat, lon, radius_km, note from place order by name collate nocase, id")
-            .Where(r => text == "" || cmp.IndexOf(Str(r[1]), text, Loose) >= 0).Take(200).Select(PlaceDict));
+            .Where(r => Matches(Str(r[1]), text)).Take(200).Select(PlaceDict));
     }
 
     /// Exclui um lugar criado por engano: recusa se alguma presença, estimativa ou distribuição o usa.
@@ -165,28 +164,29 @@ public partial class Registry
     public void DeletePresence(long presenceId) => _db.Run("delete from presence where id = @0", presenceId);
 
     const string PresenceSelect =
-        "select p.id, p.entity_id, e.kind, p.role, p.certainty, pl.id, pl.name, pl.kind, pl.lat, pl.lon, pl.radius_km, p.valid_from, p.valid_to " +
+        "select p.id, p.entity_id, e.kind, p.role, p.certainty, pl.id, pl.name, pl.kind, pl.lat, pl.lon, pl.radius_km, p.valid_from, p.valid_to, " +
+        // o nome principal vigente em t e, se não houver, o atual: no mesmo SELECT, sem uma consulta por presença
+        "coalesce((select n.name from entity_name n where n.entity_id = e.id and n.role = 'principal' and n.valid_from <= @0 and @0 < n.valid_to), " +
+        "(select n.name from entity_name n where n.entity_id = e.id and n.role = 'principal' and n.valid_to = 9223372036854775807)) " +
         "from presence p join entity e on e.id = p.entity_id join place pl on pl.id = p.place_id " +
         "where p.valid_from <= @0 and @0 < p.valid_to";
 
-    Dictionary PresenceDict(object?[] r, long t) => new()
+    static Dictionary PresenceDict(object?[] r) => new()
     {
-        ["id"] = Convert.ToInt64(r[0]), ["entity_id"] = Convert.ToInt64(r[1]), ["entity"] = NameOrCurrent(Convert.ToInt64(r[1]), t), ["kind"] = Str(r[2]),
+        ["id"] = Convert.ToInt64(r[0]), ["entity_id"] = Convert.ToInt64(r[1]), ["entity"] = Str(r[13]), ["kind"] = Str(r[2]),
         ["layer"] = LayerOf(Str(r[2])), ["role"] = Str(r[3]), ["certainty"] = Str(r[4]), ["place_id"] = Convert.ToInt64(r[5]), ["place"] = Str(r[6]),
         ["place_kind"] = Str(r[7]), ["lat"] = Convert.ToDouble(r[8]), ["lon"] = Convert.ToDouble(r[9]), ["radius_km"] = Convert.ToDouble(r[10]),
         ["from"] = Convert.ToInt64(r[11]), ["to"] = Convert.ToInt64(r[12]),
     };
 
-    string NameOrCurrent(long id, long t) => NameAt(id, t) is { Length: > 0 } n ? n : Name(id);
-
     /// As presenças de uma entidade no instante t.
     public Array<Dictionary> PresencesOf(long entityId, long t) => new(
-        _db.Rows(PresenceSelect + " and p.entity_id = @1 order by pl.name collate nocase, p.id", t, entityId).Select(r => PresenceDict(r, t)));
+        _db.Rows(PresenceSelect + " and p.entity_id = @1 order by pl.name collate nocase, p.id", t, entityId).Select(PresenceDict));
 
-    /// O que o mapa desenha em t: as presenças das camadas pedidas (vazio = todas), de uma entidade só (onlyEntity ≠ 0) ou de todas.
+    /// O que o mapa desenha em t: as presenças das camadas pedidas (lista vazia = nenhuma camada, nada), de uma entidade só (onlyEntity ≠ 0) ou de todas.
     public Array<Dictionary> MapItems(string[] layers, long onlyEntity, long t) => new(
         _db.Rows(PresenceSelect + " and (@1 = 0 or p.entity_id = @1) order by p.id", t, onlyEntity)
-           .Where(r => layers.Length == 0 || layers.Contains(LayerOf(Str(r[2])))).Select(r => PresenceDict(r, t)));
+           .Where(r => layers.Contains(LayerOf(Str(r[2])))).Select(PresenceDict));
 
     /// As presenças que cobrem o ponto (lat, lon) em t: o ponto está a no máximo max(raio do lugar, toleranceKm) do centro. Mesmos filtros do
     /// MapItems. Os de área menor primeiro (o mais específico), depois por distância; cada resultado tem distance_km e inside (dentro do disco).

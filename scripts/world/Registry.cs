@@ -83,8 +83,12 @@ public partial class Registry : RefCounted
     public void Open(string path)
     {
         _db.Open(path);
-        _db.Migrate(Migrations);
+        try { _db.Migrate(Migrations); }
+        catch { _db.Close(); throw; }  // um banco recusado não fica aberto: as chamadas seguintes falham em vez de escrever nele
     }
+
+    /// O banco está aberto (Open não foi recusado)?
+    public bool IsOpen() => _db.IsOpen();
 
     public void Close() => _db.Close();
 

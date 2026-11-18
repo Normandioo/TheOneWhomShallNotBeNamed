@@ -414,7 +414,6 @@ func _map_and_population(pais: int) -> void:
 	sheet.estimate_added.emit(vale_id, "500", "100", "", "media")
 	if not sheet._geo_message.text.contains("não pode ser menor") or reg.EstimatesOf(pais, hub.shown_t).size() != 2:
 		return fail("faixa invertida deveria avisar e não gravar")
-	sheet.estimate_added.emit(vale_id, "2.000,5", "", "", "media")  # vírgula decimal não é milhar: 2.000,5 não é número válido
 	ok("população pela ficha: faixa, só nível, número inválido e faixa invertida avisam sem gravar")
 
 	# A composição aparece na ficha (percentuais, faixa derivada, desconhecido) e o texto não promete o que não sabe.

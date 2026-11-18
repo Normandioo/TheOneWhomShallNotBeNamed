@@ -103,7 +103,8 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
 
 - **SQLite pelo C#** (`Microsoft.Data.Sqlite` no `Evron.csproj`). O banco é um arquivo; o esquema vem de migrações em ordem
   (`Registry.Migrations`), cada uma numa transação, com a versão em `PRAGMA user_version`. Mudar o esquema = acrescentar uma migração,
-  nunca editar uma antiga. Chaves estrangeiras ligadas.
+  nunca editar uma antiga. Chaves estrangeiras ligadas. **Um banco de versão maior que a conhecida é recusado**: `Open` fecha a conexão, `IsOpen()` é falso e o
+  `DomainHub` fica inativo (escrever num esquema desconhecido o corromperia). A connection string usa o `SqliteConnectionStringBuilder` (caminho com `;` ou apóstrofo abre).
 - **Entidade:** ID inteiro estável, mundo (único por enquanto), um dos seis tipos (`cultura`, `pais`, `raca`, `etnia`, `idioma`,
   `religiao`) e resumo opcional. Só o nome é obrigatório. A data de criação é a **real**, não a do mundo.
 - **Nomes** (`entity_name`): texto, papel (principal, alternativo, histórico, autodenominação, exônimo, oficial, popular, gentílico,
@@ -133,7 +134,8 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
 - **Duplicar** cria identidade nova (resumo, valores e etiquetas copiados; nomes alternativos não; vínculos só se pedido e só os em aberto).
   **Excluir** é correção de erro de criação: avisa quantos vínculos vão junto e apaga tudo da entidade. **Sociedade** (`CreateSociety`) cria país,
   cultura e/ou etnia ligados, que é o começo da ficha antiga; raça, idioma e religião não são criados.
-- **Fluxo:** painel emite sinal → `DomainHub` chama o Registry → o hub devolve ao painel. Só mudanças estruturais (nome alternativo, etiqueta,
+- **Fluxo:** painel emite sinal → `DomainHub` chama o Registry → o hub devolve ao painel. Os sinais de edição (`name_changed`, `summary_changed`, `field_edited`) levam o **id da entidade da ficha em que
+  se digitou**: se a ficha trocar enquanto o campo tem o foco (clique numa presença no globo), o texto vai para a entidade certa, não para a que acabou de abrir. Só mudanças estruturais (nome alternativo, etiqueta,
   vínculo, abrir outra ficha) refazem a ficha; editar campo não, para não tirar o foco de quem digita.
 - **Ainda não feito:** desfazer/refazer dos cadastros (a pilha de comandos está na `main`; falta escrever os comandos dos cadastros); mudança de nome **com data** na interface (`RenameAt` existe no núcleo; falta o seletor de data); a "visão composta" completa da ficha antiga (hoje: criar a sociedade e navegar pelas relações, sem abas lado a lado); escolher registros existentes ao criar a sociedade; fontes e `property_version` para o restante dos campos; importação. Duas migrações paralelas em ramos diferentes precisam ser renumeradas ao integrar.
 
@@ -159,7 +161,7 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
   dos meses). O formulário cria calendários com a era valendo **para sempre**: datas muito antes do marco mostram anos negativos; períodos de era e várias eras
   existem no núcleo e ainda não têm tela.
 - **O hub segue o relógio:** `Main._on_clock_changed` chama `DomainHub.set_time(clock.shown())` (presente ou consulta). As datas escritas na ficha atualizam na hora;
-  a ficha em si (nomes, vínculos e usos válidos na data) é relida por `tick()` no máximo 2 vezes por segundo e só quando o usuário não está digitando.
+  a ficha em si (nomes, vínculos e usos válidos na data) só é refeita por `tick()` se o conteúdo dela mudou (compara o hash do `Registry.Sheet` na data nova com o da ficha mostrada: um relógio andando sem cruzar nenhuma validade não reconstrói nada), no máximo 2 vezes por segundo e nunca com o usuário digitando ou com um menu aberto. A busca e o mapa também só se redesenham se o resultado mudou.
 - **Ainda não feito:** editar ou apagar calendário e era; períodos de era e reformas na interface; calendários aritméticos (ano ≠ 365 dias), datas ambíguas
   por reforma e viradas locais por lugar (etapas 7 e seguintes); nomes de mês por idioma (hoje um conjunto por calendário); semanas; região do uso.
 
@@ -186,11 +188,13 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
   data. Marginais (uma distribuição por raça e outra por religião) **não geram cruzamento**: não existe consulta que cruze, de propósito; cruzar exige um registro próprio (futuro).
 - **No globo** (`view/place_layer.gd`, dentro da SubViewport, em `direção × raio × 1,0015`): cada área é um disco translúcido com aro e cada lugar um rótulo de tamanho fixo
   (★ capital, ◆ sede ou lugar sagrado, ● demais) com a função e as entidades; várias entidades no mesmo lugar dividem o rótulo e têm aros um pouco mais para dentro.
+  Os menus de lugar da ficha mostram até 50 (os da própria ficha primeiro) e têm busca por nome, então qualquer lugar é alcançável; os nomes das presenças vêm no mesmo `SELECT`.
   O painel "Presenças no mapa" (esquerda, acima da barra de tempo) escolhe a ficha aberta ou todas as entidades e as camadas; a data é a do relógio.
 - **O que se vê se seleciona:** `Main.select` fixa o ponto para os cadastros e chama `DomainHub.pick(dir, tolerância)`, que consulta as presenças visíveis (mesmas camadas e escopo)
-  dentro do raio do lugar ou da tolerância (cresce com a altura da câmera, ao menos 40 km). Uma entidade achada abre a ficha; várias aparecem na lista de busca.
+  dentro do raio do lugar ou da tolerância (cresce com a altura da câmera, ao menos 40 km). Uma entidade achada abre a ficha (se já é a aberta, a ficha não é refeita: o que se digita nela fica);
+  várias aparecem na lista de busca. **Nenhuma camada marcada = nenhuma presença** (a lista de camadas vazia no `MapItems`/`EntitiesAt` não significa "todas").
 - **Na ficha:** "Presença no mapa" (lista com "Ver", que centraliza o globo; vincular lugar existente com função; **criar lugar no ponto fixado** com nome, raio e função),
-  "População" (estimativas por lugar, na data mostrada: faixa, só nível, certeza; as composições lidas, com a faixa absoluta, o "desconhecido" e o aviso de lista incompleta).
+  "População" (os números seguem o formato da ficha: `1.200` é 1200, `1,5` é 1,5, `2.000,5` é 2000,5; estimativas por lugar, na data mostrada: faixa, só nível, certeza; as composições lidas, com a faixa absoluta, o "desconhecido" e o aviso de lista incompleta).
 - **Ainda não feito:** criar distribuições pela interface (hoje só pelo núcleo e testes); editar lugar (nome, raio, posição) e mover um marcador; polígonos de fronteira, território
   administrado × reivindicado em desenho próprio e "percentuais por região" como camada; nomes alternativos e históricos de lugar; critérios numéricos configuráveis para os níveis
   baixa/média/alta; fonte da estimativa na interface; recálculo de estimativas por data (hoje cada uma é um registro).

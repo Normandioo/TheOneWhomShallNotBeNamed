@@ -78,6 +78,16 @@ public partial class Registry
             name, description == "" ? null : description, months, dayOffset, reliability, source == "" ? null : source);
     }
 
+    /// Cria o calendário com a sua primeira era (válida sempre), tudo ou nada: se a era for inválida, o calendário também não fica.
+    public long CreateCalendar(string name, string description, string monthNames, long dayOffset, string reliability, string source,
+                               string eraName, string eraAbbreviation, long eraStart, string direction, long firstNumber) =>
+        _db.Tx(() =>
+        {
+            long id = AddCalendar(name, description, monthNames, dayOffset, reliability, source);
+            AttachEra(id, AddEra(eraName, eraAbbreviation, eraStart, direction, firstNumber), Always, Forever, 0);
+            return id;
+        });
+
     /// Cria um marco de contagem. direction: up | down. firstNumber: o número do ano do marco (1, ou 0 se a contagem tem ano zero).
     public long AddEra(string name, string abbreviation, long startInstant, string direction, long firstNumber) =>
         _db.Insert("insert into era(name, abbreviation, start_instant, direction, first_number) values (@0, @1, @2, @3, @4)",

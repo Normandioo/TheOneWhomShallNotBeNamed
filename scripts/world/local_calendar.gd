@@ -58,6 +58,8 @@ static func to_universal(def: Dictionary, era_id: int, year: int, month: int, da
 ## O intervalo de uma data só com ano (month = 0) ou com ano e mês: {status: "exata", from, to, precision: "ano" | "mes"}, com
 ## from incluído e to excluído. Não existe instante exato para essa data; quem usa precisa manter a precisão.
 static func span(def: Dictionary, era_id: int, year: int, month := 0) -> Dictionary:
+	if month < 0 or month > 12:  # um índice negativo em MONTH_DAYS daria um mês errado em vez de recusar
+		return {"status": INVALID, "reason": "esse mês não existe neste calendário"}
 	var first := _local_seconds(def, era_id, year, maxi(month, 1), 1, 0, 0, 0)
 	if first.has("status"):
 		return first

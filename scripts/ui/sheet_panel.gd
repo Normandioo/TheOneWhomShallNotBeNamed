@@ -6,9 +6,9 @@ extends PanelContainer
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 const LayerPanel = preload("res://scripts/ui/layer_panel.gd")  # só para o separador de milhares
 
-signal name_changed(text: String)           # correção de grafia do nome atual (não é mudança histórica)
-signal summary_changed(text: String)
-signal field_edited(code: String, state: String, value: String)  # state: known | unknown | na; known + "" = limpar
+signal name_changed(entity_id: int, text: String)  # correção de grafia do nome atual (não é mudança histórica)
+signal summary_changed(entity_id: int, text: String)
+signal field_edited(entity_id: int, code: String, state: String, value: String)  # state: known | unknown | na; known + "" = limpar
 signal alias_added(role: String, name: String)
 signal tag_added(tag: String)
 signal tag_removed(tag: String)
@@ -23,6 +23,7 @@ signal closed
 signal calendar_use_added(calendar_id: int, purpose: String)
 signal calendar_use_removed(use_id: int)
 signal place_focus_requested(place_id: int)
+signal place_search(text: String)  # buscar lugares para os menus (o hub responde com show_place_candidates)
 signal presence_added(place_id: int, role: String)
 signal presence_removed(presence_id: int)
 signal place_created(name: String, kind: String, radius_km: float, role: String)  # no ponto fixado no mapa
@@ -56,6 +57,7 @@ var _geo := {}             # lugares e datas para as seções de mapa e populaç
 var _fixed_label: Label
 var _create_place_btn: Button
 var _geo_message: Label
+var _place_pickers: Array = []  # os menus de lugar da ficha (a busca de um atualiza todos)
 var _universal_label: Label
 var _date_labels := {}     # id do uso -> Label com a data local
 
@@ -148,10 +150,14 @@ func show_geo_message(text: String) -> void:
 		_geo_message.text = text
 
 
-## O usuário está digitando na ficha? Quem refaz a ficha (o hub) espera, para não tirar o foco de quem escreve.
+## O usuário está digitando na ficha ou com um menu aberto? Quem refaz a ficha (o hub) espera, para não tirar o foco nem fechar o menu.
 func is_editing() -> bool:
 	var f := get_viewport().gui_get_focus_owner() if is_inside_tree() else null
-	return f != null and is_ancestor_of(f) and (f is LineEdit or f is TextEdit)
+	if f == null or not is_ancestor_of(f):
+		return false
+	if f is OptionButton or f is MenuButton:
+		return f.get_popup().visible  # refazer a ficha destruiria o menu aberto
+	return f is LineEdit or f is TextEdit
 
 
 func hide_sheet() -> void:
@@ -193,6 +199,7 @@ func confirm_delete(name: String, links: int) -> void:
 
 func _build_identity() -> void:
 	var name_edit := LineEdit.new()
+	var eid := int(_sheet.id)  # a entidade desta ficha: capturado agora, porque o foco pode sair quando outra ficha já abriu
 	name_edit.text = _sheet.name
 	name_edit.add_theme_font_size_override("font_size", 20)
 	name_edit.tooltip_text = "Corrige a grafia do nome. Uma mudança de nome no mundo (com data) é outro registro."
@@ -203,7 +210,7 @@ func _build_identity() -> void:
 			name_edit.text = last[0]  # o nome nunca fica vazio
 		elif t != last[0]:
 			last[0] = t
-			name_changed.emit(t)
+			name_changed.emit(eid, t)
 	name_edit.text_submitted.connect(func(_t: String) -> void: commit.call())
 	name_edit.focus_exited.connect(commit)
 	_body.add_child(name_edit)
@@ -218,7 +225,7 @@ func _build_identity() -> void:
 	summary.focus_exited.connect(func() -> void:
 		if summary.text != last_summary[0]:
 			last_summary[0] = summary.text
-			summary_changed.emit(summary.text))
+			summary_changed.emit(eid, summary.text))
 	_body.add_child(summary)
 
 	var tags := HFlowContainer.new()
@@ -299,6 +306,7 @@ func _build_content() -> void:
 
 
 func _make_field(f: Dictionary) -> Dictionary:
+	var eid := int(_sheet.id)  # ver _build_identity
 	var row := VBoxContainer.new()
 	var head := HBoxContainer.new()
 	row.add_child(head)
@@ -346,7 +354,7 @@ func _make_field(f: Dictionary) -> Dictionary:
 		if st != entry.last_state or v != entry.last_value:
 			entry.last_state = st
 			entry.last_value = v
-			field_edited.emit(f.code, st, v)
+			field_edited.emit(eid, f.code, st, v)
 	state.item_selected.connect(func(_i: int) -> void:
 		editor.visible = state.selected == 0
 		commit.call())
@@ -437,6 +445,7 @@ func _build_links() -> void:
 
 
 func _build_places() -> void:
+	_place_pickers.clear()
 	_fixed_label = null
 	_create_place_btn = null
 	if _geo.is_empty():
@@ -467,21 +476,18 @@ func _build_places() -> void:
 		del.pressed.connect(func() -> void: presence_removed.emit(int(p.id)))
 		row.add_child(del)
 	var role_keys: Array = UiKit.ROLE_LABEL.keys()
-	if not _geo.places.is_empty():
-		var existing := HBoxContainer.new()
-		box.add_child(existing)
-		var place := OptionButton.new()
-		place.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		for pl in _geo.places:
-			place.add_item(pl.name)
-			place.set_item_metadata(place.item_count - 1, int(pl.id))
-		existing.add_child(place)
-		var role_a := _option(role_keys, func(k): return UiKit.ROLE_LABEL[k])
-		existing.add_child(role_a)
-		var link := Button.new()
-		link.text = "Vincular"
-		link.pressed.connect(func() -> void: presence_added.emit(int(place.get_item_metadata(place.selected)), role_keys[role_a.selected]))
-		existing.add_child(link)
+	box.add_child(_note("Vincular a um lugar que já existe:"))
+	var place := _place_picker(box)
+	var existing := HBoxContainer.new()
+	box.add_child(existing)
+	var role_a := _option(role_keys, func(k): return UiKit.ROLE_LABEL[k])
+	existing.add_child(role_a)
+	var link := Button.new()
+	link.text = "Vincular"
+	link.pressed.connect(func() -> void:
+		if place.item_count > 0 and place.selected >= 0:
+			presence_added.emit(int(place.get_item_metadata(place.selected)), role_keys[role_a.selected]))
+	existing.add_child(link)
 	box.add_child(_note("Ou crie um lugar no ponto fixado no mapa (clique no globo):"))
 	_fixed_label = _note(_geo.fixed_text)
 	box.add_child(_fixed_label)
@@ -555,14 +561,9 @@ func _build_population() -> void:
 	if _geo.places.is_empty():
 		box.add_child(_note("Crie ou vincule um lugar acima para registrar uma estimativa."))
 		return
+	var place := _place_picker(box)
 	var add := HBoxContainer.new()
 	box.add_child(add)
-	var place := OptionButton.new()
-	place.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	for pl in _geo.places:
-		place.add_item(pl.name)
-		place.set_item_metadata(place.item_count - 1, int(pl.id))
-	add.add_child(place)
 	var low := LineEdit.new()
 	low.placeholder_text = "de"
 	low.custom_minimum_size = Vector2(70, 0)
@@ -586,11 +587,49 @@ func _build_population() -> void:
 	go.text = "Registrar"
 	go.tooltip_text = "Vale para a data mostrada pelo relógio"
 	go.pressed.connect(func() -> void:
+		if place.item_count == 0 or place.selected < 0:
+			return
 		estimate_added.emit(int(place.get_item_metadata(place.selected)), low.text.strip_edges(), high.text.strip_edges(),
 			["", "baixa", "media", "alta"][level.selected], cert_keys[certainty.selected]))
 	add2.add_child(go)
 	_geo_message = _note("")
 	box.add_child(_geo_message)
+
+
+## Um menu de lugar com busca por nome: mostra os primeiros lugares e, ao digitar, o hub devolve os que casam (show_place_candidates).
+func _place_picker(box: VBoxContainer) -> OptionButton:
+	var row := HBoxContainer.new()
+	box.add_child(row)
+	var query := LineEdit.new()
+	query.placeholder_text = "buscar lugar"
+	query.custom_minimum_size = Vector2(110, 0)
+	query.text_changed.connect(func(t: String) -> void: place_search.emit(t))
+	row.add_child(query)
+	var pick := OptionButton.new()
+	pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(pick)
+	_fill_places(pick, _geo.places, _geo.get("places_more", false))
+	_place_pickers.append(pick)
+	return pick
+
+
+func _fill_places(pick: OptionButton, items: Array, more: bool) -> void:
+	pick.clear()
+	for pl in items:
+		pick.add_item(pl.name)
+		pick.set_item_metadata(pick.item_count - 1, int(pl.id))
+	if more:  # há mais do que cabe: o aviso não é escolhível
+		pick.add_item("… há mais: refine a busca")
+		pick.set_item_disabled(pick.item_count - 1, true)
+	if pick.item_count > 0:
+		pick.select(0)
+
+
+## O resultado de uma busca de lugar (cada um: id, name) nos menus de lugar da ficha; more = havia mais do que cabe.
+func show_place_candidates(items: Array, more: bool) -> void:
+	for pick in _place_pickers:
+		if is_instance_valid(pick):
+			_fill_places(pick, items, more)
 
 
 func _option(keys: Array, label_of: Callable) -> OptionButton:
