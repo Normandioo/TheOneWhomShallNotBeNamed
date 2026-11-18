@@ -1,0 +1,4 @@
+# Padrão de projetos Godot: texto com fim de linha LF.
+* text=auto eol=lf
+*.img binary
+*.rh binary

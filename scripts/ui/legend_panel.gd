@@ -1,0 +1,79 @@
+extends PanelContainer
+## Legenda do modo de mapa atual, no canto inferior direito: o que as cores e os símbolos significam.
+
+const UiKit = preload("res://scripts/ui/ui_kit.gd")
+const MapLegends = preload("res://scripts/ui/map_legends.gd")
+
+const WIDTH := 236
+
+var _title: Label
+var _body: VBoxContainer
+var _text: Label
+
+
+func _init() -> void:
+	add_theme_stylebox_override("panel", UiKit.panel_style())
+	set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	grow_vertical = Control.GROW_DIRECTION_BEGIN
+	position = Vector2(-12, -12)
+	var box := VBoxContainer.new()
+	add_child(box)
+	_title = Label.new()
+	_title.add_theme_font_size_override("font_size", 16)
+	box.add_child(_title)
+	_body = VBoxContainer.new()
+	box.add_child(_body)
+	_text = Label.new()
+	_text.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_text.custom_minimum_size = Vector2(WIDTH, 0)
+	_text.modulate = Color(1, 1, 1, 0.7)
+	box.add_child(_text)
+
+
+func show_mode(mode: int) -> void:
+	var data: Dictionary = MapLegends.MODES[mode]
+	_title.text = data["title"]
+	_text.text = data["text"]
+	for c in _body.get_children():
+		c.queue_free()
+	for item in data.get("items", []):
+		_add_swatch(item[0], item[1])
+	if data.has("gradient"):
+		_add_gradient(data["gradient"], data["labels"])
+
+
+func _add_swatch(color: Color, text: String) -> void:
+	var row := HBoxContainer.new()
+	var swatch := ColorRect.new()
+	swatch.color = color
+	swatch.custom_minimum_size = Vector2(16, 16)
+	row.add_child(swatch)
+	var label := Label.new()
+	label.text = " " + text
+	row.add_child(label)
+	_body.add_child(row)
+
+
+func _add_gradient(colors: Array, labels: Array) -> void:
+	var gr := Gradient.new()
+	gr.colors = PackedColorArray(colors)
+	gr.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	var gt := GradientTexture1D.new()
+	gt.gradient = gr
+	gt.width = WIDTH
+	var bar := TextureRect.new()
+	bar.texture = gt
+	bar.custom_minimum_size = Vector2(WIDTH, 14)
+	bar.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bar.stretch_mode = TextureRect.STRETCH_SCALE
+	_body.add_child(bar)
+	var row := HBoxContainer.new()
+	var aligns := [HORIZONTAL_ALIGNMENT_LEFT, HORIZONTAL_ALIGNMENT_CENTER, HORIZONTAL_ALIGNMENT_RIGHT]
+	for k in 3:
+		var l := Label.new()
+		l.text = labels[k]
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		l.horizontal_alignment = aligns[k]
+		row.add_child(l)
+	_body.add_child(row)
