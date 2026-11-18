@@ -297,7 +297,8 @@ public partial class Registry
 
         return new Dictionary { ["id"] = id, ["kind"] = kind, ["name"] = NameAt(id, t) is { Length: > 0 } n ? n : Name(id), ["summary"] = Str(e[0][1]),
                                 ["names"] = names, ["tags"] = Tags(id), ["fields"] = fields, ["links"] = links,
-                                ["calendars"] = CalendarsOf(id, t) };
+                                ["calendars"] = CalendarsOf(id, t), ["presences"] = PresencesOf(id, t), ["estimates"] = EstimatesOf(id, t),
+                                ["compositions"] = CompositionsOf(id, t) };
     }
 
     /// Tipos de vínculo que uma ficha desse tipo pode criar como origem: code, label e dst_kind ("" = qualquer).
@@ -325,6 +326,7 @@ public partial class Registry
             _db.Run("insert into entity_tag(entity_id, tag) select @1, tag from entity_tag where entity_id = @0", id, copy);
             if (copyLinks)
             {
+                _db.Run("insert into presence(entity_id, place_id, role, valid_from, valid_to, certainty, note) select @1, place_id, role, valid_from, valid_to, certainty, note from presence where entity_id = @0 and valid_to = @2", id, copy, Forever);
                 _db.Run("insert into calendar_use(entity_id, calendar_id, purpose, valid_from, valid_to, priority) select @1, calendar_id, purpose, valid_from, valid_to, priority from calendar_use where entity_id = @0 and valid_to = @2", id, copy, Forever);
                 _db.Run("insert into relation(type, src, dst, valid_from, valid_to, note) select type, @1, dst, valid_from, valid_to, note from relation where src = @0 and valid_to = @2", id, copy, Forever);
                 _db.Run("insert into relation(type, src, dst, valid_from, valid_to, note) select type, src, @1, valid_from, valid_to, note from relation where dst = @0 and valid_to = @2", id, copy, Forever);
@@ -345,6 +347,13 @@ public partial class Registry
         {
             _db.Run("delete from relation where src = @0 or dst = @0", id);
             _db.Run("delete from calendar_use where entity_id = @0", id);
+            _db.Run("delete from presence where entity_id = @0", id);
+            _db.Run("delete from distribution_share where distribution_id in (select id from distribution where subject_id = @0)", id);
+            _db.Run("delete from distribution where subject_id = @0", id);
+            _db.Run("delete from population_estimate where subject_id = @0", id);
+            // Quem era categoria de uma distribuição some dela, e a lista deixa de ser completa (não dá para afirmar que está inteira).
+            _db.Run("update distribution set complete = 0 where id in (select distribution_id from distribution_share where category_id = @0)", id);
+            _db.Run("delete from distribution_share where category_id = @0", id);
             _db.Run("update entity_name set lang_id = null where lang_id = @0", id);
             _db.Run("delete from entity_name where entity_id = @0", id);
             _db.Run("delete from field_value where entity_id = @0", id);

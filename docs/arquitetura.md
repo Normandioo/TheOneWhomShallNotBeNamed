@@ -22,6 +22,7 @@ scripts/
     RegistrySheet.cs (C#, parte do Registry) a ficha: campos como dados, valores, etiquetas, busca, duplicar, excluir, sociedade
     RegistryCalendar.cs (C#, parte do Registry) calendários locais, eras e o uso por entidade, com validade
     local_calendar.gd conversão universal <-> calendário local (funções sobre uma definição; usa o calendar.gd)
+    RegistryPlaces.cs (C#, parte do Registry) lugares (ponto ou disco), presenças no mapa, estimativas e distribuições demográficas
     domain_hub.gd    liga os painéis de busca, ficha e calendários ao Registry; segue o relógio (set_time/tick)
     calendar.gd      o calendário universal: só conversões (365 dias, sem bissextos); tempo = segundos int64 desde a época
     world_clock.gd   o relógio oficial: presente, consulta, pausa, velocidade, eventos e o contrato dos módulos
@@ -38,6 +39,7 @@ scripts/
     globe_camera.gd    gira em volta do globo e dá zoom logarítmico, da órbita a ~17 km do chão; a luz vai junto
     globe_view.gd      SubViewport com a esfera e a câmera; converte a tela em ponto da superfície (hover e clique)
     tile_layer.gd      camada em blocos: escolhe os blocos da pirâmide pelo zoom, carrega em threads, cache limitado
+    place_layer.gd     as presenças dos cadastros sobre o globo: discos translúcidos com aro, rótulos de tamanho fixo, uma cor por camada
   ui/              painéis: mostram valores e avisam por sinais.
     map_layers.gd    o catálogo das camadas: arquivo, grupo, legenda e o texto com a confiança da calibração
     layer_panel.gd   escolha da camada e leitura do cursor (lat/lon, altitude, terra/mar)
@@ -45,6 +47,7 @@ scripts/
     search_panel.gd  busca nos cadastros (nome, filtro de tipo) e o menu "Novo" (seis tipos e a sociedade)
     sheet_panel.gd   a ficha: identidade, resumo, etiquetas, nomes, conteúdo gerado dos campos, relações, calendários, duplicar e excluir
     calendar_panel.gd janela dos calendários locais: os cadastrados e o formulário de um novo (com a primeira era)
+    presence_panel.gd camadas e escopo do mapa de presenças (a ficha aberta ou todas as entidades)
     time_bar.gd      barra de tempo (embaixo à esquerda) e janela do calendário: data, pausa, velocidade, avanços, consulta
     legend_panel.gd, ui_kit.gd
 scenes/main.tscn   Main e o Hud (os painéis); a vista 3D é criada em código pelo GlobeView
@@ -132,7 +135,7 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
   cultura e/ou etnia ligados, que é o começo da ficha antiga; raça, idioma e religião não são criados.
 - **Fluxo:** painel emite sinal → `DomainHub` chama o Registry → o hub devolve ao painel. Só mudanças estruturais (nome alternativo, etiqueta,
   vínculo, abrir outra ficha) refazem a ficha; editar campo não, para não tirar o foco de quem digita.
-- **Ainda não feito:** desfazer/refazer dos cadastros (a pilha de comandos está no ramo `pfv`, hoje na `main`; falta escrever os comandos); mudança de nome **com data** na interface (`RenameAt` existe no núcleo; falta o seletor de data); a "visão composta" completa da ficha antiga (hoje: criar a sociedade e navegar pelas relações, sem abas lado a lado); escolher registros existentes ao criar a sociedade; selecionar no mapa (etapa 5); fontes, `property_version` para o restante dos campos, demografia e lugares estruturados, importação. Duas migrações paralelas em ramos diferentes precisam ser renumeradas ao integrar.
+- **Ainda não feito:** desfazer/refazer dos cadastros (a pilha de comandos está na `main`; falta escrever os comandos dos cadastros); mudança de nome **com data** na interface (`RenameAt` existe no núcleo; falta o seletor de data); a "visão composta" completa da ficha antiga (hoje: criar a sociedade e navegar pelas relações, sem abas lado a lado); escolher registros existentes ao criar a sociedade; fontes e `property_version` para o restante dos campos; importação. Duas migrações paralelas em ramos diferentes precisam ser renumeradas ao integrar.
 
 ### Calendários locais (etapa 3)
 
@@ -159,6 +162,38 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
   a ficha em si (nomes, vínculos e usos válidos na data) é relida por `tick()` no máximo 2 vezes por segundo e só quando o usuário não está digitando.
 - **Ainda não feito:** editar ou apagar calendário e era; períodos de era e reformas na interface; calendários aritméticos (ano ≠ 365 dias), datas ambíguas
   por reforma e viradas locais por lugar (etapas 7 e seguintes); nomes de mês por idioma (hoje um conjunto por calendário); semanas; região do uso.
+
+### Lugares, presenças e demografia (etapa 5)
+
+- **Lugar** (`place`): nome, tipo (assentamento, região, local sagrado, natural, outro), `lat`/`lon` e `radius_km`: **0 = ponto; > 0 = área aproximada em disco**.
+  É compartilhável: o mesmo lugar em duas fichas é o mesmo registro (a capital do país e a sede da religião). **Limite:** só ponto e disco; fronteira
+  em polígono é futura (shortcut: disco, até haver um editor de contornos). Distâncias pela esfera (`atan2`), então o disco atravessa a longitude 180° e cobre o polo.
+- **Presença** (`presence`): entidade + lugar + função (capital, sede, origem, presença, centro cultural, lugar sagrado, território, reivindicação, outro) +
+  validade `[início, fim)` + certeza. A **camada do mapa vem do tipo da entidade**: país = fronteira política, cultura = presença cultural, etnia = distribuição
+  étnica, idioma = área linguística, religião = presença religiosa, raça = habitat. Nenhuma camada implica a outra; o território político de um país não vira a
+  presença da cultura dele. Mudar a capital = `EndPresence(t)` + nova presença em t.
+- **Estimativa** (`population_estimate`): o que se conta para o tipo da entidade (**habitantes** para país, **integrantes** para etnia/cultura/raça, **falantes**
+  para idioma, **adeptos** para religião), num lugar e numa data: faixa `low..high` (iguais = exato) **ou** só um nível (baixa/média/alta), nunca os dois, e
+  **nível nunca vira número**. Consulta em t devolve, em cada lugar, a estimativa mais recente com data até t: não projeta para trás nem para a frente.
+  O idioma oficial segue sendo um vínculo (`idioma_oficial`); os falantes são outra informação, em outra base.
+- **Distribuição** (`distribution` + `distribution_share`): a composição percentual da população da entidade-sujeito num lugar e data, por raça/etnia/cultura/religião/idioma,
+  declarando `exclusive` (cada pessoa em uma só categoria) e `complete` (a lista traz todas). Regras: exclusiva + completa soma 100%; exclusiva não passa de 100% e,
+  se incompleta, o resto é "desconhecido"; **não exclusiva não tem teto** (falantes de vários idiomas contam em cada um). O denominador (opcional) é a estimativa da
+  mesma entidade, no mesmo lugar e data; com faixa numérica gera a faixa absoluta por categoria; sem ele (ou só com nível) fica só o percentual. É criada inteira e de uma vez:
+  para mudar, exclui-se e recria-se. Excluir uma categoria a tira das distribuições e tira o "completa" delas.
+- **Somas** (`SumEstimates`): recusa bases diferentes (habitantes, integrantes, falantes e adeptos não se somam entre si), lugares ou datas diferentes, só nível, uma
+  estimativa só e a mesma entidade duas vezes. Entre entidades da mesma base só soma se as duas estiverem como categorias de uma distribuição **exclusiva** no mesmo lugar e
+  data. Marginais (uma distribuição por raça e outra por religião) **não geram cruzamento**: não existe consulta que cruze, de propósito; cruzar exige um registro próprio (futuro).
+- **No globo** (`view/place_layer.gd`, dentro da SubViewport, em `direção × raio × 1,0015`): cada área é um disco translúcido com aro e cada lugar um rótulo de tamanho fixo
+  (★ capital, ◆ sede ou lugar sagrado, ● demais) com a função e as entidades; várias entidades no mesmo lugar dividem o rótulo e têm aros um pouco mais para dentro.
+  O painel "Presenças no mapa" (esquerda, acima da barra de tempo) escolhe a ficha aberta ou todas as entidades e as camadas; a data é a do relógio.
+- **O que se vê se seleciona:** `Main.select` fixa o ponto para os cadastros e chama `DomainHub.pick(dir, tolerância)`, que consulta as presenças visíveis (mesmas camadas e escopo)
+  dentro do raio do lugar ou da tolerância (cresce com a altura da câmera, ao menos 40 km). Uma entidade achada abre a ficha; várias aparecem na lista de busca.
+- **Na ficha:** "Presença no mapa" (lista com "Ver", que centraliza o globo; vincular lugar existente com função; **criar lugar no ponto fixado** com nome, raio e função),
+  "População" (estimativas por lugar, na data mostrada: faixa, só nível, certeza; as composições lidas, com a faixa absoluta, o "desconhecido" e o aviso de lista incompleta).
+- **Ainda não feito:** criar distribuições pela interface (hoje só pelo núcleo e testes); editar lugar (nome, raio, posição) e mover um marcador; polígonos de fronteira, território
+  administrado × reivindicado em desenho próprio e "percentuais por região" como camada; nomes alternativos e históricos de lugar; critérios numéricos configuráveis para os níveis
+  baixa/média/alta; fonte da estimativa na interface; recálculo de estimativas por data (hoje cada uma é um registro).
 
 ## Testes
 

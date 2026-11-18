@@ -6,6 +6,7 @@ extends Node
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const GlobeCamera = preload("res://scripts/view/globe_camera.gd")
 const TileLayer = preload("res://scripts/view/tile_layer.gd")
+const PlaceLayer = preload("res://scripts/view/place_layer.gd")
 
 signal surface_hovered(direction: Vector3)
 signal surface_clicked(direction: Vector3)
@@ -18,6 +19,7 @@ const UNDER_TILES_SCALE := 0.9988
 
 var camera: GlobeCamera
 var tiles: TileLayer
+var places: PlaceLayer  # as presenças dos cadastros (discos e rótulos) sobre o globo
 var _globe: MeshInstance3D
 var _material: ShaderMaterial
 
@@ -58,6 +60,9 @@ func _ready() -> void:
 	viewport.add_child(_globe)
 	tiles = TileLayer.new()
 	viewport.add_child(tiles)
+	places = PlaceLayer.new()
+	places.radius = RADIUS
+	viewport.add_child(places)
 
 	camera = GlobeCamera.new()
 	camera.radius = RADIUS
@@ -79,6 +84,11 @@ func set_tiles(tile_set: String, height_tex: Texture2D, river_tex: Texture2D) ->
 	if not on:
 		tiles.close()
 	_globe.scale = Vector3.ONE * (UNDER_TILES_SCALE if on else 1.0)
+
+
+## Leva a câmera para olhar a direção n do globo, a `zoom` raios do centro (3 = o planeta inteiro; perto do chão, ~1,05).
+func focus(n: Vector3, zoom: float) -> void:
+	camera.look_at_dir(n, zoom)
 
 
 func handle_input(e: InputEvent) -> void:

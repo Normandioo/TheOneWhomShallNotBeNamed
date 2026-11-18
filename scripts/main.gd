@@ -28,6 +28,7 @@ const LegendPanel = preload("res://scripts/ui/legend_panel.gd")
 const SearchPanel = preload("res://scripts/ui/search_panel.gd")
 const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
 const CalendarPanel = preload("res://scripts/ui/calendar_panel.gd")
+const PresencePanel = preload("res://scripts/ui/presence_panel.gd")
 const DomainHub = preload("res://scripts/world/domain_hub.gd")
 const ToolPanel = preload("res://scripts/ui/tool_panel.gd")
 const TimeBar = preload("res://scripts/ui/time_bar.gd")
@@ -89,6 +90,10 @@ func _ready() -> void:
 	hud.add_child(calendar_panel)  # por último: abre por cima dos outros painéis
 	domains = DomainHub.new()
 	domains.setup(domains_db, search, sheet, calendar_panel)
+	var presence_panel := PresencePanel.new()
+	hud.add_child(presence_panel)
+	hud.move_child(presence_panel, 0)  # por baixo da ficha e da janela de calendários
+	domains.bind_map(globe.places, presence_panel, globe.focus)
 	if save_path != "":
 		WorldStore.load_into(clock, save_path)  # sem salvamento válido, abre o cenário técnico, pausado
 	demo.attach(clock)
@@ -242,6 +247,8 @@ func _on_clock_changed() -> void:
 
 func select(n: Vector3) -> void:
 	selected_dir = n
+	domains.set_fixed_point(n)
+	domains.pick(n, maxf(40.0, globe.camera_altitude_km() * 0.05))  # o clique em uma presença abre o cadastro (tolerância cresce com a altura)
 	layer_panel.show_selection("Ponto fixado:\n" + describe(n) if n != Vector3.ZERO else "Clique para fixar um ponto.")
 
 

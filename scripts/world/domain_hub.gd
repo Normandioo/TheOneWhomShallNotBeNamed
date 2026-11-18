@@ -7,6 +7,7 @@ extends RefCounted
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 const Calendar = preload("res://scripts/world/calendar.gd")
 const LocalCalendar = preload("res://scripts/world/local_calendar.gd")
+const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 
 const REBUILD_MS := 500  # a ficha não é refeita mais que 2x por segundo enquanto o relógio anda
 const ALWAYS := -9223372036854775807 - 1
@@ -21,6 +22,10 @@ var registry
 var search
 var sheet
 var calendars  # o painel de calendários (pode faltar)
+var map                    # a camada de lugares do globo (PlaceLayer), ligada por bind_map
+var presence_panel         # camadas e escopo do mapa
+var focus_map := Callable()  # func(direção, zoom): leva a câmera a um ponto
+var fixed_dir := Vector3.ZERO  # o ponto fixado no globo (onde "Criar lugar aqui" cria)
 var _current := 0
 var _pending := false      # o tempo andou e a ficha ainda não foi relida
 var _last_rebuild_ms := 0
@@ -77,7 +82,28 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 			calendars.open(_calendar_rows()))
 	if calendars != null:
 		calendars.create_requested.connect(_on_calendar_create)
+	sheet.presence_added.connect(func(place_id: int, role: String) -> void:
+		registry.AddPresence(_current, place_id, role, "media")
+		_reload())
+	sheet.presence_removed.connect(func(id: int) -> void:
+		registry.DeletePresence(id)
+		_reload())
+	sheet.place_created.connect(_on_place_created)
+	sheet.estimate_added.connect(_on_estimate_added)
+	sheet.estimate_removed.connect(func(id: int) -> void:
+		registry.DeleteEstimate(id)
+		_reload())
+	sheet.place_focus_requested.connect(focus_place)
 	refresh_search()
+
+
+## Liga o mapa: a camada de lugares do globo, o painel de camadas e como levar a câmera a um ponto.
+func bind_map(place_layer, panel, focus: Callable) -> void:
+	map = place_layer
+	presence_panel = panel
+	focus_map = focus
+	panel.changed.connect(refresh_map)
+	refresh_map()
 
 
 func close() -> void:
@@ -112,6 +138,53 @@ func set_time(t: int) -> void:
 		sheet.show_calendar_dates(_universal_text(), texts)
 
 
+## O ponto fixado no globo mudou (ZERO = nenhum): a ficha aberta passa a poder criar um lugar nele.
+func set_fixed_point(dir: Vector3) -> void:
+	fixed_dir = dir
+	sheet.show_fixed_point(_fixed_text(), dir != Vector3.ZERO)
+
+
+## Clique no mapa: as presenças visíveis (mesmas camadas e escopo do desenho) que cobrem o ponto, dentro do raio do lugar ou da tolerância
+## (km). Uma só entidade abre a ficha dela; várias aparecem na lista de busca para escolher. Devolve quantas entidades foram achadas.
+func pick(dir: Vector3, tolerance_km: float) -> int:
+	if map == null or dir == Vector3.ZERO or (not presence_panel.all_entities() and _current == 0):
+		return 0
+	var ll := EvronGeo.lat_lon(dir)
+	var only := 0 if presence_panel.all_entities() else _current
+	var found := {}  # entidade -> o primeiro resultado (o mais específico)
+	for h in registry.EntitiesAt(ll.x, ll.y, tolerance_km, presence_panel.layers(), only, shown_t):
+		if not found.has(int(h.entity_id)):
+			found[int(h.entity_id)] = h
+	if found.size() == 1:
+		open(found.keys()[0])
+	elif found.size() > 1:
+		var rows: Array = []
+		for id in found:
+			var h: Dictionary = found[id]
+			rows.append({"id": id, "kind": h.kind, "name": h.entity, "match": "%s · %s" % [h.place, UiKit.role_label(h.role)]})
+		search.show_results(rows, _current)
+	return found.size()
+
+
+## Leva a câmera ao lugar, a uma distância proporcional ao tamanho da área.
+func focus_place(place_id: int) -> void:
+	if not focus_map.is_valid():
+		return
+	var p: Dictionary = registry.Place(place_id)
+	focus_map.call(EvronGeo.dir(p.lat, p.lon), 1.0 + 2.5 * maxf(p.radius_km, 150.0) / EvronGeo.RADIUS_KM)
+
+
+## Redesenha as presenças no globo: as camadas marcadas, da ficha aberta ou de todas as entidades, na data mostrada.
+func refresh_map() -> void:
+	if map == null:
+		return
+	var all: bool = presence_panel.all_entities()
+	if not all and _current == 0:
+		map.show_items([])
+		return
+	map.show_items(registry.MapItems(presence_panel.layers(), 0 if all else _current, shown_t))
+
+
 ## A cada quadro: se o tempo andou, relê a ficha e a busca, mas só quando o usuário não está digitando.
 func tick() -> void:
 	if _pending and Time.get_ticks_msec() - _last_rebuild_ms >= REBUILD_MS and not sheet.is_editing():
@@ -120,6 +193,7 @@ func tick() -> void:
 		else:
 			_pending = false
 			refresh_search()
+			refresh_map()
 
 
 # --- tratadores ---------------------------------------------------------------------------------------------------
@@ -150,6 +224,35 @@ func _on_delete() -> void:
 	_current = 0
 	sheet.hide_sheet()
 	refresh_search()
+	refresh_map()
+
+
+## Cria um lugar no ponto fixado no globo e já o liga à ficha aberta.
+func _on_place_created(place_name: String, kind: String, radius_km: float, role: String) -> void:
+	if fixed_dir == Vector3.ZERO:
+		return
+	var ll := EvronGeo.lat_lon(fixed_dir)
+	var id: int = registry.AddPlace(place_name, kind, ll.x, ll.y, radius_km, "")
+	if id != 0:
+		registry.AddPresence(_current, id, role, "media")
+	_reload()
+
+
+## Estimativa na data mostrada: com nível (sem número) ou com faixa "de ... até ..." (só o "de" = valor exato; vírgula decimal aceita).
+func _on_estimate_added(place_id: int, low: String, high: String, level: String, certainty: String) -> void:
+	if level != "":
+		registry.AddEstimateLevel(_current, place_id, shown_t, level, certainty, "")
+		_reload()
+		return
+	var lo := low.replace(",", ".")
+	var hi := (high if high != "" else low).replace(",", ".")
+	if not lo.is_valid_float() or not hi.is_valid_float():
+		sheet.show_geo_message("Informe um número (de ... até ...) ou escolha só um nível.")
+	elif float(lo) < 0.0 or float(hi) < float(lo):
+		sheet.show_geo_message("A faixa precisa ser de 0 para cima, e o \"até\" não pode ser menor que o \"de\".")
+	else:
+		registry.AddEstimate(_current, place_id, shown_t, float(lo), float(hi), certainty, "")
+		_reload()
 
 
 ## data: o que o CalendarPanel manda (name, era_name, era_abbr, year, month, day, first, direction, day_hour, months).
@@ -178,8 +281,9 @@ func _reload() -> void:
 	_pending = false
 	_last_rebuild_ms = Time.get_ticks_msec()
 	var s: Dictionary = registry.Sheet(_current, shown_t)
-	sheet.show_sheet(s, registry.LinkTypesFor(s.kind), _calendar_info(s))
+	sheet.show_sheet(s, registry.LinkTypesFor(s.kind), _calendar_info(s), _geo_info(s))
 	refresh_search()
+	refresh_map()
 
 
 # --- calendários --------------------------------------------------------------------------------------------------
@@ -193,6 +297,27 @@ func _calendar_info(s: Dictionary) -> Dictionary:
 	for c in registry.Calendars():
 		choices.append({"id": c.id, "name": c.name})
 	return {"universal": _universal_text(), "uses": uses, "choices": choices}
+
+
+## O que as seções de mapa e população da ficha mostram além da própria ficha: os lugares que dá para escolher, o ponto fixado e as datas escritas.
+func _geo_info(s: Dictionary) -> Dictionary:
+	var places: Array = []
+	for p in registry.Places(""):
+		places.append({"id": p.id, "name": p.name})
+	var dates_e := {}
+	for e in s.estimates:
+		dates_e[int(e.id)] = Calendar.format(int(e.t), false) if has_clock else ""
+	var dates_d := {}
+	for c in s.compositions:
+		dates_d[int(c.id)] = Calendar.format(int(c.t), false) if has_clock else ""
+	return {"places": places, "fixed_text": _fixed_text(), "has_fixed": fixed_dir != Vector3.ZERO, "dates_e": dates_e, "dates_d": dates_d}
+
+
+func _fixed_text() -> String:
+	if fixed_dir == Vector3.ZERO:
+		return "Nenhum ponto fixado. Clique no globo."
+	var ll := EvronGeo.lat_lon(fixed_dir)
+	return ("Ponto fixado: lat %.2f° %s · lon %.2f° %s" % [absf(ll.x), "N" if ll.x >= 0.0 else "S", absf(ll.y), "L" if ll.y >= 0.0 else "O"]).replace(".", ",")
 
 
 func _universal_text() -> String:

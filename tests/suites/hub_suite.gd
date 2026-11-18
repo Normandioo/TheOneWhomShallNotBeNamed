@@ -7,12 +7,16 @@ const SearchPanel = preload("res://scripts/ui/search_panel.gd")
 const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
 const CalendarPanel = preload("res://scripts/ui/calendar_panel.gd")
 const Calendar = preload("res://scripts/world/calendar.gd")
+const PresencePanel = preload("res://scripts/ui/presence_panel.gd")
+const PlaceLayer = preload("res://scripts/view/place_layer.gd")
+const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const DomainHub = preload("res://scripts/world/domain_hub.gd")
 
 var hub: DomainHub
 var search: SearchPanel
 var sheet: SheetPanel
 var host: Control
+var focused: Array = []  # chamadas de "centralizar o mapa" (sem globo, nos testes sem cena)
 
 
 func _create(kind_index: int, name: String) -> int:
@@ -39,6 +43,12 @@ func run() -> void:
 		host.add_child(cal_panel)
 		hub = DomainHub.new()
 		hub.setup(":memory:", search, sheet, cal_panel)
+		var presence := PresencePanel.new()
+		var layer := PlaceLayer.new()
+		layer.radius = 8.2823
+		host.add_child(presence)
+		host.add_child(layer)
+		hub.bind_map(layer, presence, func(dir: Vector3, zoom: float) -> void: focused.append([dir, zoom]))
 	await frames(2)
 	var reg = hub.registry
 
@@ -278,6 +288,10 @@ Neve"  # só 2 nomes
 			return fail("ao voltar ao presente o hub deveria mostrar o presente")
 		ok("o hub segue o relógio do mundo (consulta e presente)")
 
+	await _map_and_population(pais)
+	if failed:
+		return
+
 	if DisplayServer.get_name() != "headless":
 		search._filter.select(0)
 		search._query.text = ""
@@ -290,6 +304,135 @@ Neve"  # só 2 nomes
 		search.calendars_requested.emit()
 		await save("calendarios_dominios")
 		cp.visible = false
+		if main != null:  # o mapa com as presenças de todas as entidades e a ficha do país
+			hub.presence_panel._scope.select(1)
+			hub.presence_panel._scope.item_selected.emit(1)
+			main.globe.focus(EvronGeo.dir(12.0, 21.0), 1.5)
+			sheet.hide_sheet()
+			await save("mapa_presencas")
 	if main == null:
+		hub.focus_map = Callable()  # o callback captura esta suíte: soltar para não deixar um ciclo
 		hub.close()
 		host.queue_free()
+
+
+func _texts(node: Node, out: Array) -> Array:
+	if node is Label:
+		out.append(node.text)
+	for c in node.get_children():
+		_texts(c, out)
+	return out
+
+
+## Lugares, camadas, clique e população pelos próprios widgets e sinais da ficha.
+func _map_and_population(pais: int) -> void:
+	var reg = hub.registry
+	var map = hub.map
+	var pp = hub.presence_panel
+	hub.open(pais)
+	if map.item_count != 0:
+		return fail("sem presenças, o mapa deveria estar vazio")
+
+	# Criar lugares no ponto fixado: sem ponto o botão fica desligado; ponto e área.
+	hub.set_fixed_point(Vector3.ZERO)  # com a cena, suítes anteriores já fixaram pontos
+	if not sheet._create_place_btn.disabled:
+		return fail("sem ponto fixado não dá para criar lugar")
+	hub.set_fixed_point(EvronGeo.dir(10.0, 20.0))
+	if sheet._create_place_btn.disabled or not sheet._fixed_label.text.begins_with("Ponto fixado: lat 10,00° N"):
+		return fail("com ponto fixado o botão liga e o texto mostra a coordenada: %s" % sheet._fixed_label.text)
+	sheet.place_created.emit("Valdória", "assentamento", 0.0, "capital")
+	hub.set_fixed_point(EvronGeo.dir(12.0, 21.0))
+	sheet.place_created.emit("Vale de Aren", "regiao", 600.0, "territorio")
+	var pres: Array = reg.PresencesOf(pais, hub.shown_t)
+	if pres.size() != 2 or absf(pres[0].lat - 10.0) > 0.01 and absf(pres[1].lat - 10.0) > 0.01:
+		return fail("as duas presenças deveriam existir: %s" % [pres])
+	if map.item_count != 2 or map.area_count != 1 or map.label_count != 2 or map._mesh_node.mesh == null:
+		return fail("o mapa deveria desenhar 2 lugares, 1 disco e 2 rótulos: %d/%d/%d" % [map.item_count, map.area_count, map.label_count])
+	ok("mapa: lugar criado no ponto fixado (ponto e área), desenhado com disco e rótulos")
+
+	# Camadas e escopo do painel.
+	pp._checks["politica"].button_pressed = false
+	if map.item_count != 0:
+		return fail("desligar a camada política tira as presenças do país do mapa")
+	pp._checks["politica"].button_pressed = true
+	var vale_id: int = pres.filter(func(p): return p.place == "Vale de Aren")[0].place_id
+	var etnia: int = _create(3, "Arenos")
+	sheet.presence_added.emit(vale_id, "origem")  # o MESMO lugar, outra entidade
+	if reg.Places("Vale").size() != 1 or map.item_count != 1:
+		return fail("a etnia usa o lugar existente e a ficha dela mostra só a presença dela")
+	pp._scope.select(1)
+	pp._scope.item_selected.emit(1)
+	if map.item_count != 3 or map.label_count != 2 or map.area_count != 2:
+		return fail("todas as entidades: 3 presenças em 2 lugares (2 discos): %d/%d/%d" % [map.item_count, map.label_count, map.area_count])
+	ok("camadas e escopo: desligar a camada esconde; o mesmo lugar serve a duas fichas; 'todas as entidades' mostra as 3 presenças em 2 rótulos")
+
+	# O clique: o que se vê se seleciona.
+	var antes := hub.current()
+	var n := hub.pick(EvronGeo.dir(12.5, 21.5), 0.0)
+	if n != 2 or hub.current() != antes or search._list.item_count != 2 or not search._list.get_item_text(0).contains("Vale de Aren"):
+		return fail("o clique no vale acha 2 entidades e mostra a lista sem trocar a ficha: n=%d" % n)
+	pp._checks["politica"].button_pressed = false
+	n = hub.pick(EvronGeo.dir(12.5, 21.5), 0.0)
+	if n != 1 or hub.current() != etnia:
+		return fail("com só a camada étnica o clique abre a etnia: n=%d, ficha=%d" % [n, hub.current()])
+	pp._checks["politica"].button_pressed = true
+	if hub.pick(EvronGeo.dir(-40.0, -100.0), 40.0) != 0:
+		return fail("clicar em nada não acha nada")
+	hub.open(pais)  # um farol isolado (fora de qualquer disco) para isolar a tolerância do ponto
+	hub.set_fixed_point(EvronGeo.dir(-30.0, 100.0))
+	sheet.place_created.emit("Farol", "assentamento", 0.0, "outro")
+	hub.open(etnia)
+	if hub.pick(EvronGeo.dir(-30.0, 100.2), 40.0) != 1 or hub.current() != pais:
+		return fail("com tolerância, o clique perto do farol (~19 km) abre o país (ficha=%d)" % hub.current())
+	if hub.pick(EvronGeo.dir(-30.0, 100.2), 0.0) != 0:
+		return fail("sem tolerância, um ponto não pega um clique a ~19 km")
+	ok("clique no mapa: duas entidades listam, uma abre a ficha, camada filtra, tolerância no ponto")
+
+	# Centralizar o mapa no lugar da presença.
+	if main == null:
+		sheet.place_focus_requested.emit(vale_id)
+		if focused.size() != 1 or not focused[0][0].is_equal_approx(EvronGeo.dir(12.0, 21.0)) or focused[0][1] <= 1.0:
+			return fail("'Ver' deveria centralizar o mapa no vale: %s" % [focused])
+	else:
+		sheet.place_focus_requested.emit(vale_id)
+		await frames(1)
+	ok("'Ver' centraliza o mapa no lugar")
+
+	# População pela ficha: faixa, nível e entradas inválidas.
+	hub.open(pais)
+	var valdoria_id: int = reg.PresencesOf(pais, hub.shown_t).filter(func(p): return p.place == "Valdória")[0].place_id
+	sheet.estimate_added.emit(vale_id, "1200", "1500", "", "media")
+	sheet.estimate_added.emit(valdoria_id, "", "", "alta", "baixa")
+	var ests: Array = reg.EstimatesOf(pais, hub.shown_t)
+	var do_vale: Dictionary = ests.filter(func(e): return e.place == "Vale de Aren")[0]
+	var da_cidade: Dictionary = ests.filter(func(e): return e.place == "Valdória")[0]
+	if ests.size() != 2 or do_vale.low != 1200.0 or do_vale.high != 1500.0 or da_cidade.level != "alta" or str(da_cidade.low) != "":
+		return fail("estimativas pela ficha: %s" % [ests])
+	sheet.estimate_added.emit(vale_id, "abc", "", "", "media")
+	if not sheet._geo_message.text.begins_with("Informe um número") or reg.EstimatesOf(pais, hub.shown_t).size() != 2:
+		return fail("número inválido deveria avisar e não gravar")
+	sheet.estimate_added.emit(vale_id, "500", "100", "", "media")
+	if not sheet._geo_message.text.contains("não pode ser menor") or reg.EstimatesOf(pais, hub.shown_t).size() != 2:
+		return fail("faixa invertida deveria avisar e não gravar")
+	sheet.estimate_added.emit(vale_id, "2.000,5", "", "", "media")  # vírgula decimal não é milhar: 2.000,5 não é número válido
+	ok("população pela ficha: faixa, só nível, número inválido e faixa invertida avisam sem gravar")
+
+	# A composição aparece na ficha (percentuais, faixa derivada, desconhecido) e o texto não promete o que não sabe.
+	var rel1: int = reg.Create("religiao", "Via do silêncio")
+	var rel2: int = reg.Create("religiao", "Culto das águas")
+	var den: int = do_vale.id
+	reg.AddDistribution(pais, vale_id, hub.shown_t, "religiao", den, true, false, "media", "", PackedInt64Array([rel1, rel2]), PackedFloat64Array([60.0, 30.0]))
+	hub.open(pais)
+	var linhas := _texts(sheet._body, [])
+	var tudo := "\n".join(linhas)
+	if not tudo.contains("Via do silêncio: 60%  ≈ 720–900 pessoas") or not tudo.contains("desconhecido: 10%") or not tudo.contains("lista incompleta"):
+		return fail("a composição na ficha:\n%s" % tudo)
+	if not tudo.contains("1.200–1.500 habitantes") or not tudo.contains("nível alta (sem número) habitantes"):
+		return fail("as estimativas na ficha (faixa com milhar, nível sem número):\n%s" % tudo)
+	ok("a ficha mostra a composição (60% ≈ 720–900 pessoas, 10% desconhecido, lista incompleta) e estimativas sem inventar número")
+
+	if main != null:  # com a cena: o clique de verdade no Main fixa o ponto e consulta o mapa
+		main.select(EvronGeo.dir(10.0, 20.0))
+		if not hub.fixed_dir.is_equal_approx(EvronGeo.dir(10.0, 20.0)):
+			return fail("Main.select deveria fixar o ponto nos cadastros")
+		ok("Main.select fixa o ponto para os cadastros e consulta o mapa")

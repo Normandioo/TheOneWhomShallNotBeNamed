@@ -4,6 +4,7 @@ extends PanelContainer
 ## o usuário edita; o DomainHub grava no Registry e devolve o que for preciso mostrar.
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
+const LayerPanel = preload("res://scripts/ui/layer_panel.gd")  # só para o separador de milhares
 
 signal name_changed(text: String)           # correção de grafia do nome atual (não é mudança histórica)
 signal summary_changed(text: String)
@@ -21,6 +22,12 @@ signal delete_confirmed
 signal closed
 signal calendar_use_added(calendar_id: int, purpose: String)
 signal calendar_use_removed(use_id: int)
+signal place_focus_requested(place_id: int)
+signal presence_added(place_id: int, role: String)
+signal presence_removed(presence_id: int)
+signal place_created(name: String, kind: String, radius_km: float, role: String)  # no ponto fixado no mapa
+signal estimate_added(place_id: int, low: String, high: String, level: String, certainty: String)
+signal estimate_removed(estimate_id: int)
 
 const WIDTH := 440
 const FOREVER := 9223372036854775807
@@ -45,6 +52,10 @@ var _link_type: OptionButton
 var _link_query: LineEdit
 var _link_candidates: OptionButton
 var _calendars := {}       # o que o hub mandou: universal, uses, choices
+var _geo := {}             # lugares e datas para as seções de mapa e população (do hub)
+var _fixed_label: Label
+var _create_place_btn: Button
+var _geo_message: Label
 var _universal_label: Label
 var _date_labels := {}     # id do uso -> Label com a data local
 
@@ -90,11 +101,12 @@ func current_id() -> int:
 
 
 ## Mostra a ficha (o Dictionary de Registry.Sheet) e os tipos de vínculo que ela pode criar (Registry.LinkTypesFor).
-func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}) -> void:
+func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}) -> void:
 	var keep := _scroll.scroll_vertical if int(sheet.id) == current_id() else 0
 	_sheet = sheet
 	_types = link_types
 	_calendars = calendars
+	_geo = geo
 	visible = true
 	_title.text = "Ficha · " + UiKit.kind_label(sheet.kind)
 	if _body != null:
@@ -108,6 +120,8 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}) -> void:
 	_build_names()
 	_build_content()
 	_build_links()
+	_build_places()
+	_build_population()
 	_build_calendars()
 	_build_footer()
 	_scroll.set_deferred("scroll_vertical", keep)
@@ -120,6 +134,18 @@ func show_calendar_dates(universal: String, texts: Dictionary) -> void:
 	for use_id in texts:
 		if _date_labels.has(use_id):
 			_date_labels[use_id].text = texts[use_id]
+
+
+## O ponto fixado no mapa mudou: o texto e se dá para criar um lugar nele. Não refaz a ficha.
+func show_fixed_point(text: String, enabled: bool) -> void:
+	if _fixed_label != null:
+		_fixed_label.text = text
+		_create_place_btn.disabled = not enabled
+
+
+func show_geo_message(text: String) -> void:
+	if _geo_message != null:
+		_geo_message.text = text
 
 
 ## O usuário está digitando na ficha? Quem refaz a ficha (o hub) espera, para não tirar o foco de quem escreve.
@@ -408,6 +434,178 @@ func _build_links() -> void:
 	_link_query.text_changed.connect(func(_t: String) -> void: search.call())
 	_link_type.item_selected.connect(func(_i: int) -> void: search.call())
 	search.call()
+
+
+func _build_places() -> void:
+	_fixed_label = null
+	_create_place_btn = null
+	if _geo.is_empty():
+		return
+	var box := _section("Presença no mapa")
+	if _sheet.presences.is_empty():
+		box.add_child(_note("Em nenhum lugar ainda."))
+	for p in _sheet.presences:
+		var row := HBoxContainer.new()
+		box.add_child(row)
+		var what := "ponto" if p.radius_km <= 0.0 else "área de %s km" % LayerPanel._thousands(roundi(p.radius_km))
+		var label := Label.new()
+		label.text = "%s · %s (%s)" % [UiKit.role_label(p.role), p.place, what]
+		label.tooltip_text = "%s · certeza %s" % [UiKit.LAYER_LABEL.get(p.layer, p.layer), UiKit.CERTAINTY_LABEL.get(p.certainty, p.certainty)]
+		label.modulate = UiKit.LAYER_COLOR.get(p.layer, Color.WHITE).lightened(0.3)
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(label)
+		var focus := Button.new()
+		focus.text = "Ver"
+		focus.flat = true
+		focus.tooltip_text = "Centralizar o mapa neste lugar"
+		focus.pressed.connect(func() -> void: place_focus_requested.emit(int(p.place_id)))
+		row.add_child(focus)
+		var del := Button.new()
+		del.text = "✕"
+		del.flat = true
+		del.tooltip_text = "Apagar esta presença (criada por engano)"
+		del.pressed.connect(func() -> void: presence_removed.emit(int(p.id)))
+		row.add_child(del)
+	var role_keys: Array = UiKit.ROLE_LABEL.keys()
+	if not _geo.places.is_empty():
+		var existing := HBoxContainer.new()
+		box.add_child(existing)
+		var place := OptionButton.new()
+		place.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		for pl in _geo.places:
+			place.add_item(pl.name)
+			place.set_item_metadata(place.item_count - 1, int(pl.id))
+		existing.add_child(place)
+		var role_a := _option(role_keys, func(k): return UiKit.ROLE_LABEL[k])
+		existing.add_child(role_a)
+		var link := Button.new()
+		link.text = "Vincular"
+		link.pressed.connect(func() -> void: presence_added.emit(int(place.get_item_metadata(place.selected)), role_keys[role_a.selected]))
+		existing.add_child(link)
+	box.add_child(_note("Ou crie um lugar no ponto fixado no mapa (clique no globo):"))
+	_fixed_label = _note(_geo.fixed_text)
+	box.add_child(_fixed_label)
+	var new_row := HBoxContainer.new()
+	box.add_child(new_row)
+	var name_edit := LineEdit.new()
+	name_edit.placeholder_text = "nome do lugar"
+	name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	new_row.add_child(name_edit)
+	var radius := SpinBox.new()
+	radius.min_value = 0
+	radius.max_value = 8000
+	radius.step = 10
+	radius.suffix = "km"
+	radius.tooltip_text = "Raio da área aproximada; 0 = um ponto"
+	new_row.add_child(radius)
+	var new_row2 := HBoxContainer.new()
+	box.add_child(new_row2)
+	var kind_keys: Array = UiKit.PLACE_KIND_LABEL.keys()
+	var kind := _option(kind_keys, func(k): return UiKit.PLACE_KIND_LABEL[k])
+	new_row2.add_child(kind)
+	var role := _option(role_keys, func(k): return UiKit.ROLE_LABEL[k])
+	new_row2.add_child(role)
+	_create_place_btn = Button.new()
+	_create_place_btn.text = "Criar lugar aqui"
+	_create_place_btn.disabled = not _geo.has_fixed
+	_create_place_btn.pressed.connect(func() -> void:
+		if name_edit.text.strip_edges() != "":
+			place_created.emit(name_edit.text.strip_edges(), kind_keys[kind.selected], radius.value, role_keys[role.selected]))
+	new_row2.add_child(_create_place_btn)
+
+
+func _build_population() -> void:
+	_geo_message = null
+	if _geo.is_empty():
+		return
+	var box := _section("População")
+	for e in _sheet.estimates:
+		var row := HBoxContainer.new()
+		box.add_child(row)
+		var when: String = _geo.dates_e.get(int(e.id), "")
+		var what := "nível %s (sem número)" % e.level if e.level != "" else _range(float(e.low), float(e.high))
+		var label := Label.new()
+		label.text = "%s · %s %s%s" % [e.place, what, e.basis, "  ·  " + when if when != "" else ""]
+		label.tooltip_text = "Certeza %s%s" % [UiKit.CERTAINTY_LABEL.get(e.certainty, e.certainty), " · fonte: " + e.source if e.source != "" else ""]
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(label)
+		var del := Button.new()
+		del.text = "✕"
+		del.flat = true
+		del.tooltip_text = "Apagar esta estimativa (criada por engano)"
+		del.pressed.connect(func() -> void: estimate_removed.emit(int(e.id)))
+		row.add_child(del)
+	for c in _sheet.compositions:
+		var when2: String = _geo.dates_d.get(int(c.id), "")
+		var head := "%s em %s%s (%s, %s)" % [UiKit.kind_label(c.dimension), c.place, "  ·  " + when2 if when2 != "" else "",
+			"categorias exclusivas" if c.exclusive else "podem se sobrepor", "lista completa" if c.complete else "lista incompleta"]
+		box.add_child(_note(head))
+		for s in c.shares:
+			var line := "     %s: %s%%" % [s.name, _pct(s.pct)]
+			if s.has("low"):
+				line += "  ≈ " + _range(s.low, s.high) + " pessoas"
+			box.add_child(_note(line))
+		if c.unknown_pct > 0.0:
+			box.add_child(_note("     desconhecido: %s%%" % _pct(c.unknown_pct)))
+		if c.denominator.is_empty():
+			box.add_child(_note("     (sem população de referência: só percentuais)"))
+	if _sheet.estimates.is_empty() and _sheet.compositions.is_empty():
+		box.add_child(_note("Nenhuma estimativa ainda."))
+	if _geo.places.is_empty():
+		box.add_child(_note("Crie ou vincule um lugar acima para registrar uma estimativa."))
+		return
+	var add := HBoxContainer.new()
+	box.add_child(add)
+	var place := OptionButton.new()
+	place.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for pl in _geo.places:
+		place.add_item(pl.name)
+		place.set_item_metadata(place.item_count - 1, int(pl.id))
+	add.add_child(place)
+	var low := LineEdit.new()
+	low.placeholder_text = "de"
+	low.custom_minimum_size = Vector2(70, 0)
+	add.add_child(low)
+	var high := LineEdit.new()
+	high.placeholder_text = "até"
+	high.custom_minimum_size = Vector2(70, 0)
+	add.add_child(high)
+	var add2 := HBoxContainer.new()
+	box.add_child(add2)
+	var level := OptionButton.new()
+	level.add_item("com número")
+	for lv in ["só nível: baixa", "só nível: média", "só nível: alta"]:
+		level.add_item(lv)
+	add2.add_child(level)
+	var cert_keys: Array = UiKit.CERTAINTY_LABEL.keys()
+	var certainty := _option(cert_keys, func(k): return "certeza " + UiKit.CERTAINTY_LABEL[k])
+	certainty.select(1)
+	add2.add_child(certainty)
+	var go := Button.new()
+	go.text = "Registrar"
+	go.tooltip_text = "Vale para a data mostrada pelo relógio"
+	go.pressed.connect(func() -> void:
+		estimate_added.emit(int(place.get_item_metadata(place.selected)), low.text.strip_edges(), high.text.strip_edges(),
+			["", "baixa", "media", "alta"][level.selected], cert_keys[certainty.selected]))
+	add2.add_child(go)
+	_geo_message = _note("")
+	box.add_child(_geo_message)
+
+
+func _option(keys: Array, label_of: Callable) -> OptionButton:
+	var o := OptionButton.new()
+	for k in keys:
+		o.add_item(label_of.call(k))
+	return o
+
+
+func _range(low: float, high: float) -> String:
+	return LayerPanel._thousands(roundi(low)) if is_equal_approx(low, high) else "%s–%s" % [LayerPanel._thousands(roundi(low)), LayerPanel._thousands(roundi(high))]
+
+
+func _pct(v: float) -> String:
+	return ("%.1f" % v).rstrip("0").rstrip(".").replace(".", ",")
 
 
 func _build_calendars() -> void:

@@ -14,6 +14,7 @@ const HEADLESS_SUITES := [
 	"res://tests/suites/hub_suite.gd",
 	"res://tests/suites/local_calendar_suite.gd",
 	"res://tests/suites/calendar_use_suite.gd",
+	"res://tests/suites/place_suite.gd",
 	"res://tests/suites/calendar_suite.gd",
 ]
 const SCENE_SUITES := [
