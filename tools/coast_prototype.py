@@ -106,6 +106,26 @@ def regularize(land: np.ndarray, sigma: float) -> np.ndarray:
     return smooth > 0
 
 
+def protect(land: np.ndarray, safe: np.ndarray, strong: np.ndarray) -> np.ndarray:
+    """Seção 14 do plano ("proteção de feições"), versão automática: onde `strong` funde massas de terra ou
+    parte uma ilha em relação a `land`, usa `safe` ali (com uma margem em volta); o resto fica em `strong`.
+    Não é a autoria manual que o plano também prevê (cabos, canais, foz de rios escolhidos pela equipe) — só
+    o proxy que a própria validação (seção 5) consegue sinalizar sozinha."""
+    lbl0, n0 = ndimage.label(land, structure=np.ones((3, 3)))
+    lbl1, n1 = ndimage.label(strong, structure=np.ones((3, 3)))
+    fragile = np.zeros_like(land)
+    for i in range(1, n0 + 1):
+        hits = set(np.unique(lbl1[lbl0 == i])) - {0}
+        if len(hits) > 1:  # essa massa de terra original se partiu em `strong`
+            fragile |= lbl0 == i
+    for j in range(1, n1 + 1):
+        hits = set(np.unique(lbl0[lbl1 == j])) - {0}
+        if len(hits) > 1:  # esse componente de `strong` veio da fusão de mais de uma massa original
+            fragile |= np.isin(lbl0, list(hits))
+    fragile = ndimage.binary_dilation(fragile, iterations=2 * UPSAMPLE)  # margem de ~2 px da fonte em volta
+    return np.where(fragile, safe, strong)
+
+
 def validate(before: np.ndarray, after: np.ndarray) -> dict:
     """Área e conectividade: nenhuma ilha deve sumir nem dois continentes se fundir (seção 5 do plano)."""
     lbl0, n0 = ndimage.label(before, structure=np.ones((3, 3)))
@@ -167,27 +187,33 @@ def run() -> None:
               f"Recortes escolhidos por medida (maior densidade de costa / mais ilhas pequenas), raio 6.371 km, "
               f"9,77 km/px na grade de 4096x2048. Sigmas calibrados no recorte continental: "
               f"d025 = {sigmas['d025']:.2f}, d05 = {sigmas['d05']:.2f}.\n"]
+    def report_variant(key: str, label: str, after: np.ndarray, land: np.ndarray, name: str) -> None:
+        mean_km, max_km = boundary_shift_km(land, after, km_px / UPSAMPLE)
+        v = validate(land, after)
+        save_crop(f"{name}_{key}", after, land)
+        diff = np.zeros((*land.shape, 3), np.uint8)
+        diff[land & ~after] = (255, 120, 0)   # virou água
+        diff[~land & after] = (0, 160, 255)   # virou terra
+        Image.fromarray(diff).resize((diff.shape[1] * 2, diff.shape[0] * 2), Image.NEAREST).save(
+            os.path.join(OUT, f"{name}_diff_{key}.png"))
+        ok = v["fusoes_de_massa_de_terra"] == 0 and v["ilhas_partidas_em_duas"] == 0
+        report.append(f"- **{label}**: deslocamento médio {mean_km:.2f} km ({mean_km/km_px:.2f} px), máximo "
+                       f"{max_km:.2f} km; área terra {v['area_antes']} -> {v['area_depois']} px "
+                       f"({100*(v['area_depois']-v['area_antes'])/max(v['area_antes'],1):+.1f}%); "
+                       f"componentes {v['componentes_antes']} -> {v['componentes_depois']}; "
+                       f"fusões {v['fusoes_de_massa_de_terra']}, ilhas partidas {v['ilhas_partidas_em_duas']} "
+                       f"— {'OK' if ok else 'REJEITAR'}\n")
+
     for name, bounds in crops.items():
         land = crop_wrapped(land_full, *bounds)
         save_crop(f"{name}_original", land, land)
         report.append(f"\n## {name}\n")
+        after = {}
         for key, sigma in sigmas.items():
-            after = regularize(land, sigma)
-            mean_km, max_km = boundary_shift_km(land, after, km_px / UPSAMPLE)
-            v = validate(land, after)
-            save_crop(f"{name}_{key}", after, land)
-            diff = np.zeros((*land.shape, 3), np.uint8)
-            diff[land & ~after] = (255, 120, 0)   # virou água
-            diff[~land & after] = (0, 160, 255)   # virou terra
-            Image.fromarray(diff).resize((diff.shape[1] * 2, diff.shape[0] * 2), Image.NEAREST).save(
-                os.path.join(OUT, f"{name}_diff_{key}.png"))
-            ok = v["fusoes_de_massa_de_terra"] == 0 and v["ilhas_partidas_em_duas"] == 0
-            report.append(f"- **{key}** (alvo {targets[key]/km_px:.2f} px): deslocamento médio {mean_km:.2f} km "
-                           f"({mean_km/km_px:.2f} px), máximo {max_km:.2f} km; área terra {v['area_antes']} -> "
-                           f"{v['area_depois']} px ({100*(v['area_depois']-v['area_antes'])/max(v['area_antes'],1):+.1f}%); "
-                           f"componentes {v['componentes_antes']} -> {v['componentes_depois']}; "
-                           f"fusões {v['fusoes_de_massa_de_terra']}, ilhas partidas {v['ilhas_partidas_em_duas']} "
-                           f"— {'OK' if ok else 'REJEITAR'}\n")
+            after[key] = regularize(land, sigma)
+            report_variant(key, f"{key} (alvo {targets[key]/km_px:.2f} px)", after[key], land, name)
+        protegido = protect(land, land, after["d05"])  # original intocado na zona frágil, não a versão d025
+        report_variant("d05_protegido", "d05 com proteção de feições automática", protegido, land, name)
     with open(os.path.join(OUT, "relatorio.md"), "w", encoding="utf-8") as f:
         f.writelines(report)
     print("".join(report))
