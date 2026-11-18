@@ -216,6 +216,41 @@ def noise_grid(w, h, freq, octaves, seed):
 
 # --- etapa 1: campos na grade do Gleba (4096x2048) ----------------------------------------------------------------
 
+def sea_ice_fields(land, t_max):
+    """Gelo marinho: (graus abaixo do limiar, em °C; > 0 = gelo) e o efeito das costas (°C a somar).
+
+    A extensão vem do próprio Gleba: o gelo branco sobre o mar da "Satelite.png" (borda reta perto de 76°, porque a
+    temperatura do mar do Gleba quase não varia ao longo de uma latitude). O limiar de temperatura de cada hemisfério
+    é o que dá a mesma área de gelo; assim a extensão média fica a do Gleba.
+    Costas (regra dos giros subpolares da Terra, nos dois hemisférios): o mar junto à costa leste de um continente
+    recebe corrente fria vinda do polo (Labrador, Oyashio) e tem mais gelo; junto à costa oeste, corrente quente
+    (Noruega, Alasca) e menos gelo. Colado à terra entra o gelo costeiro (preso à costa)."""
+    sea = ~land
+    gleba = (load("Satelite.png").min(-1) > 200) & sea
+    lat = 90 - (np.arange(SH) + 0.5) * 180 / SH
+    thr = np.zeros(SH, np.float32)
+    for hemi in (lat > 0, lat < 0):
+        m = sea & hemi[:, None]
+        frac = gleba[m].mean()
+        thr[hemi] = np.quantile(t_max[m], frac)  # a fração mais fria do mar desse hemisfério vira gelo
+    ice_t = thr[:, None] - t_max
+
+    # Distância (km) até a terra a oeste e a leste ao longo de cada paralelo (a longitude dá a volta).
+    x = np.arange(SW)
+    big = 10 ** 6
+    def last_land(rows):  # índice da última terra à esquerda de cada pixel (em 3 voltas, para atravessar 180°)
+        idx = np.where(np.tile(rows, 3), np.tile(x, 3)[None] + np.repeat(np.arange(3), SW)[None] * SW, -big)
+        return np.maximum.accumulate(idx, 1)[:, SW:2 * SW] - SW
+    km_px = (2 * np.pi * 8282.3 / SW) * np.maximum(np.cos(np.deg2rad(lat)), 0.02)[:, None]
+    d_w = (x[None] - last_land(land)) * km_px
+    d_e = (x[None] - last_land(land[:, ::-1]))[:, ::-1] * km_px  # o mesmo, com o paralelo espelhado
+    subpolar = np.clip((np.abs(lat) - 45) / 15, 0, 1)[:, None]
+    # °C; perto da borda a temperatura cai ~1,3 °C por grau de latitude: 6 °C empurram a borda ~4° (Labrador, Noruega).
+    coast = 6.0 * (np.exp(-d_w / 800) - np.exp(-d_e / 800)) + 2.0 * np.exp(-np.minimum(d_w, d_e) / 150)
+    ice_coast = blur(np.where(sea, coast * subpolar, 0), 3)
+    return ice_t.astype(np.float32), ice_coast.astype(np.float32)
+
+
 def fields():
     """Tudo o que os mapas dizem, por pixel do Gleba. F = campos da terra (estendidos ao mar), G = geografia fixa."""
     land = load("Landmask.png")[..., 0] == 80
@@ -295,16 +330,19 @@ def fields():
     n_low = noise_grid(SW, SH, 28, 4, SEED + 1)     # tons regionais (células de ~300 km)
     n_mid = noise_grid(SW, SH, 160, 3, SEED + 2)    # manchas (~50 km)
     n_mid2 = noise_grid(SW, SH, 160, 3, SEED + 3)
+    n_xlow = noise_grid(SW, SH, 5, 3, SEED + 7)     # meandros da borda do gelo marinho (~1.600 km)
+    ice_t, ice_coast = sea_ice_fields(land, np.maximum(t_jan, t_jul))
     warp = np.stack([noise_grid(SW, SH, 200, 2, SEED + 4), noise_grid(SW, SH, 200, 2, SEED + 5)], -1)
 
     landf = [shrub, grass, trees, *bw, tex[..., 0], tex[..., 1], tex[..., 2], depth, rich, *np.moveaxis(rock, -1, 0),
              slope, orogeny, volc, lip, playa, land_ice, valley, riparian]
     F_land = fill(np.stack(landf, -1), land)
-    raw = [(t_jan + t_jul) / 2, np.maximum(t_jan, t_jul), rain, rain_min, hum, n_low, n_mid, n_mid2]
+    raw = [(t_jan + t_jul) / 2, np.maximum(t_jan, t_jul), rain, rain_min, hum, n_low, n_mid, n_mid2,
+           n_xlow, ice_t, ice_coast]
     F = np.concatenate([F_land, np.stack(raw, -1).astype(np.float32)], -1)
     keys = ["shrub", "grass", "trees", *GROUPS, "sand", "silt", "clay", "depth", "rich", "rock_r", "rock_g", "rock_b",
             "slope", "orogeny", "volc", "lip", "playa", "land_ice", "valley", "riparian",
-            "t_mean", "t_max", "rain", "rain_min", "hum", "n_low", "n_mid", "n_mid2"]
+            "t_mean", "t_max", "rain", "rain_min", "hum", "n_low", "n_mid", "n_mid2", "n_xlow", "ice_t", "ice_coast"]
     # Geografia fixa (amostrada sem deslocamento): costa, lagos e rios ficam onde o Gleba pôs.
     G = np.stack([blur(land, 1), blur(lake, 1), saline, blur(river, 1)], -1).astype(np.float32)  # river = vale
     return F, {k: i for i, k in enumerate(keys)}, G, warp
@@ -402,9 +440,16 @@ def render_band(F, ix, G, warp, y0, y1):
 
     # Gelo marinho onde nem o mês mais quente passa de -2 °C, em placas: borda larga por ruído médio, rachaduras finas.
     land_a = g[..., 0]
-    sea_ice = smooth(-0.12, 0.12, (-2 - c["t_max"]) / 4 + 0.45 * n_low + 0.35 * n_mid + 0.15 * n_fine) * (1 - land_a)
+    # Gelo marinho: extensão média do Gleba (ice_t, em °C), entortada pelas correntes junto às costas (ice_coast) e
+    # por meandros de ~1.000 km; na borda (zona marginal) o gelo se quebra em placas pelo ruído médio e fino.
+    # O ruído fractal tem desvio ~0,3: 14 °C de amplitude = meandros de ~±3° de latitude.
+    ice_score = c["ice_t"] + 14.0 * c["n_xlow"] + c["ice_coast"] + 1.4 * n_mid + 0.6 * n_fine
+    sea_ice = smooth(-0.5, 0.5, ice_score) * (1 - land_a)
     leads = 1 - 0.18 * np.clip(-n_fine * 2, 0, 1)
-    rgb = lerp(rgb, mix(leads, PACK_ICE), sea_ice)
+    # Perto da borda o gelo é novo e fino (cinza-azulado); para dentro, velho e grosso (branco).
+    young = 1 - smooth(0.0, 4.0, ice_score)
+    ice_col = mix(leads, PACK_ICE) * (1 - 0.22 * young)[..., None] + mix(0.22 * young, (0.10, 0.18, 0.26))
+    rgb = lerp(rgb, ice_col, sea_ice)
 
     # Água interior: lagos (doces ou salgados, congelados no frio). O RGB guarda a cor da água.
     lake, saline, valley = g[..., 1], np.clip(g[..., 2] * 1.5, 0, 1), g[..., 3]
@@ -467,8 +512,16 @@ def check(out, stats):
         vis = (out[:, a, 3] > 127) & (out[:, b, 3] > 127)
         return np.abs(out[vis, a, :3].astype(int) - out[vis, b, :3].astype(int)).mean()
     seam, inner = step(0, -1), np.mean([step(x, x + 1) for x in range(500, W, 500)])
+    # Gelo marinho: mesma área do gelo do Gleba (±25%) e borda que não é uma linha reta (varia > 1° de latitude).
+    sea_solid = (alpha > 127) & ~land
+    gleba = (load("Satelite.png").min(-1) > 200) & ~land
+    ratio = sea_solid.sum() / gleba.sum()
+    edge_deg = [np.std(sea_solid[rows].sum(0)) * 180 / SH for rows in (slice(0, 600), slice(SH - 600, SH))]
+    assert 0.75 < ratio < 1.25, f"gelo marinho {ratio:.0%} da área do Gleba"
+    assert min(edge_deg) > 1.0, f"borda do gelo quase reta: desvio {edge_deg} graus"
     assert seam < inner * 2 + 2, f"emenda na longitude 180°: diferença {seam:.1f} (dentro da imagem {inner:.1f})"
-    print(f"natural.png 8192x4096: costa {coast_ok:.1%} igual ao Landmask, emenda {seam:.1f} (interior {inner:.1f})")
+    print(f"natural.png 8192x4096: costa {coast_ok:.1%} igual ao Landmask, emenda {seam:.1f} (interior {inner:.1f}); "
+          f"gelo marinho {ratio:.0%} da área do Gleba, borda varia {edge_deg[0]:.1f}° (N) e {edge_deg[1]:.1f}° (S)")
 
 
 if __name__ == "__main__":

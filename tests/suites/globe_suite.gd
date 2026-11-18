@@ -26,6 +26,8 @@ func run() -> void:
 	await save("1_natural")
 	cam.look_at_dir(EvronGeo.dir(-24.0, -118.0), 1.35)
 	await save("1_natural_rio")
+	cam.look_at_dir(EvronGeo.dir(80.0, 0.0), 2.2)  # gelo marinho: borda irregular, não um círculo
+	await save("1_natural_polo")
 	cam.look_at_dir(EvronGeo.dir(-12.5, -123.5), 1.04)  # cordilheira de ~8 km
 	await save("1_natural_perto")
 	cam.look_at_dir(EvronGeo.dir(-12.5, -123.5), 1.004)
