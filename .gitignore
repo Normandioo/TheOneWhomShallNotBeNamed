@@ -1,3 +1,9 @@
 .godot/
 # Mapas importados de mapas.zip por tools/import_maps.py (o zip é a fonte)
 data/evron/
+# Python e resultados intermediários de estudos (regeneráveis pelos scripts)
+__pycache__/
+*.npz
+# C#: saída do dotnet build fora do .godot
+bin/
+obj/

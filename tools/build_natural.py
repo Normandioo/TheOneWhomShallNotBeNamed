@@ -15,7 +15,7 @@ import os
 import numpy as np
 from PIL import Image
 
-D = "data/evron"
+D = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "evron")  # de qualquer pasta
 
 VIRIDIS = np.array([(0.267, 0.005, 0.329), (0.279, 0.175, 0.483), (0.230, 0.322, 0.546), (0.173, 0.449, 0.558), (0.128, 0.567, 0.551),
                     (0.158, 0.684, 0.502), (0.369, 0.789, 0.383), (0.678, 0.864, 0.190), (0.993, 0.906, 0.144)])

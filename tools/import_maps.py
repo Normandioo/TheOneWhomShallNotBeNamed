@@ -8,8 +8,8 @@ Saída em data/evron/ (fora do git; o zip original é a fonte e não é alterado
   - tiles/relevo/ = o relevo de 16K (resized/relevo.png) em pirâmide de blocos (tools/build_tiles.py).
 Os .xcf ficam de fora (decisão do autor).
 
-Requer Pillow e numpy:  python -m pip install pillow numpy
-Rodar a partir da raiz do projeto:  python tools/import_maps.py D:/downloads/mapas.zip
+Requer Pillow e numpy:  python -m pip install -r requirements.txt
+Rodar (de qualquer pasta):  python tools/import_maps.py D:/downloads/mapas.zip
 """
 import os
 import sys
@@ -21,7 +21,7 @@ from PIL import Image
 import build_natural
 import build_tiles
 
-OUT = "data/evron"
+OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "evron")  # de qualquer pasta
 SEA_PIXEL = 32767          # nível do mar (medido: nenhum pixel de terra abaixo disto)
 TOP_PIXEL, TOP_M = 50103, 9103.40      # pico de Evron (definido pelo autor)
 BOTTOM_M = -13500.0                    # fundo de Evron (definido pelo autor), no pixel 0

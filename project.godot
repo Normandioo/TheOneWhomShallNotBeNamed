@@ -22,3 +22,10 @@ project/assembly_name="Evron"
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
+
+[shader_globals]
+
+brush={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}

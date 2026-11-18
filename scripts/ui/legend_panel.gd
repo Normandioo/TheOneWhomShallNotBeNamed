@@ -8,6 +8,7 @@ const WIDTH := 260
 var _title: Label
 var _body: VBoxContainer
 var _text: Label
+var _stale: Label
 
 
 func _init() -> void:
@@ -28,6 +29,13 @@ func _init() -> void:
 	_text.custom_minimum_size = Vector2(WIDTH, 0)
 	_text.modulate = Color(1, 1, 1, 0.7)
 	box.add_child(_text)
+	_stale = Label.new()
+	_stale.text = "Terreno editado: esta camada é do mapa original e não acompanha o relevo novo."
+	_stale.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_stale.custom_minimum_size = Vector2(WIDTH, 0)
+	_stale.add_theme_color_override("font_color", Color(1.0, 0.75, 0.3))
+	_stale.visible = false
+	box.add_child(_stale)
 
 
 ## `data` é uma entrada de MapLayers.LAYERS.
@@ -76,3 +84,8 @@ func _add_gradient(offsets: Array, colors: Array, labels: Array) -> void:
 		l.horizontal_alignment = aligns[k]
 		row.add_child(l)
 	_body.add_child(row)
+
+
+## Avisa que a camada ficou desatualizada em relação ao terreno editado (a proposta pede marcar os derivados).
+func show_stale(on: bool) -> void:
+	_stale.visible = on

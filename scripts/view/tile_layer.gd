@@ -31,10 +31,11 @@ var _ready_images: Array = []     # [chave, Image] vindos das threads
 var _mutex := Mutex.new()
 var _frame := 0
 var _height_tex: Texture2D
+var _river_tex: Texture2D
 
 
 ## Abre a pirâmide `tile_set` (pasta em data/evron/tiles/). O nível 0 é carregado na hora: cobre o planeta todo.
-func open(tile_set: String, globe_radius: float, height_tex: Texture2D) -> bool:
+func open(tile_set: String, globe_radius: float, height_tex: Texture2D, river_tex: Texture2D) -> bool:
 	close()
 	var manifest = JSON.parse_string(FileAccess.get_file_as_string(ROOT + tile_set + "/manifest.json"))
 	if manifest == null:
@@ -45,6 +46,7 @@ func open(tile_set: String, globe_radius: float, height_tex: Texture2D) -> bool:
 	tile_px = int(manifest["tile"])
 	radius = globe_radius
 	_height_tex = height_tex
+	_river_tex = river_tex
 	for x in 2:
 		var key := _key(0, 0, x)
 		_add_tile(key, _load_image(key))
@@ -199,6 +201,7 @@ func _add_tile(key: String, img: Image) -> void:
 	mat.shader = TILE_SHADER
 	mat.set_shader_parameter("tile", ImageTexture.create_from_image(img))
 	mat.set_shader_parameter("height_map", _height_tex)
+	mat.set_shader_parameter("river_map", _river_tex)
 	var node := MeshInstance3D.new()
 	node.mesh = _patch(_bounds(z, int(key.get_slice("/", 1)), int(key.get_slice("/", 2))), SEGMENTS[mini(z, SEGMENTS.size() - 1)])
 	node.material_override = mat

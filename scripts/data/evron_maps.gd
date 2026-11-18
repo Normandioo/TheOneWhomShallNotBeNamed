@@ -1,7 +1,6 @@
 ## Os mapas de Evron em data/evron/ (importados de mapas.zip por tools/import_maps.py). Só lê arquivos.
 ## A pasta tem .gdignore: o Godot não importa as imagens, elas são lidas em tempo de execução e ficam sem perda.
 
-const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 
 const DIR := "res://data/evron/"
 # shortcut: data/evron/ não entra no export (tem .gdignore); ao distribuir, ler de uma pasta do projeto do usuário.
@@ -24,8 +23,3 @@ static func load_height() -> Image:
 static func load_layer(file: String) -> Image:
 	return Image.load_from_file(ProjectSettings.globalize_path(DIR + file))
 
-
-## Altitude em metros na direção n, lida do mesmo mapa que o shader usa.
-static func height_at(img: Image, n: Vector3) -> float:
-	var p := EvronGeo.pixel(n, img.get_size())
-	return img.get_pixel(p.x, p.y).r

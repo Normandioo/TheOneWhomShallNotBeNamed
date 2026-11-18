@@ -5,6 +5,7 @@ const GLOBE_SHADER = preload("res://shaders/globe.gdshader")
 const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 
 var material: ShaderMaterial
+var river_texture: ImageTexture
 var height_texture: ImageTexture  # também usada pelos blocos (TileLayer), para o mesmo relevo
 var layer_file := ""  # arquivo da camada carregada ("" = nenhuma)
 
@@ -14,9 +15,25 @@ func _init() -> void:
 	material.shader = GLOBE_SHADER
 
 
+func set_rivers(rivers: Image) -> void:
+	river_texture = ImageTexture.create_from_image(rivers)
+	material.set_shader_parameter("river_map", river_texture)
+
+
+## Reenvia os rios editados para a GPU (4 MiB).
+func refresh_rivers(rivers: Image) -> void:
+	river_texture.update(rivers)
+
+
 func set_height(height: Image) -> void:
 	height_texture = ImageTexture.create_from_image(height)
 	material.set_shader_parameter("height_map", height_texture)
+
+
+## Reenvia a altitude editada para a GPU (a imagem inteira: 32 MiB). Os blocos usam a mesma textura.
+## shortcut: sem atualização parcial de textura no Godot; se ficar lento, dividir a altitude em blocos editáveis.
+func refresh_height(height: Image) -> void:
+	height_texture.update(height)
 
 
 # = uniform `mode` do globe.gdshader; "tiles" mostra a imagem de base enquanto os blocos (TileLayer) não cobrem
@@ -34,6 +51,7 @@ func show_layer(layer: Dictionary) -> void:
 	if img == null:
 		push_error("camada não encontrada: " + file)
 		return
+	img.generate_mipmaps()  # de longe a camada não cintila (o shader escolhe o nível sem costura em 180°)
 	var tex := ImageTexture.create_from_image(img)
 	material.set_shader_parameter("layer_linear", tex)
 	material.set_shader_parameter("layer_nearest", tex)

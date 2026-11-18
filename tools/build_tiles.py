@@ -19,7 +19,10 @@ TILE = 512
 QUALITY = 90  # JPEG: decodifica rápido no carregamento; a perda não aparece neste relevo de cores chapadas
 
 
-def build(img: Image.Image, name: str, out_root="data/evron/tiles") -> dict:
+OUT_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "evron", "tiles")
+
+
+def build(img: Image.Image, name: str, out_root=OUT_ROOT) -> dict:
     w, h = img.size
     assert w == 2 * h and w % (2 * TILE) == 0, f"precisa ser equiretangular 2:1 e múltipla de {2 * TILE}: {img.size}"
     levels = (w // (2 * TILE)).bit_length()  # 16384 -> 5 níveis (0..4)

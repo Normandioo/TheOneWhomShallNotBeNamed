@@ -5,7 +5,9 @@ extends SceneTree
 ## porque cada uma parte do estado deixado pela anterior. A primeira falha para tudo.
 
 const HEADLESS_SUITES := [
+	"res://tests/suites/core_suite.gd",
 	"res://tests/suites/geo_suite.gd",
+	"res://tests/suites/edit_suite.gd",
 	"res://tests/suites/db_suite.gd",
 	"res://tests/suites/registry_suite.gd",
 	"res://tests/suites/sheet_suite.gd",
@@ -14,6 +16,8 @@ const HEADLESS_SUITES := [
 const SCENE_SUITES := [
 	"res://tests/suites/globe_suite.gd",
 	"res://tests/suites/tiles_suite.gd",
+	"res://tests/suites/brush_suite.gd",
+	"res://tests/suites/brush_gallery_suite.gd",
 ]
 
 
