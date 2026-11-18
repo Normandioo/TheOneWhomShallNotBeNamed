@@ -1,5 +1,6 @@
 extends Node3D
-## As presenças dos cadastros desenhadas sobre o globo: um disco translúcido com aro para cada área aproximada, e um rótulo de tamanho fixo
+## As presenças dos cadastros desenhadas sobre o globo: um disco translúcido com aro para cada área aproximada, um contorno (fronteira desenhada à mão)
+## com preenchimento e aro seguindo os arcos entre os pontos, e um rótulo de tamanho fixo
 ## na tela para cada lugar (com a função e as entidades que estão nele). Cada camada tem a sua cor: fronteira política, presença cultural,
 ## distribuição étnica, área linguística, presença religiosa e habitat de raça não se confundem. Só desenha o que recebe; quem decide o que
 ## mostrar (camadas, entidade, data) é o DomainHub.
@@ -16,12 +17,16 @@ const MAX_LABEL_LINES := 4
 
 var radius := 1.0            # raio do globo na cena (GlobeView.RADIUS)
 var item_count := 0          # presenças desenhadas
-var area_count := 0          # discos
+var area_count := 0          # discos e contornos
+var polygon_count := 0       # só os contornos
+var draft_count := 0         # pontos do contorno que está sendo desenhado
 var label_count := 0         # lugares rotulados
 
 var _mesh_node: MeshInstance3D
 var _labels: Array[Label3D] = []
 var _material: StandardMaterial3D
+var _draft_node: MeshInstance3D
+var _draft_labels: Array[Label3D] = []
 
 
 func _init() -> void:
@@ -34,6 +39,10 @@ func _init() -> void:
 	_mesh_node.material_override = _material
 	_mesh_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_mesh_node)
+	_draft_node = MeshInstance3D.new()
+	_draft_node.material_override = _material
+	_draft_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_draft_node)
 
 
 ## Redesenha tudo. items: o que Registry.MapItems devolve (place_id, place, lat, lon, radius_km, layer, role, entity).
@@ -43,6 +52,7 @@ func show_items(items: Array) -> void:
 	_labels.clear()
 	item_count = items.size()
 	area_count = 0
+	polygon_count = 0
 	var verts := PackedVector3Array()
 	var colors := PackedColorArray()
 	var by_place := {}  # place_id -> itens (um rótulo por lugar)
@@ -51,24 +61,143 @@ func show_items(items: Array) -> void:
 		if not by_place.has(it.place_id):
 			by_place[it.place_id] = []
 		by_place[it.place_id].append(it)
-		if it.radius_km > 0.0:
+		if it.has("vertices") and it.vertices.size() >= 6:  # contorno desenhado à mão (vence o raio)
+			area_count += 1
+			polygon_count += 1
+			_add_polygon(verts, colors, it)
+		elif it.radius_km > 0.0:
 			area_count += 1
 			var inset: int = rings.get(it.place_id, 0)  # entidades no mesmo lugar: cada aro um pouco mais para dentro, para não esconder o de baixo
 			rings[it.place_id] = inset + 1
 			_add_disc(verts, colors, it, inset)
-	if verts.is_empty():
-		_mesh_node.mesh = null
-	else:
-		var arrays := []
-		arrays.resize(Mesh.ARRAY_MAX)
-		arrays[Mesh.ARRAY_VERTEX] = verts
-		arrays[Mesh.ARRAY_COLOR] = colors
-		var mesh := ArrayMesh.new()
-		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-		_mesh_node.mesh = mesh
+	_mesh_node.mesh = _build_mesh(verts, colors)
 	for place_id in by_place:
 		_add_label(by_place[place_id])
 	label_count = _labels.size()
+
+
+func _build_mesh(verts: PackedVector3Array, colors: PackedColorArray) -> ArrayMesh:
+	if verts.is_empty():
+		return null
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_COLOR] = colors
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## O contorno: preenchimento translúcido (triangulado no plano gnomônico em torno do centro, onde os arcos de círculo máximo são retas, e subdividido
+## para acompanhar a curvatura) e um aro que segue cada arco entre os pontos.
+func _add_polygon(verts: PackedVector3Array, colors: PackedColorArray, it: Dictionary) -> void:
+	var flat: PackedFloat64Array = it.vertices
+	var dirs: Array[Vector3] = []
+	for i in flat.size() / 2:
+		dirs.append(EvronGeo.dir(flat[2 * i], flat[2 * i + 1]))
+	var color: Color = UiKit.LAYER_COLOR.get(it.layer, Color.WHITE)
+	var tri := _triangulate(dirs, EvronGeo.dir(it.lat, it.lon))
+	for k in range(0, tri.size(), 3):
+		_fill_triangle(verts, colors, dirs[tri[k]], dirs[tri[k + 1]], dirs[tri[k + 2]], Color(color, 0.16), 0)
+	var extent := sqrt(maxf(it.area_km2, 1.0) / PI) / EvronGeo.RADIUS_KM  # raio equivalente em rad
+	_ribbon(verts, colors, dirs, clampf(extent * 0.03, 0.0004, 0.008), Color(color, 0.9), true)
+
+
+## Índices dos triângulos do contorno (de 3 em 3), ou vazio se não dá para triangular (o aro continua sendo desenhado).
+func _triangulate(dirs: Array[Vector3], c: Vector3) -> PackedInt32Array:
+	var east := Vector3.UP.cross(c)
+	east = Vector3.RIGHT if east.length() < 1e-6 else east.normalized()
+	var north := c.cross(east)
+	var poly := PackedVector2Array()
+	for p in dirs:
+		var k := p.dot(c)
+		poly.append(Vector2(p.dot(east) / k, p.dot(north) / k))
+	return Geometry2D.triangulate_polygon(poly)
+
+
+## Um triângulo do preenchimento, dividido em quatro (com os pontos médios sobre a esfera) até os lados ficarem curtos.
+func _fill_triangle(verts: PackedVector3Array, colors: PackedColorArray, a: Vector3, b: Vector3, c: Vector3, color: Color, depth: int) -> void:
+	if depth < 7 and maxf(maxf(a.angle_to(b), b.angle_to(c)), c.angle_to(a)) > MAX_RING_STEP * 1.5:
+		var ab := (a + b).normalized()
+		var bc := (b + c).normalized()
+		var ca := (c + a).normalized()
+		_fill_triangle(verts, colors, a, ab, ca, color, depth + 1)
+		_fill_triangle(verts, colors, ab, b, bc, color, depth + 1)
+		_fill_triangle(verts, colors, ca, bc, c, color, depth + 1)
+		_fill_triangle(verts, colors, ab, bc, ca, color, depth + 1)
+		return
+	var h := radius * (HEIGHT - 0.0007)
+	verts.append_array([a * h, b * h, c * h])
+	for _n in 3:
+		colors.append(color)
+
+
+## Faixa de meia-largura angular w (rad) ao longo do caminho que passa pelos pontos, por arcos de círculo máximo (fechada: liga o último ao primeiro).
+func _ribbon(verts: PackedVector3Array, colors: PackedColorArray, dirs: Array[Vector3], w: float, color: Color, closed: bool) -> void:
+	var path: Array[Vector3] = []
+	var edges := dirs.size() if closed else dirs.size() - 1
+	for i in edges:
+		var a := dirs[i]
+		var b := dirs[(i + 1) % dirs.size()]
+		var steps := maxi(1, ceili(a.angle_to(b) / MAX_RING_STEP))
+		for s in steps:
+			path.append(a.slerp(b, float(s) / steps) if a.dot(b) < 0.999999 else a)
+	if not closed:
+		path.append(dirs[dirs.size() - 1])
+	var m := path.size()
+	var left := PackedVector3Array()
+	var right := PackedVector3Array()
+	for i in m:
+		var p := path[i]
+		var prev := path[(i - 1 + m) % m] if closed else path[maxi(i - 1, 0)]
+		var next := path[(i + 1) % m] if closed else path[mini(i + 1, m - 1)]
+		var tangent := next - prev
+		var side := p.cross(tangent)
+		side = side.normalized() if side.length() > 1e-9 else Vector3.ZERO
+		left.append((p + side * w).normalized() * radius * HEIGHT)
+		right.append((p - side * w).normalized() * radius * HEIGHT)
+	for i in (m if closed else m - 1):
+		var j := (i + 1) % m
+		verts.append_array([left[i], right[i], right[j], left[i], right[j], left[j]])
+		for _n in 6:
+			colors.append(color)
+
+
+## O contorno que está sendo desenhado: a linha pelos pontos (e, com 3 ou mais, o lado que fecharia, mais fraco) e uma marca em cada ponto.
+## dirs: direções dos pontos na ordem em que foram clicados; vazio apaga o rascunho.
+func show_draft(dirs: Array) -> void:
+	for l in _draft_labels:
+		l.queue_free()
+	_draft_labels.clear()
+	draft_count = dirs.size()
+	var verts := PackedVector3Array()
+	var colors := PackedColorArray()
+	var typed: Array[Vector3] = []
+	for d in dirs:
+		typed.append(d)
+	if typed.size() >= 2:
+		var extent := 0.0
+		for p in typed:
+			extent = maxf(extent, typed[0].angle_to(p))
+		var w := clampf(extent * 0.012, 0.0005, 0.004)
+		_ribbon(verts, colors, typed, w, Color(1.0, 0.92, 0.35, 0.95), false)
+		if typed.size() >= 3:
+			_ribbon(verts, colors, [typed[typed.size() - 1], typed[0]] as Array[Vector3], w * 0.6, Color(1.0, 0.92, 0.35, 0.35), false)
+	_draft_node.mesh = _build_mesh(verts, colors)
+	for i in typed.size():
+		var mark := Label3D.new()
+		mark.text = "◉" if i == 0 else "●"
+		mark.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		mark.fixed_size = true
+		mark.pixel_size = 0.0005
+		mark.font_size = 36
+		mark.outline_size = 8
+		mark.outline_modulate = Color(0, 0, 0, 0.9)
+		mark.modulate = Color(1.0, 0.92, 0.35)
+		mark.no_depth_test = false
+		mark.position = typed[i] * radius * (HEIGHT + 0.0012)
+		add_child(mark)
+		_draft_labels.append(mark)
 
 
 func _add_disc(verts: PackedVector3Array, colors: PackedColorArray, it: Dictionary, inset: int) -> void:

@@ -23,6 +23,8 @@ scripts/
     RegistryCalendar.cs (C#, parte do Registry) calendários locais, eras e o uso por entidade, com validade
     local_calendar.gd conversão universal <-> calendário local (funções sobre uma definição; usa o calendar.gd)
     RegistryPlaces.cs (C#, parte do Registry) lugares (ponto ou disco), presenças no mapa, estimativas e distribuições demográficas
+    RegistryBorders.cs (C#, parte do Registry) lugares com contorno desenhado à mão (polígono de vértices lat/lon)
+    PlaceGeometry.cs (C#) geometria do contorno na esfera: validar, centro, área, "está dentro", distância até a borda
     domain_hub.gd    liga os painéis de busca, ficha e calendários ao Registry; segue o relógio (set_time/tick)
     calendar.gd      o calendário universal: só conversões (365 dias, sem bissextos); tempo = segundos int64 desde a época
     world_clock.gd   o relógio oficial: presente, consulta, pausa, velocidade, eventos e o contrato dos módulos
@@ -48,6 +50,7 @@ scripts/
     sheet_panel.gd   a ficha: identidade, resumo, etiquetas, nomes, conteúdo gerado dos campos, relações, calendários, duplicar e excluir
     calendar_panel.gd janela dos calendários locais: os cadastrados e o formulário de um novo (com a primeira era)
     presence_panel.gd camadas e escopo do mapa de presenças (a ficha aberta ou todas as entidades)
+    draw_panel.gd    a barra do modo desenhar fronteira (pontos marcados, Desfazer, Concluir, Cancelar; Esc, Enter e Backspace)
     time_bar.gd      barra de tempo (embaixo à esquerda) e janela do calendário: data, pausa, velocidade, avanços, consulta
     legend_panel.gd, ui_kit.gd
 scenes/main.tscn   Main e o Hud (os painéis); a vista 3D é criada em código pelo GlobeView
@@ -167,9 +170,9 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
 
 ### Lugares, presenças e demografia (etapa 5)
 
-- **Lugar** (`place`): nome, tipo (assentamento, região, local sagrado, natural, outro), `lat`/`lon` e `radius_km`: **0 = ponto; > 0 = área aproximada em disco**.
-  É compartilhável: o mesmo lugar em duas fichas é o mesmo registro (a capital do país e a sede da religião). **Limite:** só ponto e disco; fronteira
-  em polígono é futura (shortcut: disco, até haver um editor de contornos). Distâncias pela esfera (`atan2`), então o disco atravessa a longitude 180° e cobre o polo.
+- **Lugar** (`place`): nome, tipo (assentamento, região, local sagrado, natural, outro), `lat`/`lon` e `radius_km`: **0 = ponto; > 0 = área aproximada em disco**; e, desde as
+  fronteiras, pode ser um **contorno** desenhado à mão (ver "Fronteiras desenhadas à mão"). É compartilhável: o mesmo lugar em duas fichas é o mesmo registro (a capital do país
+  e a sede da religião). Distâncias pela esfera (`atan2`), então o disco atravessa a longitude 180° e cobre o polo.
 - **Presença** (`presence`): entidade + lugar + função (capital, sede, origem, presença, centro cultural, lugar sagrado, território, reivindicação, outro) +
   validade `[início, fim)` + certeza. A **camada do mapa vem do tipo da entidade**: país = fronteira política, cultura = presença cultural, etnia = distribuição
   étnica, idioma = área linguística, religião = presença religiosa, raça = habitat. Nenhuma camada implica a outra; o território político de um país não vira a
@@ -198,6 +201,33 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
 - **Ainda não feito:** criar distribuições pela interface (hoje só pelo núcleo e testes); editar lugar (nome, raio, posição) e mover um marcador; polígonos de fronteira, território
   administrado × reivindicado em desenho próprio e "percentuais por região" como camada; nomes alternativos e históricos de lugar; critérios numéricos configuráveis para os níveis
   baixa/média/alta; fonte da estimativa na interface; recálculo de estimativas por data (hoje cada uma é um registro).
+
+### Fronteiras desenhadas à mão
+
+- **O que é:** um lugar com **contorno**: polígono de vértices `lat/lon` (`place_vertex`, migração 5) unidos por **arcos de círculo máximo**. `place.lat/lon` guarda o centro (onde fica o rótulo) e
+  `radius_km = 0`; quem tem vértices é contorno, aconteça o que acontecer com o raio. O contorno é um lugar como os outros: pode ser compartilhado e é ligado às entidades por presenças
+  (território, reivindicação etc.), então a camada, a data e o clique funcionam sem caso especial. `Registry.AddPolygonPlace` cria, `SetPlaceVertices` troca o contorno (um disco ou ponto vira contorno),
+  `PlaceVertices` e `PlaceAreaKm2` leem; `MapItems`/`PresencesOf` trazem `vertices` e `area_km2` (também o disco).
+- **Validação** (`PlaceGeometry.Validate`, tudo ou nada): 3 a 2000 pontos, em pares lat/lon válidos; o último ponto pode repetir o primeiro; recusa pontos seguidos no mesmo lugar, **lados que
+  se cruzam ou se tocam** (testado no plano gnomônico em torno do centro, onde círculos máximos são retas), contorno **sem área** e **grande demais** (precisa caber a menos de 85° do centro:
+  o contorno é sempre a região menor; para algo maior, divide-se em regiões).
+- **Geometria na esfera, em vetores unitários e double** (a convenção de `EvronGeo`): nada de grade, então o contorno atravessa a longitude 180° e cobre o polo sem caso especial. **Área** pela
+  soma dos ângulos sólidos dos triângulos (centro, p_i, p_i+1) com sinal (Van Oosterom & Strackee), válida também para contorno côncavo: um octante dá πR²/2 exato. **Dentro:** soma do giro do
+  rumo (visto do ponto) de cada vértice ao seguinte, ±2π dentro e 0 fora; só vale a menos de 85° do centro (um ponto no lado oposto do planeta também "gira" 360° e é descartado antes).
+  **Distância até a borda:** menor distância aos arcos (pé da perpendicular no arco ou o vértice mais próximo).
+- **Clique (`EntitiesAt`)**: o contorno acha o ponto se está dentro ou a até a tolerância da borda (`distance_km` 0 dentro; senão a distância à borda); o disco e o ponto seguem como antes. Entre contornos
+  aninhados, o menor (pelo raio equivalente à área) vem primeiro.
+- **No globo** (`view/place_layer.gd`): o contorno é triangulado no plano gnomônico (`Geometry2D.triangulate_polygon`, côncavo inclusive) e cada triângulo é subdividido com pontos médios sobre a esfera até
+  os lados ficarem curtos, para o preenchimento acompanhar a curvatura; o aro é uma faixa ao longo dos arcos. Um contorno que não triangula (não deveria passar pela validação) ainda desenha o aro.
+  O **rascunho** (`show_draft`) é uma linha amarela pelos pontos marcados (e o lado que fecharia, mais fraco) com uma marca em cada ponto.
+- **Desenhar** (`DomainHub.start_border`/`draw_click`/`draw_undo`/`draw_finish`/`draw_cancel`, barra `ui/draw_panel.gd`): na seção "Presença no mapa" da ficha, o nome da região, a função (padrão: Território) e
+  "Desenhar no mapa" abrem o modo; o **clique no globo marca um ponto** (arrastar continua girando a câmera; `Main.select` roteia o clique ao hub enquanto `drawing`). **Desfazer ponto**, **Concluir** (3 pontos ou mais)
+  e **Cancelar**; Esc, Enter e Backspace fazem o mesmo. Concluir cria o lugar e liga a entidade com a função escolhida; um contorno inválido não é gravado e o desenho continua para corrigir. No modo, abrir
+  outra ficha e o clique de seleção são ignorados. **Redesenhar** (botão na linha da presença de um contorno) troca o contorno do mesmo lugar.
+- **Fronteira vizinha sem fresta:** o ponto clicado a menos de 2% da altura da câmera (ao menos 8 km) de um **vértice de um contorno que está no mapa** cola nesse vértice (as bordas compartilhadas ficam exatamente
+  iguais). Para ver o vizinho, ponha o painel de presenças em "Todas as entidades".
+- **Ainda não feito:** mover ou apagar um vértice solto de um contorno já criado (hoje: Redesenhar); buracos e várias partes num mesmo território (ilhas); contorno maior que 85° do centro; pré-visualização do lado
+  a fechar sob o mouse; importar contornos; verificar sobreposição entre territórios de países diferentes (hoje cada um é independente, e o clique lista todos que cobrem o ponto).
 
 ## Testes
 

@@ -114,7 +114,9 @@ public partial class Registry
     {
         var r = _db.Rows("select id, name, kind, lat, lon, radius_km, note from place where id = @0", id);
         if (r.Count == 0) throw new ArgumentException($"lugar {id} não existe");
-        return PlaceDict(r[0]);
+        var d = PlaceDict(r[0]);
+        d["vertex_count"] = Convert.ToInt64(_db.Scalar("select count(*) from place_vertex where place_id = @0", id));
+        return d;
     }
 
     static Dictionary PlaceDict(object?[] r) => new()
@@ -135,6 +137,7 @@ public partial class Registry
     {
         long uses = Convert.ToInt64(_db.Scalar("select (select count(*) from presence where place_id = @0) + (select count(*) from population_estimate where place_id = @0) + (select count(*) from distribution where place_id = @0)", id));
         if (uses > 0) throw new ArgumentException($"o lugar {id} está em uso ({uses} registros)");
+        _db.Run("delete from place_vertex where place_id = @0", id);
         _db.Run("delete from place where id = @0", id);
     }
 
@@ -167,40 +170,89 @@ public partial class Registry
         "select p.id, p.entity_id, e.kind, p.role, p.certainty, pl.id, pl.name, pl.kind, pl.lat, pl.lon, pl.radius_km, p.valid_from, p.valid_to, " +
         // o nome principal vigente em t e, se não houver, o atual: no mesmo SELECT, sem uma consulta por presença
         "coalesce((select n.name from entity_name n where n.entity_id = e.id and n.role = 'principal' and n.valid_from <= @0 and @0 < n.valid_to), " +
-        "(select n.name from entity_name n where n.entity_id = e.id and n.role = 'principal' and n.valid_to = 9223372036854775807)) " +
+        "(select n.name from entity_name n where n.entity_id = e.id and n.role = 'principal' and n.valid_to = 9223372036854775807)), " +
+        "(select count(*) from place_vertex v where v.place_id = pl.id) " +
         "from presence p join entity e on e.id = p.entity_id join place pl on pl.id = p.place_id " +
         "where p.valid_from <= @0 and @0 < p.valid_to";
 
-    static Dictionary PresenceDict(object?[] r) => new()
+    /// Cada presença: id, entity_id, entity, kind, layer, role, certainty, place_id, place, place_kind, lat/lon (o ponto, o centro do disco ou do contorno),
+    /// radius_km (0 se ponto ou contorno), vertices (lat0, lon0, lat1, lon1...; vazio se não é contorno), area_km2 (0 se ponto), from e to.
+    static Dictionary PresenceDict(object?[] r, System.Collections.Generic.Dictionary<long, (double[] Flat, double Area)> shapes)
     {
-        ["id"] = Convert.ToInt64(r[0]), ["entity_id"] = Convert.ToInt64(r[1]), ["entity"] = Str(r[13]), ["kind"] = Str(r[2]),
-        ["layer"] = LayerOf(Str(r[2])), ["role"] = Str(r[3]), ["certainty"] = Str(r[4]), ["place_id"] = Convert.ToInt64(r[5]), ["place"] = Str(r[6]),
-        ["place_kind"] = Str(r[7]), ["lat"] = Convert.ToDouble(r[8]), ["lon"] = Convert.ToDouble(r[9]), ["radius_km"] = Convert.ToDouble(r[10]),
-        ["from"] = Convert.ToInt64(r[11]), ["to"] = Convert.ToInt64(r[12]),
-    };
+        double radius = Convert.ToDouble(r[10]);
+        double[] flat = new double[0];
+        double area = radius > 0 ? 2 * Math.PI * EvronGeo.RadiusKm * EvronGeo.RadiusKm * (1 - Math.Cos(radius / EvronGeo.RadiusKm)) : 0;
+        if (shapes.TryGetValue(Convert.ToInt64(r[5]), out var s)) (flat, area) = s;
+        return new Dictionary
+        {
+            ["id"] = Convert.ToInt64(r[0]), ["entity_id"] = Convert.ToInt64(r[1]), ["entity"] = Str(r[13]), ["kind"] = Str(r[2]),
+            ["layer"] = LayerOf(Str(r[2])), ["role"] = Str(r[3]), ["certainty"] = Str(r[4]), ["place_id"] = Convert.ToInt64(r[5]), ["place"] = Str(r[6]),
+            ["place_kind"] = Str(r[7]), ["lat"] = Convert.ToDouble(r[8]), ["lon"] = Convert.ToDouble(r[9]), ["radius_km"] = radius,
+            ["vertices"] = flat, ["area_km2"] = area, ["from"] = Convert.ToInt64(r[11]), ["to"] = Convert.ToInt64(r[12]),
+        };
+    }
+
+    /// Monta os dicionários das presenças; os contornos (todos de uma vez, numa consulta só) vêm com os vértices e a área.
+    Array<Dictionary> BuildPresences(System.Collections.Generic.IEnumerable<object?[]> rows)
+    {
+        var list = rows.ToList();
+        var shapes = new System.Collections.Generic.Dictionary<long, (double[] Flat, double Area)>();
+        var ids = list.Where(r => Convert.ToInt64(r[14]) > 0).Select(r => Convert.ToInt64(r[5])).Distinct().ToList();
+        if (ids.Count > 0)
+        {
+            var byPlace = ids.ToDictionary(i => i, _ => new System.Collections.Generic.List<double>());
+            foreach (var v in _db.Rows($"select place_id, lat, lon from place_vertex where place_id in ({string.Join(",", ids)}) order by place_id, seq"))
+            {
+                var l = byPlace[Convert.ToInt64(v[0])];
+                l.Add(Convert.ToDouble(v[1]));
+                l.Add(Convert.ToDouble(v[2]));
+            }
+            foreach (var (id, l) in byPlace)
+            {
+                var flat = l.ToArray();
+                shapes[id] = (flat, PlaceGeometry.AreaKm2(PlaceGeometry.ToVecs(flat)));
+            }
+        }
+        return new(list.Select(r => PresenceDict(r, shapes)));
+    }
 
     /// As presenças de uma entidade no instante t.
-    public Array<Dictionary> PresencesOf(long entityId, long t) => new(
-        _db.Rows(PresenceSelect + " and p.entity_id = @1 order by pl.name collate nocase, p.id", t, entityId).Select(PresenceDict));
+    public Array<Dictionary> PresencesOf(long entityId, long t) => BuildPresences(
+        _db.Rows(PresenceSelect + " and p.entity_id = @1 order by pl.name collate nocase, p.id", t, entityId));
 
     /// O que o mapa desenha em t: as presenças das camadas pedidas (lista vazia = nenhuma camada, nada), de uma entidade só (onlyEntity ≠ 0) ou de todas.
-    public Array<Dictionary> MapItems(string[] layers, long onlyEntity, long t) => new(
+    public Array<Dictionary> MapItems(string[] layers, long onlyEntity, long t) => BuildPresences(
         _db.Rows(PresenceSelect + " and (@1 = 0 or p.entity_id = @1) order by p.id", t, onlyEntity)
-           .Where(r => layers.Contains(LayerOf(Str(r[2])))).Select(PresenceDict));
+           .Where(r => layers.Contains(LayerOf(Str(r[2])))));
 
-    /// As presenças que cobrem o ponto (lat, lon) em t: o ponto está a no máximo max(raio do lugar, toleranceKm) do centro. Mesmos filtros do
-    /// MapItems. Os de área menor primeiro (o mais específico), depois por distância; cada resultado tem distance_km e inside (dentro do disco).
+    /// As presenças que cobrem o ponto (lat, lon) em t: o ponto está dentro do disco ou do contorno do lugar, ou a no máximo toleranceKm do ponto, do centro
+    /// do disco ou da borda do contorno. Mesmos filtros do MapItems. Os de área menor primeiro (o mais específico), depois por distância; cada resultado
+    /// tem distance_km (do centro, ou da borda se está fora de um contorno; 0 dentro de um contorno) e inside (dentro do disco ou do contorno).
     public Array<Dictionary> EntitiesAt(double lat, double lon, double toleranceKm, string[] layers, long onlyEntity, long t)
     {
-        var here = EvronGeo.Dir(lat, lon);
+        var here = Vec.FromLatLon(lat, lon);
         var hits = new List<(Dictionary D, double Dist, double Radius)>();
         foreach (var d in MapItems(layers, onlyEntity, t))
         {
-            double radius = (double)d["radius_km"];
-            double dist = EvronGeo.Angle(here, EvronGeo.Dir((double)d["lat"], (double)d["lon"])) * EvronGeo.RadiusKm;
-            if (dist > Math.Max(radius, toleranceKm)) continue;
+            var flat = d["vertices"].AsFloat64Array();
+            double dist, radius;
+            bool inside;
+            if (flat.Length >= 6)  // contorno
+            {
+                var v = PlaceGeometry.ToVecs(flat);
+                inside = PlaceGeometry.Contains(here, v);
+                dist = inside ? 0 : PlaceGeometry.DistanceToBoundaryKm(here, v);
+                radius = Math.Sqrt((double)d["area_km2"] / Math.PI);  // raio equivalente, só para ordenar do mais específico
+            }
+            else  // ponto ou disco
+            {
+                radius = (double)d["radius_km"];
+                dist = Vec.Angle(here, Vec.FromLatLon((double)d["lat"], (double)d["lon"])) * EvronGeo.RadiusKm;
+                inside = dist <= radius;
+            }
+            if (!inside && dist > toleranceKm) continue;
             d["distance_km"] = dist;
-            d["inside"] = dist <= radius;
+            d["inside"] = inside;
             hits.Add((d, dist, radius));
         }
         return new(hits.OrderBy(h => h.Radius).ThenBy(h => h.Dist).Select(h => h.D));

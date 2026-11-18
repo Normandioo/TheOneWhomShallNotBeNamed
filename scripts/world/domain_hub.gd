@@ -31,6 +31,15 @@ var map                    # a camada de lugares do globo (PlaceLayer), ligada p
 var presence_panel         # camadas e escopo do mapa
 var focus_map := Callable()  # func(direção, zoom): leva a câmera a um ponto
 var fixed_dir := Vector3.ZERO  # o ponto fixado no globo (onde "Criar lugar aqui" cria)
+var draw_panel             # a barra do modo desenhar fronteira
+var drawing := false       # no modo desenhar: o clique no globo marca um ponto do contorno
+var _draw_pts: Array[Vector2] = []  # (lat, lon) de cada ponto marcado, na ordem
+var _draw_entity := 0      # de quem é a fronteira
+var _draw_name := ""
+var _draw_role := "territorio"
+var _draw_place := 0       # != 0: refazendo o contorno desse lugar
+var _draw_message := ""
+var _map_items: Array = [] # o que o globo desenha agora (de onde vêm os vértices que atraem o clique)
 var _current := 0
 var _pending := false      # o tempo andou e a ficha ainda não foi relida
 var _last_rebuild_ms := 0
@@ -108,6 +117,8 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 		registry.DeleteEstimate(id)
 		_reload())
 	sheet.place_focus_requested.connect(focus_place)
+	sheet.border_draw_requested.connect(func(n: String, role: String) -> void: start_border(n, role, 0))
+	sheet.border_redraw_requested.connect(func(place_id: int, role: String) -> void: start_border("", role, place_id))
 	refresh_search()
 
 
@@ -118,6 +129,14 @@ func bind_map(place_layer, panel, focus: Callable) -> void:
 	focus_map = focus
 	panel.changed.connect(refresh_map)
 	refresh_map()
+
+
+## Liga a barra do modo desenhar.
+func bind_draw(panel) -> void:
+	draw_panel = panel
+	panel.undo_requested.connect(draw_undo)
+	panel.finish_requested.connect(draw_finish)
+	panel.cancel_requested.connect(draw_cancel)
 
 
 func close() -> void:
@@ -131,6 +150,10 @@ func current() -> int:
 
 func open(id: int) -> void:
 	if id == 0 or not usable:
+		return
+	if drawing:  # abrir outra ficha no meio do desenho o perderia: termina ou cancela antes
+		_draw_message = "Conclua ou cancele o desenho antes de abrir outro cadastro."
+		_refresh_draw()
 		return
 	_current = id
 	_reload()
@@ -175,7 +198,7 @@ func set_fixed_point(dir: Vector3) -> void:
 ## (km). Uma só entidade abre a ficha dela (se já é a aberta, a ficha fica como está: refazê-la apagaria o que se digita nela); várias aparecem
 ## na lista de busca para escolher. Devolve quantas entidades foram achadas.
 func pick(dir: Vector3, tolerance_km: float) -> int:
-	if not usable or map == null or dir == Vector3.ZERO or (not presence_panel.all_entities() and _current == 0):
+	if not usable or drawing or map == null or dir == Vector3.ZERO or (not presence_panel.all_entities() and _current == 0):
 		return 0
 	var ll := EvronGeo.lat_lon(dir)
 	var only := 0 if presence_panel.all_entities() else _current
@@ -215,10 +238,116 @@ func refresh_map() -> void:
 	var items = [] if not all and _current == 0 else registry.MapItems(presence_panel.layers(), 0 if all else _current, shown_t)
 	if items == null:
 		return
+	_map_items = items
 	var key: int = items.hash()
 	if key != _map_key:
 		_map_key = key
 		map.show_items(items)
+
+
+# --- desenhar fronteira ----------------------------------------------------------------------------------------------
+
+## Entra no modo desenhar para a ficha aberta: o clique no globo passa a marcar os pontos do contorno (draw_click). place_id != 0 refaz o
+## contorno desse lugar; senão, ao concluir, cria o lugar com o nome dado e liga a entidade a ele com a função (role).
+func start_border(place_name: String, role: String, place_id: int = 0) -> void:
+	if not usable or drawing or _current == 0:
+		return
+	if place_id == 0 and place_name.strip_edges() == "":
+		sheet.show_border_message("Dê um nome à região antes de desenhar.")
+		return
+	drawing = true
+	_draw_entity = _current
+	_draw_name = place_name.strip_edges()
+	_draw_role = role
+	_draw_place = place_id
+	_draw_pts.clear()
+	_draw_message = "Clique no globo para marcar cada ponto; arraste para girar. Perto do vértice de outra fronteira o ponto cola nele."
+	_refresh_draw()
+
+
+## Um clique no globo no modo desenhar: marca um ponto. Se cai a menos de snap_km de um vértice de um contorno desenhado (o que está no mapa),
+## cola nesse vértice, para que duas fronteiras vizinhas dividam a borda sem fresta.
+func draw_click(dir: Vector3, snap_km: float) -> void:
+	if not drawing or dir == Vector3.ZERO:
+		return
+	var ll := EvronGeo.lat_lon(dir)
+	var pt := Vector2(ll.x, ll.y)
+	var glued := false
+	var best := snap_km
+	for it in _map_items:
+		var vs: PackedFloat64Array = it.vertices
+		for i in vs.size() / 2:
+			var d := EvronGeo.distance_km(dir, EvronGeo.dir(vs[2 * i], vs[2 * i + 1]))
+			if d <= best:
+				best = d
+				pt = Vector2(vs[2 * i], vs[2 * i + 1])
+				glued = true
+	if not _draw_pts.is_empty() and _draw_pts[_draw_pts.size() - 1].is_equal_approx(pt):
+		_draw_message = "Esse ponto já está marcado."
+	else:
+		_draw_pts.append(pt)
+		_draw_message = "Ponto colado ao vértice de outra fronteira." if glued else "Continue marcando; com 3 pontos já dá para concluir."
+	_refresh_draw()
+
+
+func draw_undo() -> void:
+	if drawing and not _draw_pts.is_empty():
+		_draw_pts.pop_back()
+		_draw_message = "Último ponto desfeito."
+		_refresh_draw()
+
+
+func draw_cancel() -> void:
+	if drawing:
+		_end_draw()
+
+
+## Conclui: cria o lugar com o contorno e liga a entidade (ou troca o contorno do lugar que estava sendo refeito). Um contorno que não vale
+## (cruza ele mesmo, grande demais, sem área) não é gravado e o desenho continua, para desfazer pontos.
+func draw_finish() -> void:
+	if not drawing:
+		return
+	if _draw_pts.size() < 3:
+		_draw_message = "Marque ao menos 3 pontos."
+		_refresh_draw()
+		return
+	var flat := PackedFloat64Array()
+	for p in _draw_pts:
+		flat.append_array([p.x, p.y])
+	var done := false
+	if _draw_place != 0:
+		done = registry.SetPlaceVertices(_draw_place, flat) != null
+	else:
+		var pid := _id(registry.AddPolygonPlace(_draw_name, "regiao", flat, ""))
+		if pid != 0:
+			done = registry.AddPresence(_draw_entity, pid, _draw_role, "media") != null
+	if not done:
+		_draw_message = "Esse contorno não vale: ele cruza ele mesmo, é grande demais ou não tem área. Desfaça pontos ou cancele."
+		_refresh_draw()
+		return
+	var entity := _draw_entity
+	_end_draw()
+	open(entity)
+
+
+func _end_draw() -> void:
+	drawing = false
+	_draw_pts.clear()
+	_draw_place = 0
+	if map != null:
+		map.show_draft([])
+	if draw_panel != null:
+		draw_panel.hide_panel()
+
+
+func _refresh_draw() -> void:
+	var dirs: Array = []
+	for p in _draw_pts:
+		dirs.append(EvronGeo.dir(p.x, p.y))
+	if map != null:
+		map.show_draft(dirs)
+	if draw_panel != null:
+		draw_panel.show_state("Desenhando fronteira: %s" % (_draw_name if _draw_name != "" else "novo contorno"), _draw_pts.size(), _draw_message)
 
 
 ## A cada quadro: se o tempo andou (e faz ao menos REBUILD_MS desde a última leitura), relê a ficha só se algo dela mudou, e nunca com o usuário

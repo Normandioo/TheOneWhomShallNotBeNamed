@@ -29,6 +29,7 @@ const SearchPanel = preload("res://scripts/ui/search_panel.gd")
 const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
 const CalendarPanel = preload("res://scripts/ui/calendar_panel.gd")
 const PresencePanel = preload("res://scripts/ui/presence_panel.gd")
+const DrawPanel = preload("res://scripts/ui/draw_panel.gd")
 const DomainHub = preload("res://scripts/world/domain_hub.gd")
 const ToolPanel = preload("res://scripts/ui/tool_panel.gd")
 const TimeBar = preload("res://scripts/ui/time_bar.gd")
@@ -94,6 +95,9 @@ func _ready() -> void:
 	hud.add_child(presence_panel)
 	hud.move_child(presence_panel, 0)  # por baixo da ficha e da janela de calendários
 	domains.bind_map(globe.places, presence_panel, globe.focus)
+	var draw_panel := DrawPanel.new()
+	hud.add_child(draw_panel)
+	domains.bind_draw(draw_panel)
 	if save_path != "":
 		WorldStore.load_into(clock, save_path)  # sem salvamento válido, abre o cenário técnico, pausado
 	demo.attach(clock)
@@ -246,6 +250,9 @@ func _on_clock_changed() -> void:
 
 
 func select(n: Vector3) -> void:
+	if domains.drawing:  # no modo desenhar fronteira, o clique marca um ponto do contorno (cola a vértices de fronteiras vizinhas até ~2% da altura)
+		domains.draw_click(n, maxf(8.0, globe.camera_altitude_km() * 0.02))
+		return
 	selected_dir = n
 	domains.set_fixed_point(n)
 	domains.pick(n, maxf(40.0, globe.camera_altitude_km() * 0.05))  # o clique em uma presença abre o cadastro (tolerância cresce com a altura)

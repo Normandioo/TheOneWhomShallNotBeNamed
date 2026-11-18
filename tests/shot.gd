@@ -16,6 +16,8 @@ const HEADLESS_SUITES := [
 	"res://tests/suites/calendar_use_suite.gd",
 	"res://tests/suites/place_suite.gd",
 	"res://tests/suites/regression_suite.gd",
+	"res://tests/suites/border_suite.gd",
+	"res://tests/suites/draw_suite.gd",
 	"res://tests/suites/calendar_suite.gd",
 ]
 const SCENE_SUITES := [
@@ -25,6 +27,7 @@ const SCENE_SUITES := [
 	"res://tests/suites/brush_gallery_suite.gd",
 	"res://tests/suites/time_suite.gd",
 	"res://tests/suites/hub_suite.gd",  # com a cena: o hub segue o relógio
+	"res://tests/suites/draw_suite.gd",  # com a cena: Main.select no modo desenhar
 ]
 
 

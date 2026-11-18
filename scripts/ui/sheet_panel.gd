@@ -23,6 +23,8 @@ signal closed
 signal calendar_use_added(calendar_id: int, purpose: String)
 signal calendar_use_removed(use_id: int)
 signal place_focus_requested(place_id: int)
+signal border_draw_requested(name: String, role: String)   # desenhar uma fronteira nova no globo
+signal border_redraw_requested(place_id: int, role: String)  # refazer o contorno de um lugar que já é contorno
 signal place_search(text: String)  # buscar lugares para os menus (o hub responde com show_place_candidates)
 signal presence_added(place_id: int, role: String)
 signal presence_removed(presence_id: int)
@@ -57,6 +59,7 @@ var _geo := {}             # lugares e datas para as seções de mapa e populaç
 var _fixed_label: Label
 var _create_place_btn: Button
 var _geo_message: Label
+var _border_msg: Label
 var _place_pickers: Array = []  # os menus de lugar da ficha (a busca de um atualiza todos)
 var _universal_label: Label
 var _date_labels := {}     # id do uso -> Label com a data local
@@ -143,6 +146,11 @@ func show_fixed_point(text: String, enabled: bool) -> void:
 	if _fixed_label != null:
 		_fixed_label.text = text
 		_create_place_btn.disabled = not enabled
+
+
+func show_border_message(text: String) -> void:
+	if _border_msg != null:
+		_border_msg.text = text
 
 
 func show_geo_message(text: String) -> void:
@@ -446,6 +454,7 @@ func _build_links() -> void:
 
 func _build_places() -> void:
 	_place_pickers.clear()
+	_border_msg = null
 	_fixed_label = null
 	_create_place_btn = null
 	if _geo.is_empty():
@@ -456,7 +465,12 @@ func _build_places() -> void:
 	for p in _sheet.presences:
 		var row := HBoxContainer.new()
 		box.add_child(row)
-		var what := "ponto" if p.radius_km <= 0.0 else "área de %s km" % LayerPanel._thousands(roundi(p.radius_km))
+		var is_border: bool = p.vertices.size() >= 6
+		var what := "ponto"
+		if is_border:
+			what = "contorno de %d pontos · ≈ %s km²" % [p.vertices.size() / 2, LayerPanel._thousands(roundi(p.area_km2))]
+		elif p.radius_km > 0.0:
+			what = "área de %s km" % LayerPanel._thousands(roundi(p.radius_km))
 		var label := Label.new()
 		label.text = "%s · %s (%s)" % [UiKit.role_label(p.role), p.place, what]
 		label.tooltip_text = "%s · certeza %s" % [UiKit.LAYER_LABEL.get(p.layer, p.layer), UiKit.CERTAINTY_LABEL.get(p.certainty, p.certainty)]
@@ -469,6 +483,13 @@ func _build_places() -> void:
 		focus.tooltip_text = "Centralizar o mapa neste lugar"
 		focus.pressed.connect(func() -> void: place_focus_requested.emit(int(p.place_id)))
 		row.add_child(focus)
+		if is_border:
+			var redraw := Button.new()
+			redraw.text = "Redesenhar"
+			redraw.flat = true
+			redraw.tooltip_text = "Marcar o contorno de novo no globo (troca o contorno deste lugar)"
+			redraw.pressed.connect(func() -> void: border_redraw_requested.emit(int(p.place_id), p.role))
+			row.add_child(redraw)
 		var del := Button.new()
 		del.text = "✕"
 		del.flat = true
@@ -518,6 +539,22 @@ func _build_places() -> void:
 		if name_edit.text.strip_edges() != "":
 			place_created.emit(name_edit.text.strip_edges(), kind_keys[kind.selected], radius.value, role_keys[role.selected]))
 	new_row2.add_child(_create_place_btn)
+	box.add_child(_note("Ou desenhe uma fronteira à mão no globo (clicando ponto a ponto):"))
+	var draw_row := HBoxContainer.new()
+	box.add_child(draw_row)
+	var border_name := LineEdit.new()
+	border_name.placeholder_text = "nome da região"
+	border_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	draw_row.add_child(border_name)
+	var border_role := _option(role_keys, func(k): return UiKit.ROLE_LABEL[k])
+	border_role.select(role_keys.find("territorio"))
+	draw_row.add_child(border_role)
+	var draw_btn := Button.new()
+	draw_btn.text = "Desenhar no mapa"
+	draw_btn.pressed.connect(func() -> void: border_draw_requested.emit(border_name.text.strip_edges(), role_keys[border_role.selected]))
+	draw_row.add_child(draw_btn)
+	_border_msg = _note("")
+	box.add_child(_border_msg)
 
 
 func _build_population() -> void:
