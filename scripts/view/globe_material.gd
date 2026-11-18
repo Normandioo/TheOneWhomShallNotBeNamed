@@ -51,6 +51,7 @@ func show_layer(layer: Dictionary) -> void:
 	if img == null:
 		push_error("camada não encontrada: " + file)
 		return
+	img.generate_mipmaps()  # de longe a camada não cintila (o shader escolhe o nível sem costura em 180°)
 	var tex := ImageTexture.create_from_image(img)
 	material.set_shader_parameter("layer_linear", tex)
 	material.set_shader_parameter("layer_nearest", tex)

@@ -18,7 +18,7 @@ func run() -> void:
 	cam.look_at_dir(spot, 1.25)
 	await frames(3)
 	var target: Vector3 = main.globe.pick(CENTER)
-	var h0: float = main.terrain.height_at(target)
+	var h0: float = main.terrain.HeightAt(target)
 	await save("8_antes_do_pincel")
 
 	# Pincel ativo: passar o mouse mostra o círculo.
@@ -37,7 +37,7 @@ func run() -> void:
 	for i in range(1, 9):
 		await send(motion(CENTER + Vector2(i * 6, 0), Vector2(6, 0)))
 	await send(button(MOUSE_BUTTON_LEFT, false, CENTER + Vector2(48, 0)))
-	var h1: float = main.terrain.height_at(target)
+	var h1: float = main.terrain.HeightAt(target)
 	if h1 < h0 + 300.0:
 		return fail("arrastar o pincel de elevar deveria subir o centro (%.0f -> %.0f m)" % [h0, h1])
 	if cam.yaw != yaw0:
@@ -53,12 +53,12 @@ func run() -> void:
 	var ctrl_z := key(KEY_Z)
 	ctrl_z.ctrl_pressed = true
 	await send(ctrl_z)
-	if main.terrain.height_at(target) != h0:
+	if main.terrain.HeightAt(target) != h0:
 		return fail("Ctrl+Z deveria devolver a altura exata")
 	var ctrl_y := key(KEY_Y)
 	ctrl_y.ctrl_pressed = true
 	await send(ctrl_y)
-	if main.terrain.height_at(target) != h1:
+	if main.terrain.HeightAt(target) != h1:
 		return fail("Ctrl+Y deveria refazer")
 	await send(ctrl_z)
 	ok("Ctrl+Z desfaz e Ctrl+Y refaz")
@@ -98,7 +98,7 @@ func run() -> void:
 
 	# Quanto custa reenviar a altitude para a GPU (a cada 0,1 s durante a pincelada).
 	var t0 := Time.get_ticks_usec()
-	main.material.refresh_height(main.height_img)
+	main.material.refresh_height(main.terrain.HeightImage())
 	await RenderingServer.frame_post_draw
 	ok("reenviar a altitude (32 MiB) para a GPU: %.1f ms" % ((Time.get_ticks_usec() - t0) / 1000.0))
 	main.set_layer(0)

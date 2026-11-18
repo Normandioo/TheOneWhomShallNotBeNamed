@@ -5,6 +5,10 @@ func _initialize() -> void:
 func _run() -> void:
 	var args := OS.get_cmdline_user_args()
 	var script := load("res://" + args[0]) as GDScript
+	if script == null or not script.can_instantiate():
+		push_error("não consegui carregar a suíte " + args[0])  # sem isto o executor ficaria parado para sempre
+		quit(1)
+		return
 	var out: String = args[1] if args.size() > 1 else OS.get_user_data_dir()
 	var main: Node = null
 	if args.size() > 2 and args[2] == "scene":

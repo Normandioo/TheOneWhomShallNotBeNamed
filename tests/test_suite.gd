@@ -76,9 +76,3 @@ func key(keycode: Key) -> InputEventKey:
 	e.pressed = true
 	return e
 
-
-func max_of(a: PackedFloat32Array) -> float:
-	var m := 0.0
-	for v in a:
-		m = maxf(m, v)
-	return m

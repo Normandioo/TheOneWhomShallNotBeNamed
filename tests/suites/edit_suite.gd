@@ -4,20 +4,21 @@ extends "res://tests/test_suite.gd"
 
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const EvronMaps = preload("res://scripts/data/evron_maps.gd")
-const Terrain = preload("res://scripts/world/terrain.gd")
+const Terrain = preload("res://scripts/world/Terrain.cs")
 const CommandStack = preload("res://scripts/edit/command_stack.gd")
 const TerrainBrush = preload("res://scripts/edit/terrain_brush.gd")
 
 
 func run() -> void:
-	var terrain := Terrain.new(EvronMaps.load_height())
+	var terrain := Terrain.new()
+	terrain.Setup(EvronMaps.load_height())
 	var stack := CommandStack.new()
 	var brush := TerrainBrush.new(terrain, stack)
 	brush.roughness = 0.0  # os testes antigos medem a forma lisa; a rugosidade tem teste próprio
 
 	# Disco: no centro peso ~1, todos os pixels a menos do raio, e área ~ πr² (pixels encolhem com a latitude).
 	var here := EvronGeo.dir(30.0, 20.0)
-	var d: Array = terrain.disk(here, 200.0)
+	var d: Array = terrain.Disk(here, 200.0)
 	var w: PackedFloat32Array = d[1]
 	var expected_px := PI * 200.0 * 200.0 / (EvronGeo.KM_PER_DEG * 360.0 / 4096.0) ** 2 / cos(deg_to_rad(30.0))
 	if absf(d[0].size() / expected_px - 1.0) > 0.1:
@@ -26,22 +27,22 @@ func run() -> void:
 		return fail("disco vazio")
 	# No limite de longitude o disco pega as duas pontas do mapa; no polo, a linha inteira.
 	var cols := {}
-	for idx in terrain.disk(EvronGeo.dir(0.0, 179.9), 100.0)[0]:
-		cols[idx % terrain.size.x] = true
-	if not (cols.has(0) and cols.has(terrain.size.x - 1)):
+	for idx in terrain.Disk(EvronGeo.dir(0.0, 179.9), 100.0)[0]:
+		cols[idx % terrain.Size.x] = true
+	if not (cols.has(0) and cols.has(terrain.Size.x - 1)):
 		return fail("disco em 179,9° deveria pegar as colunas das duas pontas")
 	var pole_cols := {}
-	for idx in terrain.disk(EvronGeo.dir(89.9, 0.0), 100.0)[0]:
-		if idx / terrain.size.x == 0:
-			pole_cols[idx % terrain.size.x] = true
-	if pole_cols.size() != terrain.size.x:
+	for idx in terrain.Disk(EvronGeo.dir(89.9, 0.0), 100.0)[0]:
+		if idx / terrain.Size.x == 0:
+			pole_cols[idx % terrain.Size.x] = true
+	if pole_cols.size() != terrain.Size.x:
 		return fail("disco no polo deveria pegar a primeira linha inteira, pegou %d colunas" % pole_cols.size())
 	ok("disco do pincel: área certa, atravessa 180° e cobre o polo")
 
 	# Elevar: o centro sobe a intensidade; a borda quase nada; desfazer volta ao exato; refazer reaplica.
-	var h0 := terrain.height_at(here)
+	var h0 := terrain.HeightAt(here)
 	var edge_dir := EvronGeo.dir(30.0 + 190.0 / EvronGeo.KM_PER_DEG, 20.0)
-	var edge0 := terrain.height_at(edge_dir)
+	var edge0 := terrain.HeightAt(edge_dir)
 	brush.op = TerrainBrush.Op.RAISE
 	brush.radius_km = 200.0
 	brush.strength = 300.0
@@ -49,18 +50,18 @@ func run() -> void:
 	brush.begin(here)
 	var dab_ms := (Time.get_ticks_usec() - t0) / 1000.0
 	var changed := brush.end()
-	var h1 := terrain.height_at(here)
+	var h1 := terrain.HeightAt(here)
 	if absf(h1 - h0 - 300.0) > 15.0:
 		return fail("elevar 300 m no centro deveria subir ~300 m: %.1f -> %.1f" % [h0, h1])
-	if absf(terrain.height_at(edge_dir) - edge0) > 15.0:
+	if absf(terrain.HeightAt(edge_dir) - edge0) > 15.0:
 		return fail("a borda do pincel não deveria subir quase nada")
 	if not stack.can_undo() or not stack.undo_name().begins_with("Elevar"):
 		return fail("a pincelada deveria virar um comando 'Elevar'")
 	stack.undo()
-	if terrain.height_at(here) != h0:
-		return fail("desfazer deveria devolver a altura exata: %.3f != %.3f" % [terrain.height_at(here), h0])
+	if terrain.HeightAt(here) != h0:
+		return fail("desfazer deveria devolver a altura exata: %.3f != %.3f" % [terrain.HeightAt(here), h0])
 	stack.redo()
-	if terrain.height_at(here) != h1:
+	if terrain.HeightAt(here) != h1:
 		return fail("refazer deveria reaplicar a mesma altura")
 	stack.undo()
 	ok("elevar +300 m no centro, borda intacta, desfazer exato e refazer (%d pontos; uma marca de 200 km: %.1f ms)" % [changed, dab_ms])
@@ -113,6 +114,8 @@ func run() -> void:
 		return
 	if not _cap(terrain, stack, brush):
 		return
+	if not _coast(terrain, stack, brush):
+		return
 	_long_river(terrain, stack, brush)
 
 
@@ -123,7 +126,7 @@ func _mountains(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> b
 	brush.strength = 150.0
 	brush.seed_value = 7
 	var before := _rough(terrain, spot, 250.0)
-	var h0 := terrain.height_at(spot)
+	var h0 := terrain.HeightAt(spot)
 	brush.op = TerrainBrush.Op.RAISE
 	brush.roughness = 0.0  # o Elevar liso é a referência
 	brush.strength = 900.0
@@ -137,16 +140,16 @@ func _mountains(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> b
 	brush.begin(spot)
 	brush.end()
 	var rough := _rough(terrain, spot, 250.0)
-	var peak := terrain.height_at(spot)
-	var snapshot := terrain.get_h(terrain.disk(spot, 250.0)[0][100])
+	var peak := terrain.HeightAt(spot)
+	var snapshot := terrain.GetH(terrain.Disk(spot, 250.0)[0][100])
 	stack.undo()
 	brush.begin(spot)  # mesma semente: o relevo tem de sair igual
 	brush.end()
-	if terrain.get_h(terrain.disk(spot, 250.0)[0][100]) != snapshot:
+	if terrain.GetH(terrain.Disk(spot, 250.0)[0][100]) != snapshot:
 		fail("a mesma semente deveria dar o mesmo relevo")
 		return false
 	stack.undo()
-	if terrain.height_at(spot) != h0:
+	if terrain.HeightAt(spot) != h0:
 		fail("desfazer as montanhas deveria devolver a altura exata")
 		return false
 	if rough < smooth_rough * 1.1 or rough < before * 2.0:
@@ -163,8 +166,8 @@ func _inland(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> bool
 		for lon in range(-170, 170, 10):
 			var n := EvronGeo.dir(lat, lon)
 			var ok_spot := true
-			for i in terrain.disk(n, 350.0)[0]:
-				if terrain.get_h(i) < 150.0:
+			for i in terrain.Disk(n, 350.0)[0]:
+				if terrain.GetH(i) < 150.0:
 					ok_spot = false
 					break
 			if ok_spot:
@@ -179,18 +182,18 @@ func _inland(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> bool
 	brush.radius_km = 300.0
 	brush.strength = 600.0
 	brush.seed_value = 3
-	var idx: PackedInt32Array = terrain.disk(spot, 300.0)[0]
+	var idx: PackedInt32Array = terrain.Disk(spot, 300.0)[0]
 	var before := {}
 	for i in idx:
-		before[i] = terrain.get_h(i)
+		before[i] = terrain.GetH(i)
 	brush.begin(spot)
 	brush.end()
 	var lower := 0
 	var water := 0
 	for i in idx:
-		if terrain.get_h(i) < before[i] - 0.001:
+		if terrain.GetH(i) < before[i] - 0.001:
 			lower += 1
-		if terrain.get_h(i) < 0.0:
+		if terrain.GetH(i) < 0.0:
 			water += 1
 	stack.undo()
 	if lower > 0 or water > 0:
@@ -203,14 +206,14 @@ func _inland(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> bool
 ## Erosão: conserva a massa e suaviza as encostas; várias passadas arredondam a cordilheira.
 func _erosion(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> bool:
 	var hill := EvronGeo.dir(33.0, -39.0)  # cordilheira
-	var big: PackedInt32Array = terrain.disk(hill, 500.0)[0]
+	var big: PackedInt32Array = terrain.Disk(hill, 500.0)[0]
 	var mass0 := 0.0
 	for i in big:
-		mass0 += terrain.get_h(i)
+		mass0 += terrain.GetH(i)
 	var slope0 := _rough(terrain, hill, 150.0)
 	var peak0 := 0.0
-	for i in terrain.disk(hill, 150.0)[0]:
-		peak0 = maxf(peak0, terrain.get_h(i))
+	for i in terrain.Disk(hill, 150.0)[0]:
+		peak0 = maxf(peak0, terrain.GetH(i))
 	brush.op = TerrainBrush.Op.ERODE
 	brush.radius_km = 150.0
 	brush.strength = 800.0
@@ -219,11 +222,11 @@ func _erosion(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> boo
 		brush.end()
 	var mass1 := 0.0
 	for i in big:
-		mass1 += terrain.get_h(i)
+		mass1 += terrain.GetH(i)
 	var slope1 := _rough(terrain, hill, 150.0)
 	var peak1 := 0.0
-	for i in terrain.disk(hill, 150.0)[0]:
-		peak1 = maxf(peak1, terrain.get_h(i))
+	for i in terrain.Disk(hill, 150.0)[0]:
+		peak1 = maxf(peak1, terrain.GetH(i))
 	for i in 6:
 		stack.undo()
 	if absf(mass1 - mass0) > 1.0:
@@ -258,8 +261,8 @@ func _roughness(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> b
 		brush.begin(spot)
 		brush.end()
 		var total := 0.0
-		for i in terrain.disk(spot, 250.0)[0]:
-			total += terrain.get_h(i)
+		for i in terrain.Disk(spot, 250.0)[0]:
+			total += terrain.GetH(i)
 		crest.append(total)
 		stack.undo()
 	brush.roughness = 0.5
@@ -277,10 +280,10 @@ func _roughness(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> b
 ## água e desfazer é exato (alturas e rios).
 func _valleys(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> bool:
 	var hill := EvronGeo.dir(33.0, -39.0)  # cordilheira
-	var idx: PackedInt32Array = terrain.disk(hill, 250.0)[0]
+	var idx: PackedInt32Array = terrain.Disk(hill, 250.0)[0]
 	var before := {}
 	for i in idx:
-		before[i] = terrain.get_h(i)
+		before[i] = terrain.GetH(i)
 	brush.op = TerrainBrush.Op.VALLEYS
 	brush.radius_km = 250.0
 	brush.strength = 300.0
@@ -295,12 +298,12 @@ func _valleys(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> boo
 	var removed := 0.0
 	var deposited := 0.0
 	for i in idx:
-		var cut: float = before[i] - terrain.get_h(i)
+		var cut: float = before[i] - terrain.GetH(i)
 		if cut > 0.0:
 			removed += cut
 		else:
 			deposited -= cut
-		if before[i] > 1.0 and terrain.get_h(i) < 1.0:
+		if before[i] > 1.0 and terrain.GetH(i) < 1.0:
 			water += 1
 		var a: float = flow.get(i, 1.0)
 		if a >= 6.0:
@@ -312,17 +315,17 @@ func _valleys(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> boo
 	var river_px := 0
 	var river_on_water := 0
 	for i in idx:
-		if terrain.get_river(i) > 0.0:
+		if terrain.GetRiver(i) > 0.0:
 			river_px += 1
-			if terrain.get_h(i) <= 1.0:
+			if terrain.GetH(i) <= 1.0:
 				river_on_water += 1
 	stack.undo()
 	var river_left := 0
 	for i in idx:
-		if terrain.get_h(i) != before[i]:
+		if terrain.GetH(i) != before[i]:
 			fail("desfazer os vales deveria devolver a altura exata")
 			return false
-		if terrain.get_river(i) > 0.0:
+		if terrain.GetRiver(i) > 0.0:
 			river_left += 1
 	if river_left > 0:
 		fail("desfazer os vales deveria apagar os rios: sobraram %d pixels" % river_left)
@@ -358,9 +361,9 @@ func _long_river(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> 
 	brush.end()
 	# Maior componente conectada (8 vizinhos) dos pixels de rio, perto do traço.
 	var pts := {}
-	var width := terrain.size.x
-	for i in terrain.disk(EvronGeo.dir(33.0, -41.0), 900.0)[0]:
-		if terrain.get_river(i) > 0.0:
+	var width: int = terrain.Size.x
+	for i in terrain.Disk(EvronGeo.dir(33.0, -41.0), 900.0)[0]:
+		if terrain.GetRiver(i) > 0.0:
 			pts[i] = true
 	var seen := {}
 	var best := 0
@@ -395,8 +398,8 @@ func _long_river(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> 
 			best_rows = ymax - ymin
 	stack.undo()
 	var left := 0
-	for i in terrain.disk(EvronGeo.dir(33.0, -41.0), 900.0)[0]:
-		if terrain.get_river(i) > 0.0:
+	for i in terrain.Disk(EvronGeo.dir(33.0, -41.0), 900.0)[0]:
+		if terrain.GetRiver(i) > 0.0:
 			left += 1
 	if left > 0:
 		fail("desfazer deveria apagar o rio inteiro: sobraram %d pixels" % left)
@@ -408,6 +411,38 @@ func _long_river(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> 
 	return true
 
 
+
+## Vales numa costa: o sedimento que desce o rio não transforma mar em terra (antes do conserto, 218 pixels viravam ilha
+## com estas pinceladas).
+func _coast(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> bool:
+	var region: PackedInt32Array = terrain.Disk(EvronGeo.dir(-52.0, -63.0), 700.0)[0]
+	var sea := []
+	for i in region:
+		if terrain.GetH(i) < 0.0:
+			sea.append(i)
+	brush.op = TerrainBrush.Op.VALLEYS
+	brush.strength = 1000.0
+	brush.radius_km = 400.0
+	for s in 6:
+		brush.begin(EvronGeo.dir(-51.0, -66.0 + s))
+		for k in range(1, 10):
+			brush.drag(EvronGeo.dir(-51.0 - k * 0.2, -66.0 + s + k * 0.4))
+		brush.end()
+	var made := 0
+	for i in sea:
+		if terrain.GetH(i) >= 0.0:
+			made += 1
+	for s in 6:
+		stack.undo()
+	if sea.size() < 1000:
+		fail("a região do teste deveria ter mar (tem %d pixels)" % sea.size())
+		return false
+	if made > 0:
+		fail("vales na costa transformaram %d pixels de mar em terra" % made)
+		return false
+	ok("vales na costa: %d pixels de mar na região, nenhum virou terra" % sea.size())
+	return true
+
 ## Montanhas têm teto por pincelada: sem platôs altos e largos.
 func _cap(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> bool:
 	var spot := EvronGeo.dir(-50.0, -60.0)
@@ -416,17 +451,17 @@ func _cap(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> bool:
 	brush.strength = 300.0
 	brush.roughness = 0.0
 	brush.seed_value = 9
-	var idx: PackedInt32Array = terrain.disk(spot, 250.0)[0]
+	var idx: PackedInt32Array = terrain.Disk(spot, 250.0)[0]
 	var before := {}
 	for i in idx:
-		before[i] = terrain.get_h(i)
+		before[i] = terrain.GetH(i)
 	brush.begin(spot)
 	for i in 12:  # muitas marcas no mesmo lugar: sem teto, o platô subiria sem parar
 		brush._dab(spot)
 	brush.end()
 	var rise := 0.0
 	for i in idx:
-		rise = maxf(rise, terrain.get_h(i) - before[i])
+		rise = maxf(rise, terrain.GetH(i) - before[i])
 	stack.undo()
 	var cap: float = brush.strength * TerrainBrush.MOUNTAIN_GAIN * TerrainBrush.MOUNTAIN_CAP
 	brush.roughness = 0.5
@@ -440,9 +475,9 @@ func _cap(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> bool:
 ## Rugosidade: diferença média de altura entre pixels vizinhos num disco.
 func _rough(terrain: Terrain, n: Vector3, km: float) -> float:
 	var s := 0.0
-	var idx: PackedInt32Array = terrain.disk(n, km)[0]
+	var idx: PackedInt32Array = terrain.Disk(n, km)[0]
 	for i in idx:
-		s += absf(terrain.get_h(i) - terrain.get_h(i + 1))
+		s += absf(terrain.GetH(i) - terrain.GetH(i + 1))
 	return s / idx.size()
 
 
@@ -450,9 +485,9 @@ func _rough(terrain: Terrain, n: Vector3, km: float) -> float:
 func _spread(terrain: Terrain, n: Vector3, km: float) -> float:
 	var s := 0.0
 	var s2 := 0.0
-	var idx: PackedInt32Array = terrain.disk(n, km)[0]
+	var idx: PackedInt32Array = terrain.Disk(n, km)[0]
 	for i in idx:
-		var h := terrain.get_h(i)
+		var h := terrain.GetH(i)
 		s += h
 		s2 += h * h
 	var m := s / idx.size()

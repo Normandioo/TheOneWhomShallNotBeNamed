@@ -12,7 +12,7 @@ extends Node
 
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const EvronMaps = preload("res://scripts/data/evron_maps.gd")
-const Terrain = preload("res://scripts/world/terrain.gd")
+const Terrain = preload("res://scripts/world/Terrain.cs")
 const CommandStack = preload("res://scripts/edit/command_stack.gd")
 const TerrainBrush = preload("res://scripts/edit/terrain_brush.gd")
 const GlobeMaterial = preload("res://scripts/view/globe_material.gd")
@@ -26,7 +26,6 @@ const HEIGHT_UPLOAD_SECONDS := 0.1  # durante a pincelada a altitude vai para a 
 
 @onready var hud: Control = $Hud
 
-var height_img: Image
 var terrain: Terrain
 var commands := CommandStack.new()
 var brush: TerrainBrush
@@ -46,11 +45,11 @@ var _since_upload := 0.0
 func _ready() -> void:
 	if not EvronMaps.available():
 		push_error("Mapas não encontrados em data/evron/. Rode: python tools/import_maps.py <caminho>/mapas.zip")
-	height_img = EvronMaps.load_height()
-	terrain = Terrain.new(height_img)
+	terrain = Terrain.new()
+	terrain.Setup(EvronMaps.load_height())
 	brush = TerrainBrush.new(terrain, commands)
-	material.set_height(height_img)
-	material.set_rivers(terrain.rivers)
+	material.set_height(terrain.HeightImage())
+	material.set_rivers(terrain.RiversImage())
 	globe = GlobeView.new()
 	globe.setup(material.material)
 	add_child(globe)
@@ -77,13 +76,13 @@ func _process(delta: float) -> void:
 	globe.update(delta)
 	layer_panel.show_camera_altitude(globe.camera_altitude_km())
 	_since_upload += delta
-	if terrain.dirty and (not brush.active or _since_upload >= HEIGHT_UPLOAD_SECONDS):
-		material.refresh_height(height_img)
-		terrain.dirty = false
+	if terrain.Dirty and (not brush.active or _since_upload >= HEIGHT_UPLOAD_SECONDS):
+		material.refresh_height(terrain.HeightImage())
+		terrain.Dirty = false
 		_since_upload = 0.0
-	if terrain.rivers_dirty and (not brush.active or _since_upload == 0.0):
-		material.refresh_rivers(terrain.rivers)
-		terrain.rivers_dirty = false
+	if terrain.RiversDirty and not brush.active:  # os rios só mudam ao soltar o mouse, desfazer ou refazer
+		material.refresh_rivers(terrain.RiversImage())
+		terrain.RiversDirty = false
 
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -152,7 +151,7 @@ func describe(n: Vector3) -> String:
 	if n == Vector3.ZERO:
 		return "Fora do planeta."
 	var ll := EvronGeo.lat_lon(n)
-	var h := terrain.height_at(n)
+	var h := terrain.HeightAt(n)
 	var coords := ("Lat %.2f° %s · Lon %.2f° %s" % [
 		absf(ll.x), "N" if ll.x >= 0.0 else "S", absf(ll.y), "L" if ll.y >= 0.0 else "O"]).replace(".", ",")
 	return "%s\nAltitude %s m (%s)" % [coords, LayerPanel._thousands(roundi(h)), "terra" if h >= 0.0 else "mar"]

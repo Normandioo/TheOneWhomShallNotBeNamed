@@ -7,7 +7,7 @@ render_mode specular_disabled;
 #include "res://shaders/relief.gdshaderinc"
 #include "res://shaders/brush.gdshaderinc"
 
-uniform sampler2D layer_linear : source_color, filter_linear, repeat_enable;   // camada atual, valores contínuos
+uniform sampler2D layer_linear : source_color, filter_linear_mipmap, repeat_enable;   // camada atual, valores contínuos
 uniform sampler2D layer_nearest : source_color, filter_nearest, repeat_enable; // a mesma camada, para categorias
 uniform bool nearest = false;
 uniform int mode = 0;            // 0 camada de imagem, 1 altitude calibrada, 2 cor natural (GlobeMaterial.MODES)
@@ -47,14 +47,24 @@ void fragment() {
 	vec2 uv = globe_uv(n);
 	float h = height(uv);
 
-	// textureLod 0: o uv dá um salto na longitude 180° e a derivada faria uma costura com mipmaps.
-	vec3 col = nearest ? textureLod(layer_nearest, uv, 0.0).rgb : textureLod(layer_linear, uv, 0.0).rgb;
+	// O u salta de 1 para 0 na longitude 180°, e a derivada desse salto escolheria o mipmap mais grosso (uma costura).
+	// Usa as derivadas da coordenada deslocada meia volta, que não salta ali (método de Tarini).
+	vec2 dx = dFdx(uv), dy = dFdy(uv);
+	vec2 uv_alt = vec2(fract(uv.x + 0.5), uv.y);
+	vec2 dx_alt = dFdx(uv_alt), dy_alt = dFdy(uv_alt);
+	if (abs(dx_alt.x) + abs(dy_alt.x) < abs(dx.x) + abs(dy.x)) {
+		dx = dx_alt;
+		dy = dy_alt;
+	}
+	vec4 lin = textureGrad(layer_linear, uv, dx, dy);
+	// Categorias sem mipmap: a média de cores de identificadores vizinhos seria uma cor que não existe.
+	vec3 col = nearest ? textureLod(layer_nearest, uv, 0.0).rgb : lin.rgb;
 	vec3 geo_normal = NORMAL;
 	if (mode == 1) {
 		col = pow(altitude_color(h), vec3(2.2)); // cores da legenda são sRGB; ALBEDO é linear
 	} else if (mode == 2) {
 		// natural.png: RGB = terra e gelo, A = superfície sólida. O resto é água, pintada ao vivo pela altitude.
-		float solid = smoothstep(0.3, 0.7, textureLod(layer_linear, uv, 0.0).a);
+		float solid = smoothstep(0.3, 0.7, lin.a);
 		col = mix(pow(water_color(h), vec3(2.2)), col, solid);
 		// Halo azul da atmosfera na borda do disco.
 		EMISSION = vec3(0.10, 0.22, 0.55) * pow(1.0 - clamp(dot(geo_normal, VIEW), 0.0, 1.0), 4.0);

@@ -1,0 +1,34 @@
+# Compila o núcleo C# e roda a suíte que não depende dos mapas (terreno sintético).
+# As suítes com os mapas reais (data/evron/, fora do git) e com janela rodam só na máquina local: tests/shot.gd.
+name: testes
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    env:
+      GODOT_VERSION: 4.7.2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Godot .NET
+        run: |
+          curl -sSL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_mono_linux_x86_64.zip"
+          unzip -q godot.zip -d "$RUNNER_TEMP/godot"
+          echo "GODOT=$(find "$RUNNER_TEMP/godot" -name 'Godot_v*_mono_linux.x86_64' -type f)" >> "$GITHUB_ENV"
+
+      - name: Compilar o C#
+        run: dotnet build
+
+      - name: Importar o projeto
+        run: '"$GODOT" --headless --import --path .'
+
+      - name: Suíte do núcleo
+        run: '"$GODOT" --headless --path . -s tests/run_suite.gd -- tests/suites/core_suite.gd'
