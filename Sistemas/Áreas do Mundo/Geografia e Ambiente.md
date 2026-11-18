@@ -6,7 +6,7 @@ tags: [sistema, area]
 Relevo, batimetria, massas de terra, águas, bacias, solos, vegetação, clima, geologia, placas e recursos. Fauna, flora e fenômenos próprios de Evron com cadastro e distribuição espacial.
 
 ## Edição física
-- Pincéis para elevar, rebaixar, nivelar e suavizar o terreno.
+- Pincéis para elevar, rebaixar, nivelar e suavizar o terreno. **Feito na E0** (com desfazer e refazer); falta salvar.
 - Ferramentas para costas, rios e lagos; pintura de biomas, recursos e condições ambientais.
 - Alterações registradas em blocos ou geometrias versionados ([[Tempo e Histórico]]).
 - Dados de categoria mantêm os códigos: nada de interpolação que invente categoria.

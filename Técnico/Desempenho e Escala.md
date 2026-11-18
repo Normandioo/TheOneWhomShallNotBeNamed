@@ -26,4 +26,5 @@ tags: [tecnico]
 ## Hoje
 - O globo carrega só a camada da tela (~24 MB de RAM e outro tanto de VRAM por PNG) e a altitude (32 MB).
 - Relevo em blocos (autoteste, no PC de desenvolvimento): nível mais detalhado em ~150 ms; cache cheio de 160 blocos ≈ 213 MiB de vídeo; texturas no total ≈ 302 MiB; processo ≈ 90 MiB de RAM.
+- Pincel de terreno: uma marca de 200 km de raio ≈ 3 ms; reenviar a altitude inteira (32 MiB) para a GPU ≈ 5–9 ms (feito no máximo 10x por segundo durante a pincelada). Se pesar na máquina de referência: dividir a altitude em blocos editáveis.
 - Medições na máquina de referência ainda não feitas ([[E0 - Prova Técnica]]).
