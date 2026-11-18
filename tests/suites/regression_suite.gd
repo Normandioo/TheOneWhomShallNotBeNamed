@@ -48,7 +48,7 @@ func _fresh() -> void:
 	sheet = SheetPanel.new()
 	presence = PresencePanel.new()
 	map = PlaceLayer.new()
-	map.radius = 8.2823
+	map.radius = 6.371
 	cal_panel = CalendarPanel.new()
 	for n in [search, sheet, cal_panel, presence, map]:
 		host.add_child(n)

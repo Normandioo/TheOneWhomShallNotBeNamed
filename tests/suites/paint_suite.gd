@@ -13,6 +13,7 @@ const PlaceLayer = preload("res://scripts/view/place_layer.gd")
 const DomainHub = preload("res://scripts/world/domain_hub.gd")
 const CommandStack = preload("res://scripts/edit/command_stack.gd")
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
+const MapLayers = preload("res://scripts/ui/map_layers.gd")
 
 const W := 256
 const H := 128
@@ -51,7 +52,7 @@ func _build(db_path: String) -> void:
 	sheet = SheetPanel.new()
 	presence = PresencePanel.new()
 	map = PlaceLayer.new()
-	map.radius = 8.2823
+	map.radius = 6.371
 	dpanel = DrawPanel.new()
 	tpanel = TerritoryPanel.new()
 	var cal := CalendarPanel.new()
@@ -192,6 +193,33 @@ func run() -> void:
 	hub.stop_painting()
 	ok("o balde preenche o interior do anel e desfaz como um comando")
 
+	# Fronteiras naturais pela barra: crescer a partir da capital do cadastro, crescer todos, assentar; tudo é comando.
+	var sem_terra: int = reg.Create("pais", "Sem Terra")
+	hub.start_painting(sem_terra)
+	tpanel.grow_requested.emit(false)
+	if territory.AreaKm2(sem_terra) != 0.0 or not tpanel._message.visible:
+		return fail("sem território nem capital não há de onde crescer, e a barra avisa")
+	reg.AddPresence(sem_terra, reg.AddPlace("Porto Capital", "assentamento", -40.0, 150.0, 0.0, ""), "capital", "media")
+	tpanel.reach_changed.emit(1500.0)
+	tpanel.grow_requested.emit(false)
+	var cresceu := float(territory.AreaKm2(sem_terra))
+	if cresceu <= 0.0 or territory.OwnerAt(EvronGeo.dir(-40.0, 150.0)) != sem_terra or territory.OwnerAt(EvronGeo.dir(-40.0, 10.0)) != 0 \
+			or not stack.undo_name().begins_with("Crescer território") or tpanel._message.visible or not tpanel._area.text.contains("km²"):
+		return fail("crescer a partir da capital (%.0f km², pilha '%s', dono no pixel da capital %d, capitais %s, t %d)" % [cresceu, stack.undo_name(), territory.OwnerAt(EvronGeo.dir(-40.0, 150.0)), reg.MapItems(PackedStringArray(["politica"]), 0, hub.shown_t).map(func(i): return [i.entity, i.role]), hub.shown_t])
+	tpanel.snap_requested.emit()
+	if not tpanel._message.visible or not stack.undo_name().begins_with("Crescer território"):
+		return fail("assentar sem vizinho avisa e não cria comando")
+	var de_dravia_antes := float(territory.AreaKm2(dravia))
+	tpanel.grow_requested.emit(true)
+	if not stack.undo_name().begins_with("Crescer todos") or territory.AreaKm2(dravia) <= de_dravia_antes:
+		return fail("crescer todos: Dravia também cresce (%.0f -> %.0f)" % [de_dravia_antes, territory.AreaKm2(dravia)])
+	stack.undo()
+	stack.undo()
+	if territory.AreaKm2(sem_terra) != 0.0 or absf(territory.AreaKm2(dravia) - de_dravia_antes) > 1e-6:
+		return fail("desfazer os dois crescimentos")
+	hub.stop_painting()
+	ok("fronteiras naturais pela barra: sem origem avisa; cresce da capital (%.0f km²) sem pintar o mar; assentar sem vizinho avisa; crescer todos; desfaz" % cresceu)
+
 	# Esc termina; a ficha mostra a área.
 	hub.start_painting(aren)
 	var esc := InputEventKey.new()
@@ -299,6 +327,53 @@ func run() -> void:
 			main.globe.focus(EvronGeo.dir(24.0, 28.0), 1.6)
 			await save("territorio_mapa")
 		ok("com a cena: o Main leva a camada à GPU e desenha os países")
+
+		# Com os mapas reais: as capitais do protótipo (tools/mapa_politico.py, vista "oeste") crescem juntas pelas serras e rios do Gleba.
+		var caps := [[18.1, -112.0], [19.6, -107.5], [28.3, -112.0], [38.7, -107.0], [16.7, -116.1], [20.1, -96.7], [26.9, -129.0],
+			[41.9, -129.1], [24.6, -100.2], [43.5, -116.1], [28.9, -105.2], [38.2, -119.8], [18.6, -126.8]]
+		var first := 0
+		for i in caps.size():
+			var id: int = r2.Create("pais", "País %d" % (i + 1))
+			r2.AddPresence(id, r2.AddPlace("Capital %d" % (i + 1), "assentamento", caps[i][0], caps[i][1], 0.0, ""), "capital", "media")
+			first = id if first == 0 else first
+		h.start_painting(first)
+		h.territory_reach = 1500.0
+		var t0 := Time.get_ticks_msec()
+		h.territory_grow(true)
+		var ms := Time.get_ticks_msec() - t0
+		h.stop_painting()
+		var vazios := 0
+		for i in caps.size():
+			vazios += 1 if main.territory.AreaKm2(first + i) <= 0.0 else 0
+		if not main.commands.undo_name().begins_with("Crescer todos") or vazios > 0 or ms > 20000:
+			return fail("crescer todos nos mapas reais: %d países sem terra, %d ms, pilha '%s'" % [vazios, ms, main.commands.undo_name()])
+		await frames(3)
+		if DisplayServer.get_name() != "headless":
+			h.sheet.hide_sheet()  # stop_painting reabriu a ficha
+			main.globe.focus(EvronGeo.dir(30.6, -111.6), 1.9)
+			await save("fronteiras_naturais")
+		ok("com os mapas reais: %d capitais crescem juntas em %d ms (todos ganham terra)" % [caps.size(), ms])
+
+		# O mapa político (modo 4): a costa é calculada quando a camada aparece; capturas de longe e de perto.
+		var camada_antes: int = main.layer
+		for i in MapLayers.LAYERS.size():
+			if MapLayers.LAYERS[i]["kind"] == "political":
+				main.set_layer(i)
+		await frames(2)
+		if main._coast_stale or main.material.coast_texture == null:
+			return fail("com o mapa político na tela, a costa é calculada")
+		var t1 := Time.get_ticks_msec()
+		main.terrain.CoastImage()
+		var costa_ms := Time.get_ticks_msec() - t1
+		if costa_ms > 2000:
+			return fail("a costa do mapa de 4K deveria sair em menos de 2 s (recalculada a cada edição de terreno): %d ms" % costa_ms)
+		if DisplayServer.get_name() != "headless":
+			main.globe.focus(EvronGeo.dir(30.6, -111.6), 1.9)
+			await save("mapa_politico")
+			main.globe.focus(EvronGeo.dir(24.0, -108.0), 1.25)
+			await save("mapa_politico_perto")
+		main.set_layer(camada_antes)
+		ok("mapa político: a costa do mapa de 4K sai em %d ms e a camada desenha os países" % costa_ms)
 
 	await _close()
 

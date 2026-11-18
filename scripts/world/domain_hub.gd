@@ -17,6 +17,7 @@ signal palette_changed(entries: Array)  # as cores dos países mudaram ([{id, rg
 
 const REBUILD_MS := 500  # a ficha não é relida mais que 2x por segundo enquanto o relógio anda
 const PLACE_CHOICES := 50  # lugares nos menus da ficha; o resto se acha pela busca de lugar
+const SNAP_BAND_KM := 60.0  # "assentar no relevo": a fronteira vai até ~6 pixels do mapa (9,8 km cada) atrás de uma crista ou rio
 const ALWAYS := -9223372036854775807 - 1
 const FOREVER := 9223372036854775807
 
@@ -44,6 +45,7 @@ var territory_owner := 0         # o país que está sendo pintado
 var territory_mode := "pincel"   # pincel | balde | borracha
 var territory_radius := 300.0
 var territory_land_only := true
+var territory_reach := 800.0     # alcance de "crescer" (km de caminho)
 var _last_dab := Vector3.ZERO
 var _territory_seen := -1        # a versão da camada vista pela última vez
 var _territory_saved := -1       # a versão gravada no banco
@@ -165,6 +167,9 @@ func bind_territory(t, stack, panel) -> void:
 	panel.radius_changed.connect(func(km: float) -> void: territory_radius = km)
 	panel.land_only_changed.connect(func(on: bool) -> void: territory_land_only = on)
 	panel.finish_requested.connect(stop_painting)
+	panel.reach_changed.connect(func(km: float) -> void: territory_reach = km)
+	panel.grow_requested.connect(territory_grow)
+	panel.snap_requested.connect(territory_snap)
 	stack.changed.connect(_on_commands_changed)
 	refresh_palette()
 
@@ -355,6 +360,40 @@ func _dab(n: Vector3) -> void:
 		territory.Dab(n, territory_radius, 0, false, territory_owner)  # a borracha de um país só apaga o dele
 	else:
 		territory.Dab(n, territory_radius, territory_owner, territory_land_only, -1)
+
+
+## Fronteiras naturais: os países crescem pela terra sem dono a partir do território e da capital (a presença "capital" vigente na data
+## mostrada). all = todos crescem; senão só o país pintado ganha terra, parando onde os vizinhos chegariam antes.
+func territory_grow(all: bool) -> void:
+	if not painting_territory:
+		return
+	var owners := PackedInt32Array()
+	var lats := PackedFloat64Array()
+	var lons := PackedFloat64Array()
+	for it in registry.MapItems(PackedStringArray(["politica"]), 0, shown_t):
+		if it.role == "capital" and it.kind == "pais" and int(it.entity_id) <= 65535:
+			owners.append(int(it.entity_id))
+			lats.append(it.lat)
+			lons.append(it.lon)
+	var edit = territory.Grow(owners, lats, lons, 0 if all else territory_owner, territory_reach)
+	_natural_done(edit, "Crescer todos os países" if all else "Crescer território",
+		"Nada para crescer: o país precisa de território pintado ou de uma capital, e de terra sem dono ao alcance.")
+
+
+## Assenta as fronteiras do país pintado com os vizinhos na crista ou no rio grande mais perto.
+func territory_snap() -> void:
+	if painting_territory:
+		_natural_done(territory.Snap(territory_owner, SNAP_BAND_KM), "Assentar fronteiras",
+			"Nada mudou: o país não faz fronteira com outro, ou ela já está no relevo.")
+
+
+func _natural_done(edit, name: String, nothing: String) -> void:
+	if edit == null:
+		territory_panel.set_message(nothing)
+		return
+	commands.push("%s (%d pontos)" % [name, edit.Count], edit)
+	territory_panel.set_area(territory.AreaKm2(territory_owner))
+	territory_panel.set_message("")
 
 
 func _on_territory_clear() -> void:

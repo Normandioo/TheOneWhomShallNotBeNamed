@@ -1,5 +1,6 @@
 extends PanelContainer
-## A barra do modo "pintar território": de que país, a ferramenta (pincel, balde ou borracha), o raio, "só em terra", a área já pintada e Terminar.
+## A barra do modo "pintar território": de que país, a ferramenta (pincel, balde ou borracha), o raio, "só em terra", as fronteiras naturais
+## (crescer pela terra sem dono, assentar no relevo), a área já pintada e Terminar.
 ## Só mostra e pede: avisa por sinal; quem pinta é o DomainHub. Esc termina. Ctrl+Z e Ctrl+Y desfazem e refazem (a pilha é a mesma do terreno).
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
@@ -9,6 +10,9 @@ signal mode_changed(mode: String)   # pincel | balde | borracha
 signal radius_changed(km: float)
 signal land_only_changed(on: bool)
 signal finish_requested
+signal reach_changed(km: float)
+signal grow_requested(all: bool)  # crescer pela terra sem dono: só este país (false) ou todos (true)
+signal snap_requested             # assentar as fronteiras deste país na crista ou no rio mais perto
 
 const MODES := [["pincel", "Pincel"], ["balde", "Balde"], ["borracha", "Borracha"]]
 const TIPS := {
@@ -20,11 +24,14 @@ const TIPS := {
 var radius_km := 300.0
 var land_only := true
 var mode := "pincel"
+var reach_km := 800.0
 
 var _title: Label
 var _tip: Label
 var _area: Label
 var _radius_label: Label
+var _reach_label: Label
+var _message: Label
 var _buttons: Dictionary = {}
 
 
@@ -88,6 +95,7 @@ func _init() -> void:
 	box.add_child(_tip)
 	_area = Label.new()
 	box.add_child(_area)
+	_natural(box)
 	var done := Button.new()
 	done.text = "Terminar"
 	done.pressed.connect(func() -> void: finish_requested.emit())
@@ -99,6 +107,7 @@ func _init() -> void:
 func show_state(country_name: String, area_km2: float) -> void:
 	visible = true
 	_title.text = "Pintando território: %s" % country_name
+	set_message("")
 	set_area(area_km2)
 
 
@@ -106,8 +115,63 @@ func set_area(area_km2: float) -> void:
 	_area.text = "Território: ≈ %s km²" % LayerPanel._thousands(roundi(area_km2)) if area_km2 > 0.0 else "Ainda sem território."
 
 
+## Uma frase de retorno das fronteiras naturais ("" apaga).
+func set_message(text: String) -> void:
+	_message.text = text
+	_message.visible = text != ""
+
+
 func hide_panel() -> void:
 	visible = false
+
+
+## Fronteiras naturais (docs/mapa-politico.md, etapa 1): o alcance e os três botões.
+func _natural(box: VBoxContainer) -> void:
+	box.add_child(HSeparator.new())
+	var title := Label.new()
+	title.text = "Fronteiras naturais"
+	box.add_child(title)
+	var row := HBoxContainer.new()
+	box.add_child(row)
+	_reach_label = Label.new()
+	row.add_child(_reach_label)
+	var slider := HSlider.new()
+	slider.min_value = 100.0
+	slider.max_value = 4000.0
+	slider.step = 50.0
+	slider.value = reach_km
+	slider.custom_minimum_size = Vector2(150, 0)
+	slider.tooltip_text = "Até onde cada país cresce, em km \"de caminho\": serra e mar contam mais que planície."
+	slider.value_changed.connect(func(v: float) -> void:
+		reach_km = v
+		_show_reach()
+		reach_changed.emit(v))
+	row.add_child(slider)
+	var grow := HBoxContainer.new()
+	box.add_child(grow)
+	for spec in [["Crescer este país", false, "Ocupa a terra sem dono em volta do território e da capital, até onde os vizinhos chegariam antes. Não toma terra de ninguém."],
+			["Crescer todos", true, "Todos os países com território ou capital crescem juntos pela terra sem dono. As divisas caem em serras, rios grandes e estreitos."]]:
+		var b := Button.new()
+		b.text = spec[0]
+		b.tooltip_text = spec[2]
+		b.pressed.connect(func() -> void: grow_requested.emit(spec[1]))
+		grow.add_child(b)
+	var snap := Button.new()
+	snap.text = "Assentar fronteiras no relevo"
+	snap.tooltip_text = "Leva as fronteiras deste país com os vizinhos para a crista ou o rio grande mais perto (até ~60 km). Não muda a costa."
+	snap.pressed.connect(func() -> void: snap_requested.emit())
+	box.add_child(snap)
+	_message = Label.new()
+	_message.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_message.custom_minimum_size = Vector2(280, 0)
+	_message.modulate = Color(1.0, 0.85, 0.55)
+	_message.visible = false
+	box.add_child(_message)
+	_show_reach()
+
+
+func _show_reach() -> void:
+	_reach_label.text = "Alcance %d km  " % roundi(reach_km)
 
 
 func _show_radius() -> void:

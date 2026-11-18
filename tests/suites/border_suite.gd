@@ -2,7 +2,7 @@ extends "res://tests/test_suite.gd"
 ## Fronteiras desenhadas à mão (contornos) no núcleo, sem cena: validação, área, "está dentro" (inclusive atravessando a longitude 180° e cobrindo
 ## o polo), distância até a borda, troca de contorno e persistência. As linhas "ERROR" das recusas são esperadas.
 
-const R := 8282.3
+const R := 6371.0
 const T := 1000
 var ALL := PackedStringArray(["politica", "cultural", "etnica", "linguistica", "religiosa", "racial"])
 

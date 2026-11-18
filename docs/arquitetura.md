@@ -11,7 +11,7 @@ interface) escuta. Assim dá para testar o mundo sem nenhum nó, e trocar a inte
 scripts/
   main.gd          raiz de composição: cria os módulos, liga os sinais, roda o quadro. Sem regra do mundo.
   data/            o planeta e os mapas. Só funções estáticas.
-    evron_geo.gd     raio (8.282,3 km), lat/lon <-> direção <-> pixel, distância pela superfície
+    evron_geo.gd     raio (6.371 km, a Terra), lat/lon <-> direção <-> pixel, distância pela superfície
     EvronGeo.cs      a mesma convenção para o núcleo em C#
     evron_maps.gd    lê data/evron/: a altitude calibrada (float32) e as camadas PNG
     WorldDb.cs       (C#) SQLite do mundo: abrir, migrar por `user_version`, consultas com parâmetros, transação
@@ -26,6 +26,8 @@ scripts/
     RegistryBorders.cs (C#, parte do Registry) lugares com contorno desenhado à mão (polígono de vértices lat/lon)
     PlaceGeometry.cs (C#) geometria do contorno na esfera: validar, centro, área, "está dentro", distância até a borda
     Territory.cs     (C#) a camada política: o dono de cada pixel (ushort, grade da altitude), pincel, balde, borracha, área em km²
+    TerritoryNatural.cs (C#, parte do Territory) fronteiras naturais: crescer pela terra sem dono por custo (serra, rio, mar) e assentar no relevo
+                     (Terrain.cs também dá os lagos do Gleba e a costa do mapa político: CoastImage, distância em km)
     RegistryTerritory.cs (C#, parte do Registry) a camada gravada no banco (comprimida) e a cor de cada país
     domain_hub.gd    liga os painéis de busca, ficha e calendários ao Registry; segue o relógio (set_time/tick)
     calendar.gd      o calendário universal: só conversões (365 dias, sem bissextos); tempo = segundos int64 desde a época
@@ -251,7 +253,14 @@ e o raciocínio de cada método estão em `docs/alternativas-fronteiras.md`.
   Excluir o país apaga o território dele; um país sem cor na paleta (alfa 0) não é desenhado.
 - **No shader** (`political.gdshaderinc`, usado pelo globo e pelos blocos): parâmetros globais `political_map` (RG8: dono = r + 256·g), `political_palette` (256 × 256: cor do país de id por `(id & 255, id >> 8)`) e `political_on`,
   escritos por `GlobeMaterial`. A cor do país cobre o território (55%, o relevo continua aparecendo) e uma **linha escura** marca onde dois países se encontram. A borda é **suavizada**: cada ponto olha os 4 pixels em volta e fica com
-  o dono de maior peso bilinear (no lugar de degraus, diagonais), e a linha vale onde o segundo colocado é outro país e a disputa está quase empatada. Resolução da borda = a da grade (~12,7 km por pixel).
+  o dono de maior peso bilinear (no lugar de degraus, diagonais), e a linha vale onde o segundo colocado é outro país e a disputa está quase empatada. Resolução da borda = a da grade (~9,8 km por pixel).
+- **Fronteiras naturais** (`TerritoryNatural.cs`, etapa 1 de `docs/mapa-politico.md`): na barra, **Crescer este país** / **Crescer todos** (Dijkstra na grade, distância real na esfera; o atrito por km sobe com
+  declividade, altitude, rio grande do Gleba ou do pincel Vales e mar; só ocupa terra sem dono, a partir do território e da capital) e **Assentar fronteiras no relevo** (watershed numa faixa de 60 km: a divisa vai
+  para a crista ou o rio). Tudo é comando com desfazer. Nos mapas reais, 13 capitais crescem em ~1 s (`paint_suite` com a cena).
+- **Mapa político** (camada "Mapa político", `globe.gdshader` modo 4; etapa 2 de `docs/mapa-politico.md`): a cor de cada país em tom de mapa sob um
+  sombreado com luz fixa do noroeste (não o sol: a cor vai na emissão), o mar pela profundidade ao vivo, halo e anéis junto à costa e a linha de costa,
+  da textura `coast_map` (`Terrain.CoastImage`, RGH: km até a costa e lago), recalculada fora da pincelada e só com a camada na tela. Em todas as
+  camadas a fronteira vota com B-spline cúbica 4×4 (`political_owner`): curva, com largura constante em pixels de tela.
 - **GPU:** a camada inteira (16 MiB) volta à GPU, no máximo 10 vezes por segundo durante a pincelada e uma vez ao soltar (como a altitude).
 - **Ainda não feito (de propósito, para testar o método primeiro):** nome grande do país no centro, barra de população e ícones de cidades sobre o território; linha de costa; "território compartilhado" entre países;
   recalcular as camadas do Gleba que ficam desatualizadas; subir a resolução da camada (8K); a seleção por clique escolhe só o país (não a província); o desfazer não atravessa a exclusão de um país.
@@ -320,11 +329,11 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>                         
 
 ## Limites conhecidos (próximas etapas da E0)
 
-- O globo usa os mapas de 4096 px (12,7 km por pixel no equador): de perto fica borrado; os blocos existem, mas o
+- O globo usa os mapas de 4096 px (9,8 km por pixel no equador): de perto fica borrado; os blocos existem, mas o
   dado de 16K disponível não tem mais detalhe que o de 4K.
 - Ainda não há banco (SQLite), histórico nem calendário: as edições ficam só em memória.
 - As camadas são lidas de `data/evron/`, que não entra no export do Godot.
-- Erosão e rios rodam na grade de 4K (12,7 km por pixel): um vale de verdade não cabe num pixel, e por isso o rio
+- Erosão e rios rodam na grade de 4K (9,8 km por pixel): um vale de verdade não cabe num pixel, e por isso o rio
   ainda se interrompe nos platôs em degraus do Gleba. O passo seguinte é a altitude em blocos editáveis (a mesma
   pirâmide), com a erosão rodando na resolução do bloco.
 - A camada Relevo (16K, em blocos) é uma imagem pronta: a edição muda a luz, não a cor. A legenda a marca como

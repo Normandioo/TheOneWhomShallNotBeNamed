@@ -16,7 +16,7 @@ public partial class BrushKernel : RefCounted
     private const double Incision = 0.02;     // vales: fração do desnível entalhada por passada, por raiz da captação
     private const double RiverShare = 0.008;  // vales: vira rio quem recebe a água de 0,8% da região pintada...
     private const double RiverMin = 12.0;     // ...e no mínimo de 12 pixels
-    private const double TalusM = 150.0;      // erosão: desnível entre pixels vizinhos (12,7 km) que ainda se sustenta
+    private const double TalusM = 150.0;      // erosão: desnível entre pixels vizinhos (9,8 km) que ainda se sustenta
     private const float SeaCeiling = -1f;     // vales: o sedimento não levanta o mar acima disto (não cria ilha)
 
     private Terrain _t = null!;

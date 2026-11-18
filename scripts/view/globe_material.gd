@@ -9,6 +9,7 @@ var river_texture: ImageTexture
 var political_texture: ImageTexture          # os donos de cada pixel (RG8)
 var political_palette_texture: ImageTexture  # 256×256: a cor de cada país por id
 var height_texture: ImageTexture  # também usada pelos blocos (TileLayer), para o mesmo relevo
+var coast_texture: ImageTexture   # mapa político: distância à costa e lagos (Terrain.CoastImage)
 var layer_file := ""  # arquivo da camada carregada ("" = nenhuma)
 
 
@@ -53,6 +54,15 @@ func set_political_palette(entries: Array) -> void:
 		political_palette_texture.update(img)
 
 
+## A costa do mapa político (RGH: km até a costa, lago). Cria a textura na primeira vez; depois só a atualiza.
+func set_coast(coast: Image) -> void:
+	if coast_texture == null:
+		coast_texture = ImageTexture.create_from_image(coast)
+		material.set_shader_parameter("coast_map", coast_texture)
+	else:
+		coast_texture.update(coast)
+
+
 func show_political(on: bool) -> void:
 	RenderingServer.global_shader_parameter_set("political_on", 1.0 if on else 0.0)
 
@@ -94,7 +104,7 @@ func refresh_height(height: Image) -> void:
 
 
 # = uniform `mode` do globe.gdshader; "tiles" mostra a imagem de base enquanto os blocos (TileLayer) não cobrem
-const MODES := {"image": 0, "altitude": 1, "natural": 2, "tiles": 0, "season": 3}
+const MODES := {"image": 0, "altitude": 1, "natural": 2, "tiles": 0, "season": 3, "political": 4}
 const MapLayers = preload("res://scripts/ui/map_layers.gd")
 
 var _season_loaded := false

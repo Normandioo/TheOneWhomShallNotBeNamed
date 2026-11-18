@@ -5,7 +5,7 @@ extends "res://tests/test_suite.gd"
 
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 
-const R := 8282.3
+const R := 6371.0
 const W := 256
 const H := 128
 
@@ -33,7 +33,129 @@ func _paint(t, lat: float, lon: float, km: float, owner: int, land_only := false
 	return t.End()
 
 
+## Terra plana a 100 m em todo o planeta; ridge_x >= 0 põe uma serra de 5.000 m (3 colunas) de polo a polo.
+func _relief(ridge_x: int) -> Object:
+	var img := Image.create(W, H, false, Image.FORMAT_RF)
+	for y in H:
+		for x in W:
+			img.set_pixel(x, y, Color(5000.0 if ridge_x >= 0 and absi(x - ridge_x) <= 1 else 100.0, 0, 0, 1))
+	var t = load("res://scripts/world/Terrain.cs").new()
+	t.Setup(img)
+	return t
+
+
+## Em cada linha a até `rows` linhas do equador, a coluna em que a terra passa de a (oeste) para b (leste), entre as colunas 100 e 160.
+func _border_x(t, a: int, b: int, rows: int) -> Array:
+	var xs: Array = []
+	for y in range(H / 2 - rows, H / 2 + rows):
+		for x in range(100, 160):
+			if t.Get(y * W + x) == b and t.Get(y * W + x - 1) == a:
+				xs.append(x)
+				break
+	return xs
+
+
+## Quantas das colunas estão a até tol de x0.
+func _near(xs: Array, x0: int, tol: int) -> int:
+	return xs.filter(func(x): return absi(x - x0) <= tol).size()
+
+
+func _grow(t, lon_a: float, lon_b: float, only := 0, reach := 20000.0) -> Object:
+	return t.Grow(PackedInt32Array([1, 2]), PackedFloat64Array([0.0, 0.0]), PackedFloat64Array([lon_a, lon_b]), only, reach)
+
+
+## Fronteiras naturais (TerritoryNatural.cs): capitais em 30° O e 30° L; sem relevo a divisa ficaria em 0° (coluna 128).
+func _natural() -> bool:
+	# Serra em 10,5° L (coluna 135): a divisa vai para a serra, não para o meio do caminho.
+	var serra = _relief(135)
+	var t = _territory(serra)
+	var edit = _grow(t, -30.0, 30.0)
+	var xs := _border_x(t, 1, 2, 28)
+	if edit == null or xs.size() < 50 or _near(xs, 135, 2) < 0.9 * xs.size() or t.Pixels(0) != 0:
+		fail("a divisa segue a serra (coluna 135): %s; pixels sem dono: %d" % [xs, t.Pixels(0)])
+		return false
+	ok("crescer: a divisa cai na serra (%d de %d linhas a até 2 px dela; sem relevo seria 7 px a oeste)" % [_near(xs, 135, 2), xs.size()])
+
+	# Rio grande (fluxo do Gleba em viridis) em 7,7° L (coluna 133), terreno plano: a divisa vai para o rio.
+	var plano = _relief(-1)
+	var t2 = _territory(plano)
+	var flow := Image.create(W, H, false, Image.FORMAT_RGB8)
+	flow.fill(Color(0.267, 0.005, 0.329))   # fluxo 0
+	for y in H:
+		flow.set_pixel(133, y, Color(0.993, 0.906, 0.144))   # fluxo 1
+	if t2.SetRiverFlow(Image.create(8, 4, false, Image.FORMAT_RGB8)) or not t2.SetRiverFlow(flow):
+		fail("o fluxo de outro tamanho é recusado; o do tamanho do terreno, aceito")
+		return false
+	_grow(t2, -30.0, 30.0)
+	xs = _border_x(t2, 1, 2, 28)
+	if xs.size() < 50 or _near(xs, 133, 1) < 0.9 * xs.size():
+		fail("a divisa segue o rio (coluna 133): %s" % [xs])
+		return false
+	ok("crescer: a divisa cai no rio grande (%d de %d linhas a até 1 px dele)" % [_near(xs, 133, 1), xs.size()])
+
+	# Só um país: ele para onde o vizinho chegaria antes (a mesma linha de quando os dois crescem); o outro não ganha nada.
+	var t3 = _territory(serra)
+	_grow(t3, -30.0, 30.0, 1)
+	if t3.Pixels(2) != 0 or absf(t3.AreaKm2(1) - t.AreaKm2(1)) > 1e-6:
+		fail("crescer só o país 1: área %.0f (com os dois: %.0f); país 2: %d pixels" % [t3.AreaKm2(1), t.AreaKm2(1), t3.Pixels(2)])
+		return false
+	# A mesma entrada dá o mesmo território (semente fixa do ruído), e desfazer/refazer.
+	var t4 = _territory(serra)
+	var e4 = _grow(t4, -30.0, 30.0)
+	if t4.Pack() != t.Pack():
+		fail("crescer duas vezes do zero dá o mesmo território")
+		return false
+	e4.Undo()
+	if t4.Pixels(0) != W * H:
+		fail("desfazer o crescer")
+		return false
+	e4.Redo()
+	if t4.Pack() != t.Pack():
+		fail("refazer o crescer")
+		return false
+	ok("crescer só um país para na mesma linha; a mesma entrada dá o mesmo território; desfaz e refaz")
+
+	# Barreiras: terra de outro país não é tomada, o mar não é pintado e o alcance limita.
+	var mar = _terrain()   # mar de 29° O a 29° L
+	var t5 = _territory(mar)
+	_paint(t5, 0, 60, 1000, 3, true)
+	var de3 := float(t5.AreaKm2(3))
+	t5.Grow(PackedInt32Array([1, 2]), PackedFloat64Array([0.0, 0.0]), PackedFloat64Array([45.0, 80.0]), 0, 3000.0)
+	if t5.OwnerAt(EvronGeo.dir(0, 60)) != 3 or t5.AreaKm2(3) < de3 or t5.OwnerAt(EvronGeo.dir(0, 0)) != 0 or t5.OwnerAt(EvronGeo.dir(0, -100)) != 0 \
+			or t5.OwnerAt(EvronGeo.dir(0, 45)) != 1 or t5.OwnerAt(EvronGeo.dir(0, 80)) != 2:
+		fail("crescer: não toma terra de outro país, não pinta o mar e para no alcance")
+		return false
+	ok("crescer: a terra de outro país fica com ele (que também cresce), o mar fica sem dono e o alcance limita")
+
+	# Assentar no relevo: a divisa de polo a polo que os dois fazem sem relevo (~0°) é levada para uma serra que só aparece depois (10,5° L,
+	# dentro da faixa de 2.000 km), como uma fronteira pintada antes de o relevo existir.
+	var t7 = _territory(plano)
+	_grow(t7, -30.0, 30.0)
+	var t6 = _territory(serra)
+	t6.Unpack(t7.Pack(), W, H)
+	_paint(t6, 20, 0, 300, 9)   # um país pequeno na faixa: não pode sumir
+	var antes := _border_x(t6, 1, 2, 10)
+	var sem_dono: int = t6.Pixels(0)
+	var de9 := float(t6.AreaKm2(9))
+	var snap = t6.Snap(1, 2000.0)
+	xs = _border_x(t6, 1, 2, 10)
+	if snap == null or _near(antes, 135, 2) > 0 or xs.size() < 16 or _near(xs, 135, 1) < 0.9 * xs.size() or t6.Pixels(0) != sem_dono or t6.AreaKm2(9) != de9:
+		fail("assentar: a divisa vai de %s para a serra (coluna 135): %s; sem dono %d -> %d; país pequeno %.0f -> %.0f" % [antes, xs, sem_dono, t6.Pixels(0), de9, t6.AreaKm2(9)])
+		return false
+	snap.Undo()
+	if _border_x(t6, 1, 2, 10) != antes:
+		fail("desfazer o assentar")
+		return false
+	if _territory(serra).Snap(1, 2000.0) != null:
+		fail("sem fronteira entre países não há o que assentar")
+		return false
+	ok("assentar: a divisa vai para a serra (%s -> %s), não mexe na terra sem dono nem some com país pequeno; desfaz" % [antes.slice(0, 3), xs.slice(0, 3)])
+	return true
+
+
 func run() -> void:
+	if not _natural():
+		return
 	var terrain = _terrain()
 	var t = _territory(terrain)
 	if t.Size != Vector2i(W, H) or t.OwnerAt(EvronGeo.dir(10, 100)) != 0:

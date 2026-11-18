@@ -17,12 +17,12 @@ cores se encontram, o nome grande no centro, a população embaixo e ícones de 
 
 ## A. Pincel de território (implementado)
 
-- **Dado:** `Territory.cs`, um `ushort` por pixel na mesma grade da altitude (4096 × 2048, ~12,7 km por pixel no equador); o valor é o id do cadastro do país (1 a 65535; 0 = ninguém).
+- **Dado:** `Territory.cs`, um `ushort` por pixel na mesma grade da altitude (4096 × 2048, ~9,8 km por pixel no equador); o valor é o id do cadastro do país (1 a 65535; 0 = ninguém).
   Gravado no banco numa linha só, comprimido (deflate), quase sempre abaixo de algumas centenas de KB.
 - **Por que serve ao print:** um dono por pixel garante **sem fresta e sem sobreposição**, a borda nasce onde duas cores se encontram, e ilhas, buracos e países enormes (maiores que o limite de 85° do contorno)
   saem naturais. Pintar sobre outro país é uma conquista; a borracha de um país só apaga o dele.
 - **Ferramentas:** pincel (raio de 20 a 2500 km), balde (preenche uma área cercada) e borracha; "só em terra" segue a costa do mapa. Tudo entra na mesma pilha de desfazer do terreno.
-- **Custo:** a borda tem a resolução da grade (12,7 km): o shader a suaviza (pesos bilineares entre os 4 pixels), mas de muito perto ainda se veem degraus. Subir para 8K custa 64 MiB de RAM e de GPU.
+- **Custo:** a borda tem a resolução da grade (9,8 km): o shader a suaviza (pesos bilineares entre os 4 pixels), mas de muito perto ainda se veem degraus. Subir para 8K custa 64 MiB de RAM e de GPU.
 - **Limites conhecidos:** um país só (um dono por pixel; não há "território compartilhado"); a camada de uma etnia, cultura ou religião, que se sobrepõe, continua sendo feita pelos contornos (B).
 
 ## B. Contorno por pontos (implementado e mantido)

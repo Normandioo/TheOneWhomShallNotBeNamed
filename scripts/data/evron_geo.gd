@@ -3,8 +3,8 @@
 ## Convenção usada em todo o projeto (e nos shaders): dir = (cos(lat)·sin(lon), sin(lat), cos(lat)·cos(lon)).
 ## Mapas equiretangulares: u = lon/360 + 0.5 (coluna 0 = -180°), v = 0.5 - lat/180 (linha 0 = polo norte).
 
-const RADIUS_KM := 8282.3  # definido pelo autor; Evron é tratado como esfera perfeita
-const KM_PER_DEG := RADIUS_KM * PI / 180.0  # ≈ 144,6 km
+const RADIUS_KM := 6371.0  # a Terra (definido pelo autor em 18/11/2026; antes 8.282,3 km); esfera perfeita
+const KM_PER_DEG := RADIUS_KM * PI / 180.0  # ≈ 111,2 km
 
 
 static func dir(lat_deg: float, lon_deg: float) -> Vector3:

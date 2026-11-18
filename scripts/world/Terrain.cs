@@ -78,6 +78,137 @@ public partial class Terrain : RefCounted
 
     public float HeightAt(Vector3 n) => H[PixelOf(n)];
 
+    // ---- costa (para o mapa político) ----
+
+    public const float CoastMaxKm = 80f;  // até onde a distância à costa interessa (o halo e os anéis vão até ~40 km)
+    private bool[]? _lake;  // lagos do Gleba: água acima do nível do mar; fixos (a edição de altura não os move)
+
+    /// Os lagos do Gleba ("Waterbodies.png": cinza 30 = oceano, cinza 80 = terra, as outras cores são lagos). Outro tamanho é recusado (false).
+    public bool SetLakes(Image waterbodies)
+    {
+        if (waterbodies == null || waterbodies.GetSize() != Size) return false;
+        var img = (Image)waterbodies.Duplicate();
+        img.Convert(Image.Format.Rgb8);
+        var rgb = img.GetData();
+        _lake = new bool[H.Length];
+        for (int i = 0; i < H.Length; i++)
+        {
+            int r = rgb[3 * i], g = rgb[3 * i + 1], b = rgb[3 * i + 2];
+            _lake[i] = !(r == g && g == b && (r == 30 || r == 80));
+        }
+        return true;
+    }
+
+    /// Água no pixel: mar (altitude abaixo de 0) ou lago.
+    internal bool Water(int p) => H[p] < 0f || (_lake != null && _lake[p]);
+
+    /// A costa para o mapa político, RGH (meia precisão): R = distância com sinal até a costa em km (+ terra, − água, até ±CoastMaxKm),
+    /// G = 1 em lago. Distância por chanfro com a largura real de cada linha (passos de 1 pixel e diagonais: erro de poucos %), suavizada
+    /// (gaussiana de 1,2 px: some a escada de pixels) e presa a ±0,5 px da original, então a costa desenhada não sai de meio pixel do dado
+    /// e ilhas e canais de 1 pixel ficam (como em tools/mapa_politico.py). Recalcular quando a altitude muda.
+    public Image CoastImage()
+    {
+        int w = Size.X, h = Size.Y, n = w * h;
+        double dyKm = Math.PI * EvronGeo.RadiusKm / h;
+        var dx = new float[h];
+        var diag = new float[h];  // entre a linha y e a y−1
+        for (int y = 0; y < h; y++)
+        {
+            double c = Math.Max(Math.Cos(Math.PI * (0.5 - (y + 0.5) / h)), 0.01);
+            dx[y] = (float)(c * 2 * Math.PI * EvronGeo.RadiusKm / w);
+            double cm = Math.Max(Math.Cos(Math.PI * (0.5 - (double)y / h)), 0.01) * 2 * Math.PI * EvronGeo.RadiusKm / w;
+            diag[y] = (float)Math.Sqrt(cm * cm + dyKm * dyKm);
+        }
+        var water = new bool[n];
+        for (int i = 0; i < n; i++) water[i] = Water(i);
+        float dy = (float)dyKm;
+        // Uma varredura de ida e uma de volta; as colunas x de x0 até x1 (exclusive), andando em volta da longitude.
+        void Sweep(float[] d, int x0, int x1)
+        {
+            int cols = ((x1 - x0) % w + w) % w;
+            if (cols == 0) cols = w;
+            for (int y = 0; y < h; y++)
+            {
+                int row = y * w, up = row - w;
+                float sx = dx[y], sd = diag[y];
+                for (int c = 0, x = x0; c < cols; c++, x = x == w - 1 ? 0 : x + 1)
+                {
+                    int xl = x == 0 ? w - 1 : x - 1, xr = x == w - 1 ? 0 : x + 1;
+                    float v = Math.Min(d[row + x], d[row + xl] + sx);
+                    if (y > 0) v = Math.Min(v, Math.Min(d[up + x] + dy, Math.Min(d[up + xl], d[up + xr]) + sd));
+                    d[row + x] = v;
+                }
+            }
+            int last = (x0 + cols - 1) % w;
+            for (int y = h - 1; y >= 0; y--)
+            {
+                int row = y * w, down = row + w;
+                float sx = dx[y], sd = y < h - 1 ? diag[y + 1] : 0f;
+                for (int c = 0, x = last; c < cols; c++, x = x == 0 ? w - 1 : x - 1)
+                {
+                    int xl = x == 0 ? w - 1 : x - 1, xr = x == w - 1 ? 0 : x + 1;
+                    float v = Math.Min(d[row + x], d[row + xr] + sx);
+                    if (y < h - 1) v = Math.Min(v, Math.Min(d[down + x] + dy, Math.Min(d[down + xl], d[down + xr]) + sd));
+                    d[row + x] = v;
+                }
+            }
+        }
+        float[] Chamfer(bool sourceIsWater)
+        {
+            var d = new float[n];
+            for (int i = 0; i < n; i++) d[i] = water[i] == sourceIsWater ? 0f : CoastMaxKm;
+            Sweep(d, 0, w);
+            // A volta na longitude 180°: o que atravessa a emenda só chega numa segunda varredura, e só a faixa em volta dela pode mudar.
+            int band = Math.Min(w / 2 - 1, (int)Math.Ceiling(CoastMaxKm / dx[h / 20]) + 2);  // largura do pixel a ~81° (mais perto do polo, aproximada)
+            Sweep(d, w - band, band);
+            return d;
+        }
+        float[] toWater = null!, toLand = null!;
+        System.Threading.Tasks.Parallel.Invoke(() => toWater = Chamfer(true), () => toLand = Chamfer(false));
+        var raw = new float[n];
+        for (int i = 0; i < n; i++) raw[i] = water[i] ? -toLand[i] : toWater[i];
+
+        // Gaussiana separável (σ = 1,2 px, raio 3), com a volta na longitude; depois presa a ±0,5 px da original.
+        var k = new float[7];
+        for (int j = -3; j <= 3; j++) k[j + 3] = (float)Math.Exp(-j * j / (2 * 1.2 * 1.2));
+        float ks = 0;
+        foreach (var v in k) ks += v;
+        for (int j = 0; j < 7; j++) k[j] /= ks;
+        var tmp = new float[n];
+        System.Threading.Tasks.Parallel.For(0, h, y =>
+        {
+            int row = y * w;
+            for (int x = 0; x < w; x++)
+            {
+                float s = 0;
+                for (int j = -3; j <= 3; j++)
+                {
+                    int xx = x + j;
+                    s += k[j + 3] * raw[row + (xx < 0 ? xx + w : xx >= w ? xx - w : xx)];
+                }
+                tmp[row + x] = s;
+            }
+        });
+        float half = (float)(0.5 * dyKm);
+        ushort one = BitConverter.HalfToUInt16Bits((Half)1f), zero = BitConverter.HalfToUInt16Bits((Half)0f);
+        var halves = new ushort[n * 2];
+        System.Threading.Tasks.Parallel.For(0, h, y =>
+        {
+            int r0 = Math.Max(y - 3, 0), r6 = Math.Min(y + 3, h - 1);
+            for (int x = 0; x < w; x++)
+            {
+                float s = 0;
+                for (int j = -3; j <= 3; j++) s += k[j + 3] * tmp[Math.Clamp(y + j, r0, r6) * w + x];
+                int i = y * w + x;
+                halves[2 * i] = BitConverter.HalfToUInt16Bits((Half)Math.Clamp(s, raw[i] - half, raw[i] + half));
+                halves[2 * i + 1] = _lake != null && _lake[i] && H[i] >= 0f ? one : zero;
+            }
+        });
+        var data = new byte[n * 4];
+        Buffer.BlockCopy(halves, 0, data, 0, data.Length);
+        return Image.CreateFromData(w, h, false, Image.Format.Rgh, data);
+    }
+
     public float GetRiver(int idx) => R[idx] / 255f;
 
     public void SetRiver(int idx, float value)

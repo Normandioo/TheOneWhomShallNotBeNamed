@@ -255,6 +255,9 @@ func _roughness(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> b
 		stack.undo()
 	brush.op = TerrainBrush.Op.MOUNTAINS
 	brush.strength = 300.0
+	var base_h := {}
+	for i in terrain.Disk(spot, 250.0)[0]:
+		base_h[i] = terrain.GetH(i)
 	var crest := []
 	for r in [0.0, 1.0]:
 		brush.roughness = r
@@ -262,7 +265,7 @@ func _roughness(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> b
 		brush.end()
 		var total := 0.0
 		for i in terrain.Disk(spot, 250.0)[0]:
-			total += terrain.GetH(i)
+			total += terrain.GetH(i) - base_h[i]  # quanto subiu: a soma das alturas mistura mar e terra e perde o sentido
 		crest.append(total)
 		stack.undo()
 	brush.roughness = 0.5
@@ -357,7 +360,7 @@ func _long_river(terrain: Terrain, stack: CommandStack, brush: TerrainBrush) -> 
 	brush.strength = 300.0
 	brush.begin(start)
 	for i in range(1, 25):  # 25 marcas, ~1.250 km de traço
-		brush.drag(EvronGeo.dir(33.0, -45.0 + i * 0.35))
+		brush.drag(EvronGeo.dir(33.0, -45.0 + i * 55.0 / EvronGeo.KM_PER_DEG))  # 55 km por marca (acima do espaçamento do pincel)
 	brush.end()
 	# Maior componente conectada (8 vizinhos) dos pixels de rio, perto do traço.
 	var pts := {}

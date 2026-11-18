@@ -119,6 +119,41 @@ func run() -> void:
 	if flipped > 0:
 		return fail("vales na costa trocaram %d pixels entre terra e mar" % flipped)
 	ok("núcleo: vales na costa não trocam terra e mar")
+	_coast()
+
+
+## A costa do mapa político (Terrain.CoastImage): distância com sinal em km, presa a meio pixel do dado, lagos marcados. Grade de 2048 × 1024
+## (19,5 km por pixel no equador), mar de x = 900 a 1147, uma ilha de 1 pixel no mar e um lago de 6 × 6 pixels na terra.
+func _coast() -> void:
+	var w := 2048
+	var h := 1024
+	var img := Image.create(w, h, false, Image.FORMAT_RF)
+	for y in h:
+		for x in w:
+			img.set_pixel(x, y, Color(-500.0 if x >= 900 and x < 1148 else 100.0, 0, 0, 1))
+	img.set_pixel(1000, 512, Color(100.0, 0, 0, 1))
+	var t := Terrain.new()
+	t.Setup(img)
+	var wb := Image.create(w, h, false, Image.FORMAT_RGB8)
+	wb.fill(Color8(80, 80, 80))
+	for y in range(500, 506):
+		for x in range(400, 406):
+			wb.set_pixel(x, y, Color8(0, 87, 170))
+	if t.SetLakes(Image.create(8, 4, false, Image.FORMAT_RGB8)) or not t.SetLakes(wb):
+		return fail("os lagos de outro tamanho são recusados; os do tamanho do terreno, aceitos")
+	var c: Image = t.CoastImage()
+	var px: float = EvronGeo.RADIUS_KM * PI / h   # 19,5 km
+	var r := func(x: int, y: int) -> float: return c.get_pixel(x, y).r
+	if c.get_format() != Image.FORMAT_RGH or c.get_size() != Vector2i(w, h):
+		return fail("a costa é RGH no tamanho do terreno")
+	if r.call(899, 512) <= 0.0 or r.call(900, 512) >= 0.0 or absf(r.call(896, 300) / (4.0 * px * cos(deg_to_rad(90.0 - 300.5 * 180.0 / h))) - 1.0) > 0.08 \
+			or absf(r.call(903, 300) / (-4.0 * px * cos(deg_to_rad(90.0 - 300.5 * 180.0 / h))) - 1.0) > 0.08 or r.call(100, 512) != 80.0:   # Terrain.CoastMaxKm (o C# não expõe constantes)
+		return fail("distância à costa: %.1f / %.1f na costa, %.1f e %.1f a 4 px, %.1f longe" % [r.call(899, 512), r.call(900, 512), r.call(896, 300), r.call(903, 300), r.call(100, 512)])
+	if r.call(1000, 512) <= 0.0 or r.call(1001, 512) >= 0.0:
+		return fail("a ilha de 1 pixel continua terra depois da suavização (%.1f)" % r.call(1000, 512))
+	if c.get_pixel(402, 502).g < 0.5 or r.call(402, 502) >= 0.0 or c.get_pixel(300, 502).g > 0.5:
+		return fail("o lago é água e vem marcado (G = 1); a terra não")
+	ok("núcleo: costa do mapa político em km (a 4 px: %.1f km), com sinal, ilha de 1 pixel mantida e lago marcado" % r.call(896, 300))
 
 
 ## Uma montanha cônica de 6 km no equador em -60° (costa a 3000 km do pico), com uma plataforma rasa (-5 m) de 500 km

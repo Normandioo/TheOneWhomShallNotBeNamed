@@ -39,7 +39,7 @@ func run() -> void:
 	sheet = SheetPanel.new()
 	presence = PresencePanel.new()
 	map = PlaceLayer.new()
-	map.radius = 8.2823
+	map.radius = 6.371
 	draw_panel = DrawPanel.new()
 	var cal := CalendarPanel.new()
 	for n in [search, sheet, cal, presence, map, draw_panel]:

@@ -1,6 +1,7 @@
 ## As camadas do mapa: nome no menu, arquivo em data/evron/ e legenda. A ordem é a do menu.
 ## "kind": "image" mostra o PNG do arquivo; "altitude" pinta a altitude calibrada no shader (globe.gdshader);
 ## "natural" usa natural.png (terra e gelo, de tools/build_natural.py) e pinta a água pela profundidade.
+## "political" é o mapa político (globe.gdshader, modo 4): países, relevo com luz de mapa, mar e costa.
 ## "nearest": cores que são categorias ou identificadores (sem misturar pixels vizinhos).
 ## Legenda: "items" = cores soltas; "gradient" = [offsets, cores] com 3 rótulos (esquerda, centro, direita).
 ## Os valores vêm da calibração (docs/calibracao): a confiança de cada uma está lá e no texto da legenda.
@@ -28,11 +29,14 @@ static var LAYERS := [  # static var (não const): Color8 não é aceito em expr
 		"items": [[Color(0.11, 0.31, 0.43), "Mar raso (plataforma)"], [Color(0.03, 0.09, 0.24), "Mar profundo"],
 		[Color(0.10, 0.24, 0.33), "Rio e lago"],
 		[Color(0.84, 0.72, 0.52), "Deserto"], [Color(0.10, 0.26, 0.08), "Floresta densa"], [Color(0.93, 0.95, 0.98), "Gelo"]]},
+	{"group": "Visão geral", "menu": "Mapa político", "kind": "political", "title": "Mapa político",
+		"text": "Os países pintados (a cor de cada cadastro, em tom de mapa), o relevo com luz fixa do noroeste e o mar pela profundidade, com a costa desenhada. Pinte e cresça os países pela ficha (Pintar território).",
+		"items": [[Color("a08a62"), "Terra sem dono"], [Color("3a6a77"), "Mar raso"], [Color("0b1722"), "Mar profundo"], [Color("1f4e5a"), "Lago"]]},
 	{"group": "Relevo", "menu": "Altitude (calibrada)", "kind": "altitude", "title": "Altitude",
 		"text": "Altitude de Evron em metros, da calibração do projeto. O mar ocupa a metade esquerda da escala.",
 		"gradient": [ALTITUDE_OFFSETS, ALTITUDE_COLORS], "labels": ["−13.500 m", "0 m", "+9.103 m"]},
 	{"group": "Relevo", "menu": "Relevo 16K (em blocos)", "file": "Elevação.png", "kind": "tiles", "tiles": "relevo",
-		"title": "Relevo em alta resolução", "text": "Relevo colorido do Gleba em 16384 × 8192 (≈ 3,2 km por pixel no equador), carregado em blocos conforme o zoom: só o que está na tela fica na memória."},
+		"title": "Relevo em alta resolução", "text": "Relevo colorido do Gleba em 16384 × 8192 (≈ 2,4 km por pixel no equador), carregado em blocos conforme o zoom: só o que está na tela fica na memória."},
 	{"group": "Relevo", "menu": "Elevação (cores do Gleba)", "file": "Elevação.png", "kind": "image", "title": "Elevação do Gleba",
 		"text": "Paleta hipsométrica original do Gleba, inclui gelo. Para valores, use Altitude (calibrada)."},
 	{"group": "Relevo", "menu": "Elevação sem gelo", "file": "Elevation no Ice Age.png", "kind": "image", "title": "Elevação sem gelo",

@@ -1,7 +1,7 @@
 // Relevo na iluminação, comum ao globo e aos blocos: a altitude calibrada entorta a normal.
 // Convenção de EvronGeo: dir = (cos lat · sin lon, sin lat, cos lat · cos lon); u = lon/360 + 0,5; v = 0,5 - lat/180.
 
-const float RADIUS = 8282300.0; // metros (EvronGeo.RADIUS_KM)
+const float RADIUS = 6371000.0; // metros (EvronGeo.RADIUS_KM)
 
 uniform sampler2D height_map : filter_linear, repeat_enable; // altitude em metros (calibrada)
 uniform sampler2D river_map : filter_linear, repeat_enable; // rios do pincel Vales (0..1), mesma grade da altitude

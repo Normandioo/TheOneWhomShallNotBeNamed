@@ -45,7 +45,7 @@ func run() -> void:
 		hub.setup(":memory:", search, sheet, cal_panel)
 		var presence := PresencePanel.new()
 		var layer := PlaceLayer.new()
-		layer.radius = 8.2823
+		layer.radius = 6.371
 		host.add_child(presence)
 		host.add_child(layer)
 		hub.bind_map(layer, presence, func(dir: Vector3, zoom: float) -> void: focused.append([dir, zoom]))

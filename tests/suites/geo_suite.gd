@@ -24,7 +24,7 @@ func run() -> void:
 		return fail("um quarto do equador deveria ter %.1f km, deu %.1f" % [TAU * EvronGeo.RADIUS_KM / 4.0, quarter])
 	if absf(EvronGeo.distance_km(EvronGeo.dir(0, 179.5), EvronGeo.dir(0, -179.5)) - EvronGeo.KM_PER_DEG) > 0.01:
 		return fail("1° atravessando 180° deveria ter %.1f km" % EvronGeo.KM_PER_DEG)
-	ok("lat/lon, pixel e distância (raio 8.282,3 km; 1° = %.1f km), inclusive no limite de longitude" % EvronGeo.KM_PER_DEG)
+	ok("lat/lon, pixel e distância (raio 6.371 km; 1° = %.1f km), inclusive no limite de longitude" % EvronGeo.KM_PER_DEG)
 
 	if not EvronMaps.available():
 		return fail("mapas não importados: rode tools/import_maps.py")

@@ -14,8 +14,9 @@ public partial class WorldDb : RefCounted
     public void Open(string path)
     {
         Close();
-        // O builder escapa o caminho (um ';' ou aspas no nome da pasta quebraria a string montada à mão).
-        _db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path }.ToString());
+        // O builder escapa o caminho (um ';' ou aspas no nome da pasta quebraria a string montada à mão). Sem pool: com ele, o arquivo fica aberto
+        // depois do Close e, no Windows, não dá para apagá-lo (os testes reabriam o banco da rodada anterior).
+        _db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
         try
         {
             _db.Open();

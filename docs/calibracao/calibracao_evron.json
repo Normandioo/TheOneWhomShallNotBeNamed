@@ -8,13 +8,13 @@
   },
   "planeta": {
     "forma": "esfera",
-    "raio_km": 8282.3,
-    "circunferencia_km": 52039,
-    "superficie_km2": 862000000,
+    "raio_km": 6371.0,
+    "circunferencia_km": 40030,
+    "superficie_km2": 510000000,
     "projecao_mapas": "equiretangular, 4096x2048 cobre 360x180 graus",
     "km_por_pixel_equador": {
-      "4096": 12.705,
-      "16384": 3.176
+      "4096": 9.773,
+      "16384": 2.443
     },
     "calendario": "gregoriano (igual ao da Terra)",
     "confianca": "definido"
@@ -111,7 +111,7 @@
       "escala_cores": "viridis",
       "uso": "substituir pela declividade calculada da elevação oficial e do raio de Evron",
       "observacao": "correlação com a declividade calculada 0,61 (0,71 com raiz quadrada): o Gleba usou outra escala vertical/raio ou uma rampa não linear; aproximação t ≈ 0,13*sqrt(graus)",
-      "declividade_calculada_4k": "mediana 0,08°, p90 1,3°, p99 5,7° (pixel de 12,7 km achata as encostas)",
+      "declividade_calculada_4k": "mediana 0,08°, p90 1,3°, p99 5,7° (pixel de 12,7 km achata as encostas; calculada com o raio antigo de 8.282 km: com 6.371 km a declividade sobe ~30%)",
       "confianca": "medido (declividade própria); a rampa do Gleba é hipótese"
     },
     "Profundidade de Aquíferos.png": {

@@ -68,6 +68,7 @@ var selected_dir := Vector3.ZERO  # ponto fixado pelo clique (ZERO = nenhum)
 var brush_preview := Vector4.ZERO # o que foi para o parâmetro global "brush" (fora do editor não dá para lê-lo)
 var _since_upload := 0.0
 var _since_political := 0.0
+var _coast_stale := true  # a costa do mapa político está atrasada em relação à altitude
 
 
 func _ready() -> void:
@@ -78,6 +79,12 @@ func _ready() -> void:
 	brush = TerrainBrush.new(terrain, commands)
 	territory = Territory.new()
 	territory.Setup(terrain)
+	var lakes := EvronMaps.load_layer("Waterbodies.png")
+	if lakes != null:
+		terrain.SetLakes(lakes)  # lagos do Gleba: água no mapa político e nas fronteiras naturais
+	var flow := EvronMaps.load_layer("Waterflow.png")
+	if flow != null:
+		territory.SetRiverFlow(flow)  # os rios grandes do Gleba seguram as fronteiras naturais
 	material.set_height(terrain.HeightImage())
 	material.set_rivers(terrain.RiversImage())
 	globe = GlobeView.new()
@@ -164,6 +171,10 @@ func _process(delta: float) -> void:
 		material.refresh_height(terrain.HeightImage())
 		terrain.Dirty = false
 		_since_upload = 0.0
+		_coast_stale = true
+	if _coast_stale and not brush.active and MapLayers.LAYERS[layer]["kind"] == "political":
+		material.set_coast(terrain.CoastImage())  # só com o mapa político na tela e fora da pincelada
+		_coast_stale = false
 	if territory.Dirty and (not domains.territory_stroking or _since_political >= 0.1):
 		material.refresh_political(territory.OwnersImage())  # durante a pincelada, no máximo 10x por segundo (a camada inteira: 16 MiB)
 		territory.Dirty = false
