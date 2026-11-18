@@ -126,6 +126,26 @@ def protect(land: np.ndarray, safe: np.ndarray, strong: np.ndarray) -> np.ndarra
     return np.where(fragile, safe, strong)
 
 
+def protect_features(land: np.ndarray, sigma: float) -> np.ndarray:
+    """Proteção de feições autoral (seção 14), por tipo em vez de por falha: ilhas pequenas e qualquer istmo ou
+    canal mais estreito que o que a suavização de `sigma` arrisca apagar (abertura morfológica: o que some ao
+    abrir com raio ~sigma é "fino" nessa escala). Decisão de quem desenha: os dois parâmetros abaixo."""
+    neck_r = int(round(sigma))
+    struct = np.ones((3, 3), bool)
+    opened_land = ndimage.binary_dilation(ndimage.binary_erosion(land, struct, iterations=neck_r), struct, iterations=neck_r)
+    thin_land = land & ~opened_land  # istmos, cabos e penínsulas finas
+    water = ~land
+    opened_water = ndimage.binary_dilation(ndimage.binary_erosion(water, struct, iterations=neck_r), struct, iterations=neck_r)
+    thin_water = water & ~opened_water  # estreitos e canais finos
+
+    lbl, n = ndimage.label(land, struct)
+    sizes = ndimage.sum(np.ones_like(lbl), lbl, index=np.arange(1, n + 1))
+    small_islands = np.isin(lbl, np.where(sizes < 8 * neck_r * neck_r)[0] + 1)
+
+    protected = small_islands | thin_land | thin_water
+    return ndimage.binary_dilation(protected, struct, iterations=UPSAMPLE)  # margem de ~1 px da fonte
+
+
 def validate(before: np.ndarray, after: np.ndarray) -> dict:
     """Área e conectividade: nenhuma ilha deve sumir nem dois continentes se fundir (seção 5 do plano)."""
     lbl0, n0 = ndimage.label(before, structure=np.ones((3, 3)))
@@ -213,7 +233,10 @@ def run() -> None:
             after[key] = regularize(land, sigma)
             report_variant(key, f"{key} (alvo {targets[key]/km_px:.2f} px)", after[key], land, name)
         protegido = protect(land, land, after["d05"])  # original intocado na zona frágil, não a versão d025
-        report_variant("d05_protegido", "d05 com proteção de feições automática", protegido, land, name)
+        report_variant("d05_protegido", "d05 com proteção de feições automática (por falha)", protegido, land, name)
+        feat = protect_features(land, sigmas["d05"])
+        manual = np.where(feat, land, after["d05"])
+        report_variant("d05_manual", "d05 com proteção autoral (por tipo de feição)", manual, land, name)
     with open(os.path.join(OUT, "relatorio.md"), "w", encoding="utf-8") as f:
         f.writelines(report)
     print("".join(report))
