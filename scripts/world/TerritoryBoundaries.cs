@@ -146,21 +146,32 @@ public partial class Territory
         var candidates = separated.Select(label => parts[label - 1]).Where(p => p.MeetsTarget)
             .OrderByDescending(p => p.PreviousPixels).ThenBy(p => p.Area).ToArray();
         if (candidates.Length == 0) return RefuseBoundary("O pedaço separado precisa encostar no país selecionado.");
-        if (candidates.Length > 1 && (separated.Count > 2 ||
-            (candidates[0].PreviousPixels == candidates[1].PreviousPixels && Math.Abs(candidates[0].Area - candidates[1].Area) < 1e-7)))
-            return RefuseBoundary("Mais de um lado encosta no seu país. Redesenhe o traço para isolar um pedaço.");
 
-        var region = candidates[0].Pixels;
-        region.Sort();
+        // Mais de um lado encosta no selecionado: nada é escolhido às escondidas; o plano leva todos e quem decide é o usuário (Choose).
+        var choices = candidates.Select(c => { var px = c.Pixels.ToArray(); Array.Sort(px); return px; }).ToArray();
         var plan = new TerritoryBoundaryPlan
         {
             Map = this,
             Version = Version,
             Previous = previous,
-            Next = new TerritoryBoundary(id == 0 ? _nextBoundary : id, source, target, controls.ToArray(), region.ToArray())
+            Choices = choices,
+            Next = new TerritoryBoundary(id == 0 ? _nextBoundary : id, source, target, controls.ToArray(), choices[0])
         };
         return new Godot.Collections.Dictionary { ["plan"] = plan };
     }
+
+    /// A camada como ficaria com o plano aplicado (RG8, como OwnersImage), para a prévia. Não muda nada.
+    public Image PreviewImage(TerritoryBoundaryPlan plan)
+    {
+        var bytes = (byte[])B.Clone();
+        void Set(int p, int owner) { bytes[p * 2] = (byte)owner; bytes[p * 2 + 1] = (byte)(owner >> 8); }
+        foreach (int p in plan.Previous?.Pixels ?? Array.Empty<int>()) Set(p, plan.Next.Source);
+        foreach (int p in plan.Next.Pixels) Set(p, plan.Next.Target);
+        return Image.CreateFromData(Size.X, Size.Y, false, Image.Format.Rg8, bytes);
+    }
+
+    /// A área (km²) que o plano passa para o selecionado.
+    public double PlanAreaKm2(TerritoryBoundaryPlan plan) => plan.Next.Pixels.Sum(p => RowCellKm2(p / Size.X, Size.X, Size.Y));
 
     public TerritoryEdit? ApplyBoundary(TerritoryBoundaryPlan plan)
     {

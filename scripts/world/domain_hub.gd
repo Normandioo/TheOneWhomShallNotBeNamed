@@ -13,6 +13,7 @@ const LocalCalendar = preload("res://scripts/world/local_calendar.gd")
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const TerritoryBoundaryTool = preload("res://scripts/edit/territory_boundary_tool.gd")
 const TerritoryEdit = preload("res://scripts/edit/TerritoryEdit.cs")
+const LayerPanel = preload("res://scripts/ui/layer_panel.gd")
 
 signal painting_changed(on: bool)      # entrou ou saiu do modo pintar território
 signal palette_changed(entries: Array)  # as cores dos países mudaram ([{id, rgb}]): quem desenha atualiza a paleta
@@ -38,9 +39,14 @@ var presence_panel         # camadas e escopo do mapa
 var focus_map := Callable()  # func(direção, zoom): leva a câmera a um ponto
 var fixed_dir := Vector3.ZERO  # o ponto fixado no globo (onde "Criar lugar aqui" cria)
 var draw_panel             # a barra do modo desenhar fronteira
-var territory              # a camada política (Territory, C#): o dono de cada pixel
+var territory              # a camada territorial mostrada e editada (Territory, C#): o dono de cada pixel
+var levels := {}           # nível ("pais", "provincia", "municipio") -> a camada dele: cada nível é independente
+var territory_level := "pais"
+signal territory_level_shown(level: String, layer)  # a camada mostrada no globo passou a ser outra
 var commands               # a pilha de desfazer (a mesma do terreno)
 var territory_panel        # a barra do modo pintar território
+var import_panel           # a janela de importar PNG
+var types_panel            # o designer de tipos, campos e vínculos
 var boundary_tool := TerritoryBoundaryTool.new()
 var painting_territory := false  # no modo pintar: o botão esquerdo do mouse pinta
 var territory_stroking := false  # uma pincelada em andamento
@@ -50,8 +56,8 @@ var territory_radius := 300.0
 var territory_land_only := true
 var territory_reach := 800.0     # alcance de "crescer" (km de caminho)
 var _last_dab := Vector3.ZERO
-var _territory_seen := -1        # a versão da camada vista pela última vez
-var _territory_saved := -1       # a versão gravada no banco
+var _territory_seen := {}        # nível -> a versão vista pela última vez
+var _territory_saved := {}       # nível -> a versão gravada no banco
 var _territory_changed_ms := 0
 var _palette_hash := 0
 var _live_colors := {}           # país -> cor em prévia (o seletor está aberto; ainda não foi gravada)
@@ -83,6 +89,8 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 	search = search_panel
 	sheet = sheet_panel
 	calendars = calendar_panel
+	UiKit.set_types(registry.EntityTypes())
+	search.refresh_kinds()
 	search.query_changed.connect(func(_t: String, _k: String) -> void: refresh_search())
 	search.entity_chosen.connect(open)
 	search.create_requested.connect(_on_create)
@@ -159,14 +167,18 @@ func bind_map(place_layer, panel, focus: Callable) -> void:
 
 
 ## Liga a camada política: lê do banco o que estava gravado, ouve a barra de pintar e a pilha de desfazer.
-func bind_territory(t, stack, panel) -> void:
+## more: as camadas dos outros níveis ({"provincia": Territory, "municipio": Territory}); sem elas, só países.
+func bind_territory(t, stack, panel, more := {}) -> void:
 	territory = t
+	levels = {"pais": t}
+	levels.merge(more)
 	commands = stack
 	territory_panel = panel
-	if usable:
-		registry.LoadTerritory(territory)
-	_territory_seen = territory.Version
-	_territory_saved = territory.Version
+	for level in levels:
+		if usable:
+			registry.LoadTerritoryLevel(level, levels[level])
+		_territory_seen[level] = levels[level].Version
+		_territory_saved[level] = levels[level].Version
 	boundary_tool.setup(territory, registry, map, panel, commands)
 	panel.mode_changed.connect(_set_territory_mode)
 	panel.radius_changed.connect(func(km: float) -> void: territory_radius = km)
@@ -175,8 +187,101 @@ func bind_territory(t, stack, panel) -> void:
 	panel.reach_changed.connect(func(km: float) -> void: territory_reach = km)
 	panel.grow_requested.connect(territory_grow)
 	panel.snap_requested.connect(territory_snap)
+	panel.merge_requested.connect(territory_merge)
+	panel.import_requested.connect(func() -> void:
+		if import_panel != null and painting_territory:
+			import_panel.pick_file())
 	stack.changed.connect(_on_commands_changed)
 	refresh_palette()
+
+
+## Liga o designer de tipos (E2).
+func bind_types(panel) -> void:
+	types_panel = panel
+	if not usable:
+		return
+	search.types_requested.connect(panel.open_dialog)
+	panel.show_types(registry.EntityTypes())
+	panel.type_requested.connect(func(label: String) -> void:
+		if label.strip_edges() == "":
+			panel.show_message("Dê um nome ao tipo.")
+			return
+		_types_done(registry.CreateEntityType(label), "Tipo \"%s\" criado: já aparece em \"＋ Novo\"." % label.strip_edges(),
+			"Não deu para criar o tipo (já existe um com esse nome?)."))
+	panel.field_requested.connect(_on_field_requested)
+	panel.relation_requested.connect(func(out_label: String, in_label: String, src: String, dst: String) -> void:
+		if out_label.strip_edges() == "" or in_label.strip_edges() == "":
+			panel.show_message("Escreva o nome do vínculo nas duas pontas.")
+			return
+		_types_done(registry.CreateRelationType(out_label, in_label, src, dst), "Vínculo \"%s\" criado: aparece na ficha em Vínculos." % out_label.strip_edges(),
+			"Não deu para criar o vínculo."))
+
+
+func _on_field_requested(label: String, type: String, unit: String, options: String, min_value: float, max_value: float, kinds: PackedStringArray) -> void:
+	if label.strip_edges() == "" or kinds.is_empty():
+		types_panel.show_message("Dê um nome ao campo e marque ao menos um tipo.")
+		return
+	if not is_nan(min_value) and not is_nan(max_value) and min_value > max_value:
+		types_panel.show_message("O mínimo é maior que o máximo.")
+		return
+	var code = registry.AddField(label, type, unit, options, kinds)
+	if code != null and type == "number" and (not is_nan(min_value) or not is_nan(max_value)):
+		registry.SetFieldLimits(code, min_value, max_value)
+	_types_done(code, "Campo \"%s\" criado." % label.strip_edges(), "Não deu para criar o campo (escolha precisa de 2 opções).")
+
+
+func _types_done(result, ok_text: String, fail_text: String) -> void:
+	if result == null:
+		types_panel.show_message(fail_text)
+		return
+	types_panel.show_message(ok_text)
+	types_panel.clear_inputs()
+	UiKit.set_types(registry.EntityTypes())
+	search.refresh_kinds()
+	types_panel.show_types(registry.EntityTypes())
+	if _current != 0:
+		_sheet_hash = 0
+		_reload()
+
+
+## Liga a janela de importar PNG.
+func bind_import(panel) -> void:
+	import_panel = panel
+	panel.file_chosen.connect(_on_import_file)
+	panel.apply_requested.connect(_on_import_apply)
+	panel.focus_requested.connect(func(lat: float, lon: float) -> void:
+		if focus_map.is_valid():
+			focus_map.call(EvronGeo.dir(lat, lon), 1.6))
+
+
+## O PNG escolhido: separa as regiões e abre o mapeamento com as entidades do nível pintado.
+func _on_import_file(path: String) -> void:
+	var img := Image.load_from_file(path)
+	if img == null or img.is_empty():
+		territory_panel.set_message("Não consegui ler a imagem.")
+		return
+	var regions = territory.AnalyzeImage(img, 4)
+	if regions == null or regions.is_empty():
+		territory_panel.set_message("Nenhuma região colorida (opaca) na imagem.")
+		return
+	var entities: Array = []
+	for p in registry.Palette(territory_level):
+		entities.append({"id": int(p.id), "name": registry.Name(int(p.id)), "rgb": int(_live_colors.get(int(p.id), p.rgb))})
+	import_panel.show_regions(regions, entities, UiKit.kind_label(territory_level))
+
+
+func _on_import_apply(indices: PackedInt32Array, owners: PackedInt32Array) -> void:
+	if indices.is_empty() or not painting_territory:
+		return
+	territory_end()
+	var edit = territory.ApplyImport(indices, owners)
+	if edit == null:
+		territory_panel.set_message("A importação não mudou nada.")
+		return
+	commands.push("Importar PNG (%d pontos)" % edit.Count, edit)
+	territory_panel.set_area(territory.AreaKm2(territory_owner))
+	territory_panel.set_message("")
+	_show_warnings()
 
 
 ## Liga a barra do modo desenhar.
@@ -188,10 +293,17 @@ func bind_draw(panel) -> void:
 
 
 func close() -> void:
-	if registry != null:
+	if registry != null and usable:
 		territory_end()
 		_save_territory()
 		registry.Close()
+		usable = false  # fechar duas vezes (trocar de mundo e depois sair da cena) não grava num banco fechado
+
+
+## Grava agora o que ainda espera a gravação adiada (antes de exportar o mundo).
+func save_now() -> void:
+	territory_end()
+	_save_territory()
 
 
 func current() -> int:
@@ -252,7 +364,7 @@ func pick(dir: Vector3, tolerance_km: float) -> int:
 		return 0
 	if territory != null and "politica" in presence_panel.layers():
 		var owner: int = territory.OwnerAt(dir)
-		if owner != 0 and registry.Kind(owner) == "pais":
+		if owner != 0 and registry.Kind(owner) == territory_level:
 			if owner != _current or not sheet.visible:
 				open(owner)
 			return 1
@@ -309,19 +421,93 @@ func refresh_map() -> void:
 func start_painting(id: int, mode := "pincel") -> void:
 	if not usable or territory == null or drawing or painting_territory or id == 0:
 		return
-	if registry.Kind(id) != "pais" or id > 65535:
-		sheet.show_territory_message("Só um país pode ter território (e com id até 65535).")
+	if not levels.has(registry.Kind(id)) or id > 65535:
+		sheet.show_territory_message("Só país e província têm território (e com id até 65535).")
 		return
+	show_level(registry.Kind(id))
 	territory_owner = id
 	painting_territory = true
 	territory_stroking = false
 	territory_mode = mode
 	territory_panel.set_mode(mode)
 	territory_panel.show_state(registry.Name(id), territory.AreaKm2(id))
+	_refresh_merge_choices()
+	_show_warnings()
 	if territory_mode == "fronteira":
 		sheet.hide()
 		boundary_tool.start(territory_owner)
 	painting_changed.emit(true)
+
+
+func _refresh_merge_choices() -> void:
+	var others: Array = []
+	for p in registry.Palette(territory_level):
+		if int(p.id) != territory_owner and territory.AreaKm2(int(p.id)) > 0.0:
+			others.append({"id": int(p.id), "name": registry.Name(int(p.id))})
+	territory_panel.show_merge_choices(others)
+
+
+## Unir: o território inteiro de outro cadastro do mesmo nível passa para o que está sendo pintado.
+func territory_merge(from_id: int) -> void:
+	if not painting_territory or registry.Kind(from_id) != territory_level:
+		return
+	territory_end()
+	var edit = territory.ReplaceOwner(from_id, territory_owner)
+	if edit == null:
+		territory_panel.set_message("%s não tem território para unir." % registry.Name(from_id))
+		return
+	commands.push("Unir %s a %s (%d pontos)" % [registry.Name(from_id), registry.Name(territory_owner), edit.Count], edit)
+	territory_panel.set_area(territory.AreaKm2(territory_owner))
+	territory_panel.set_message("")
+	_refresh_merge_choices()
+	_show_warnings()
+
+
+## Conta-gotas: o território clicado (do mesmo nível) passa a ser o pintado; a ferramenta volta ao pincel.
+func _pick_owner(n: Vector3) -> void:
+	var owner: int = territory.OwnerAt(n)
+	if owner == 0 or registry.Kind(owner) != territory_level:
+		territory_panel.set_message("Sem território deste nível aí.")
+		return
+	territory_owner = owner
+	territory_panel.show_state(registry.Name(owner), territory.AreaKm2(owner))
+	_refresh_merge_choices()
+	_set_territory_mode("pincel")
+	territory_panel.set_mode("pincel")
+	if owner != _current:
+		_current = owner
+		_reload()
+
+
+## Mostra e edita a camada de um nível. As outras ficam como estão (e continuam gravadas).
+func show_level(level: String) -> void:
+	if not levels.has(level) or level == territory_level:
+		return
+	territory_end()
+	territory_level = level
+	territory = levels[level]
+	boundary_tool.use_territory(territory)
+	_palette_hash = 0
+	refresh_palette()
+	territory_level_shown.emit(level, territory)
+
+
+## Os avisos de inconsistência com o nível de cima, na barra de pintar (só ao pintar província ou município: varre a camada inteira).
+func _show_warnings() -> void:
+	var order := ["pais", "provincia", "municipio"]
+	var i := order.find(territory_level)
+	if not painting_territory or i < 1 or not levels.has(order[i - 1]):
+		return
+	var upper: String = order[i - 1]
+	var lines: Array = []
+	for w in registry.LevelWarnings(territory_level, levels[upper], territory):
+		var km := LayerPanel._thousands(roundi(w.area_km2))
+		match String(w.kind):
+			"fora": lines.append("⚠ %s: %s km² fora de %s" % [registry.Name(int(w.id)), km, registry.Name(int(w.country))])
+			"sem_pais": lines.append("⚠ %s não está ligado a um(a) %s (vínculo \"%s de\")" % [registry.Name(int(w.id)),
+				UiKit.kind_label(upper).to_lower(), UiKit.kind_label(territory_level)])
+			"lacuna": lines.append("⚠ %s: %s km² sem %s" % [registry.Name(int(w.id)), km, UiKit.kind_label(territory_level).to_lower()])
+	territory_panel.set_message("\n".join(lines.slice(0, 6)) + ("\n…" if lines.size() > 6 else ""))
 
 
 func stop_painting() -> void:
@@ -353,6 +539,9 @@ func _set_territory_mode(mode: String) -> void:
 ## O botão esquerdo apertou no globo em n. Pincel e borracha começam uma pincelada; o balde preenche na hora.
 func territory_begin(n: Vector3) -> void:
 	if not painting_territory or territory_mode == "fronteira" or n == Vector3.ZERO:
+		return
+	if territory_mode == "conta-gotas":
+		_pick_owner(n)
 		return
 	if territory_mode == "balde":
 		var edit = territory.Fill(n, territory_owner, territory_land_only)
@@ -425,9 +614,9 @@ func _natural_done(edit, name: String, nothing: String) -> void:
 
 
 func _on_territory_clear() -> void:
-	if territory == null or _current == 0:
+	if _current == 0 or not levels.has(registry.Kind(_current)):
 		return
-	var edit = territory.ClearOwner(_current)
+	var edit = levels[registry.Kind(_current)].ClearOwner(_current)
 	if edit != null:
 		commands.push("Apagar território (%d pontos)" % edit.Count, edit)
 	_reload()
@@ -436,6 +625,8 @@ func _on_territory_clear() -> void:
 func _on_commands_changed() -> void:
 	if painting_territory and not territory_stroking:
 		territory_panel.set_area(territory.AreaKm2(territory_owner))  # desfazer e refazer mudam a área
+		_refresh_merge_choices()
+		_show_warnings()
 
 
 ## A cor de um país: a prévia (seletor aberto) só vai para a paleta; ao fechar o seletor ela é gravada.
@@ -450,12 +641,12 @@ func _on_color_changed(id: int, rgb: int, final: bool) -> void:
 	refresh_palette()
 
 
-## Manda a paleta dos países (id e cor) a quem desenha, se mudou.
+## Manda a paleta do nível mostrado (id e cor) a quem desenha, se mudou.
 func refresh_palette() -> void:
 	if not usable:
 		return
 	var entries: Array = []
-	for p in registry.CountryPalette():
+	for p in registry.Palette(territory_level):
 		entries.append({"id": int(p.id), "rgb": int(_live_colors.get(int(p.id), p.rgb))})
 	var key: int = entries.hash()
 	if key != _palette_hash:
@@ -465,19 +656,24 @@ func refresh_palette() -> void:
 
 ## A camada política é gravada no banco ~1,5 s depois da última edição (e ao fechar), nunca no meio de uma pincelada.
 func _save_territory_if_due() -> void:
-	if territory == null or not usable:
+	if not usable:
 		return
-	if territory.Version != _territory_seen:
-		_territory_seen = territory.Version
-		_territory_changed_ms = Time.get_ticks_msec()
-	if territory.Version != _territory_saved and not territory_stroking and Time.get_ticks_msec() - _territory_changed_ms >= 1500:
+	var dirty := false
+	for level in levels:
+		if levels[level].Version != _territory_seen[level]:
+			_territory_seen[level] = levels[level].Version
+			_territory_changed_ms = Time.get_ticks_msec()
+		dirty = dirty or levels[level].Version != _territory_saved[level]
+	if dirty and not territory_stroking and Time.get_ticks_msec() - _territory_changed_ms >= 1500:
 		_save_territory()
 
 
 func _save_territory() -> void:
-	if territory != null and usable and territory.Version != _territory_saved:
-		if registry.SaveTerritory(territory) != null:
-			_territory_saved = territory.Version
+	if not usable:
+		return
+	for level in levels:
+		if levels[level].Version != _territory_saved[level] and registry.SaveTerritoryLevel(level, levels[level]) != null:
+			_territory_saved[level] = levels[level].Version
 		else:
 			_territory_changed_ms = Time.get_ticks_msec()
 
@@ -651,7 +847,8 @@ func _on_link_search(text: String, dst_kind: String) -> void:
 
 func _on_delete() -> void:
 	var deleted := _current
-	var has_territory: bool = territory != null and registry.Kind(deleted) == "pais" and deleted <= 65535
+	var layer = levels.get(registry.Kind(deleted)) if deleted <= 65535 else null
+	var has_territory: bool = layer != null
 	if has_territory:
 		territory_end()
 		if painting_territory and territory_owner == deleted:
@@ -659,8 +856,8 @@ func _on_delete() -> void:
 	if registry.Delete(deleted) == null:
 		return
 	if has_territory:
-		territory.ClearOwner(deleted)
-		territory.ForgetOwnerBoundaries(deleted)
+		layer.ClearOwner(deleted)
+		layer.ForgetOwnerBoundaries(deleted)
 		commands.discard_matching(func(cmd: Object) -> bool:
 			return cmd.get_script() == TerritoryEdit and cmd.TouchesOwner(deleted))
 	_current = 0
@@ -787,8 +984,8 @@ func _geo_info(s: Dictionary) -> Dictionary:
 	for comp in s.compositions:
 		dates_d[int(comp.id)] = Calendar.format(int(comp.t), false) if has_clock else ""
 	var geo := {"places": c.items, "places_more": c.more, "fixed_text": _fixed_text(), "has_fixed": fixed_dir != Vector3.ZERO, "dates_e": dates_e, "dates_d": dates_d}
-	if territory != null and s.kind == "pais":
-		geo["territory"] = {"area_km2": territory.AreaKm2(int(s.id)), "color": int(_live_colors.get(int(s.id), registry.EntityColor(int(s.id)))), "ok": int(s.id) <= 65535}
+	if levels.has(s.kind):
+		geo["territory"] = {"area_km2": levels[s.kind].AreaKm2(int(s.id)), "color": int(_live_colors.get(int(s.id), registry.EntityColor(int(s.id)))), "ok": int(s.id) <= 65535}
 	return geo
 
 

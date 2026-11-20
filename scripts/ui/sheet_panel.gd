@@ -125,7 +125,7 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	_geo = geo
 	visible = true
 	_title.text = "Ficha · " + UiKit.kind_label(sheet.kind)
-	_boundary_brush.visible = sheet.kind == "pais" and geo.get("territory", {}).get("ok", false)
+	_boundary_brush.visible = sheet.kind in ["pais", "provincia", "municipio"] and geo.get("territory", {}).get("ok", false)
 	if _body != null:
 		_scroll.remove_child(_body)
 		_body.queue_free()
@@ -470,10 +470,10 @@ func _build_links() -> void:
 	search.call()
 
 
-## Só para países: a camada política (o território pintado, a cor do país, pintar e apagar).
+## Só para países e províncias: a camada do nível (o território pintado, a cor, pintar e apagar).
 func _build_territory() -> void:
 	_territory_msg = null
-	if _sheet.kind != "pais" or not _geo.has("territory"):
+	if not _geo.has("territory"):
 		return
 	var info: Dictionary = _geo.territory
 	var eid := int(_sheet.id)
@@ -482,7 +482,7 @@ func _build_territory() -> void:
 	var color_row := HBoxContainer.new()
 	box.add_child(color_row)
 	var color_label := Label.new()
-	color_label.text = "Cor do país:"
+	color_label.text = "Cor no mapa:"
 	color_row.add_child(color_label)
 	var picker := ColorPickerButton.new()
 	picker.edit_alpha = false
@@ -498,13 +498,13 @@ func _build_territory() -> void:
 	var paint := Button.new()
 	paint.text = "Pintar território"
 	paint.disabled = not info.ok
-	paint.tooltip_text = "Pinta no globo com o pincel; pintar sobre outro país toma o território dele" if info.ok else "Este cadastro tem um id acima de 65535: a camada política não comporta"
+	paint.tooltip_text = "Pinta no globo com o pincel; pintar sobre outro do mesmo nível toma o território dele" if info.ok else "Este cadastro tem um id acima de 65535: a camada política não comporta"
 	paint.pressed.connect(func() -> void: territory_paint_requested.emit())
 	row.add_child(paint)
 	var clear := Button.new()
 	clear.text = "Apagar território"
 	clear.disabled = info.area_km2 <= 0.0
-	clear.tooltip_text = "Apaga todo o território pintado deste país (Ctrl+Z desfaz)"
+	clear.tooltip_text = "Apaga todo o território pintado deste cadastro (Ctrl+Z desfaz)"
 	clear.pressed.connect(func() -> void: territory_clear_requested.emit())
 	row.add_child(clear)
 	_territory_msg = _note("")

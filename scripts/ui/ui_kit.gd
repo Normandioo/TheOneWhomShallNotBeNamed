@@ -1,7 +1,7 @@
 ## Peças comuns da interface: o estilo dos painéis e os nomes dos tipos de cadastro.
 
-const KINDS := ["cultura", "pais", "raca", "etnia", "idioma", "religiao"]
-const KIND_LABEL := {"cultura": "Cultura", "pais": "País", "raca": "Raça", "etnia": "Etnia", "idioma": "Idioma", "religiao": "Religião"}
+const KINDS := ["cultura", "pais", "raca", "etnia", "idioma", "religiao", "provincia", "municipio"]  # novos tipos no fim: o menu "Novo" usa o índice
+const KIND_LABEL := {"cultura": "Cultura", "pais": "País", "provincia": "Província", "municipio": "Município", "raca": "Raça", "etnia": "Etnia", "idioma": "Idioma", "religiao": "Religião"}
 
 
 ## As camadas do mapa de presenças (uma por tipo de entidade): chave -> cor e nome.
@@ -26,8 +26,27 @@ static func role_label(role: String) -> String:
 	return ROLE_LABEL.get(role, role)
 
 
+## Os tipos criados pelo usuário (Registry.EntityTypes, os que não são de fábrica): o DomainHub os põe aqui ao abrir e ao criar.
+static var custom_kinds: Array = []
+static var custom_labels := {}
+
+
+static func set_types(types: Array) -> void:
+	custom_kinds = []
+	custom_labels = {}
+	for t in types:
+		if not t.builtin:
+			custom_kinds.append(String(t.code))
+			custom_labels[String(t.code)] = String(t.label)
+
+
+## Todos os tipos de entidade: os de fábrica e depois os criados.
+static func all_kinds() -> Array:
+	return KINDS + custom_kinds
+
+
 static func kind_label(kind: String) -> String:
-	return KIND_LABEL.get(kind, kind)
+	return KIND_LABEL.get(kind, custom_labels.get(kind, kind))
 
 
 

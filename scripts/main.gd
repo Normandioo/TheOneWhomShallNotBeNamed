@@ -46,7 +46,9 @@ const AUTOSAVE_SECONDS := 30.0  # reais; o relógio também é salvo a cada coma
 var domains_db := "user://evron_world.db"
 
 var terrain: Terrain
-var territory: Territory  # a camada política: o dono de cada pixel
+var territory: Territory  # a camada dos países: o dono de cada pixel
+var provinces: Territory  # a camada das províncias, independente da dos países
+var municipalities: Territory  # a camada dos municípios
 var commands := CommandStack.new()
 var brush: TerrainBrush
 var material := GlobeMaterial.new()
@@ -79,12 +81,18 @@ func _ready() -> void:
 	brush = TerrainBrush.new(terrain, commands)
 	territory = Territory.new()
 	territory.Setup(terrain)
+	provinces = Territory.new()
+	provinces.Setup(terrain)
+	municipalities = Territory.new()
+	municipalities.Setup(terrain)
 	var lakes := EvronMaps.load_layer("Waterbodies.png")
 	if lakes != null:
 		terrain.SetLakes(lakes)  # lagos do Gleba: água no mapa político e nas fronteiras naturais
 	var flow := EvronMaps.load_layer("Waterflow.png")
 	if flow != null:
 		territory.SetRiverFlow(flow)  # os rios grandes do Gleba seguram as fronteiras naturais
+		provinces.SetRiverFlow(flow)
+		municipalities.SetRiverFlow(flow)
 	material.set_height(terrain.HeightImage())
 	material.set_rivers(terrain.RiversImage())
 	globe = GlobeView.new()
@@ -119,8 +127,22 @@ func _ready() -> void:
 	hud.add_child(territory_panel)
 	domains.palette_changed.connect(material.set_political_palette)
 	domains.painting_changed.connect(_on_painting_changed)
-	domains.bind_territory(territory, commands, territory_panel)  # lê a camada gravada e manda a paleta
+	domains.bind_territory(territory, commands, territory_panel, {"provincia": provinces, "municipio": municipalities})  # lê as camadas gravadas e manda a paleta
 	material.set_political(territory.OwnersImage())
+	domains.territory_level_shown.connect(func(level: String, layer) -> void:
+		material.set_political(layer.OwnersImage())
+		layer_panel.show_level(level))
+	layer_panel.level_selected.connect(domains.show_level)
+	layer_panel.export_requested.connect(func() -> void: _world_dialog(true))
+	layer_panel.import_requested.connect(func() -> void: _world_dialog(false))
+	var types_panel := preload("res://scripts/ui/types_panel.gd").new()
+	hud.add_child(types_panel)
+	domains.bind_types(types_panel)
+	var import_panel := preload("res://scripts/ui/import_panel.gd").new()
+	hud.add_child(import_panel)
+	domains.bind_import(import_panel)
+	domains.boundary_tool.preview_changed.connect(func(img) -> void:
+		material.set_political(img if img != null else domains.territory.OwnersImage()))
 	if save_path != "":
 		WorldStore.load_into(clock, save_path)  # sem salvamento válido, abre o cenário técnico, pausado
 	demo.attach(clock)
@@ -179,9 +201,10 @@ func _process(delta: float) -> void:
 	if _coast_stale and not brush.active and MapLayers.LAYERS[layer]["kind"] == "political":
 		material.set_coast(terrain.CoastImage())  # só com o mapa político na tela e fora da pincelada
 		_coast_stale = false
-	if territory.Dirty and (not domains.territory_stroking or _since_political >= 0.1):
-		material.refresh_political(territory.OwnersImage())  # durante a pincelada, no máximo 10x por segundo (a camada inteira: 16 MiB)
-		territory.Dirty = false
+	var shown = domains.territory  # só a camada do nível mostrado vai à GPU; a outra é enviada inteira ao ser mostrada
+	if shown.Dirty and (not domains.territory_stroking or _since_political >= 0.1):
+		material.refresh_political(shown.OwnersImage())  # durante a pincelada, no máximo 10x por segundo (a camada inteira: 16 MiB)
+		shown.Dirty = false
 		_since_political = 0.0
 	_since_political += delta
 	if terrain.RiversDirty and not brush.active:  # os rios só mudam ao soltar o mouse, desfazer ou refazer
@@ -297,6 +320,74 @@ func redo() -> void:
 	commands.redo()
 
 
+## Exportar (escolhe a pasta onde criar Evron-<data>.world) ou importar (escolhe a pasta .world) o mundo inteiro.
+func _world_dialog(export: bool) -> void:
+	if not domains.usable or domains_db == ":memory:":
+		return
+	var files := FileDialog.new()
+	files.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+	files.access = FileDialog.ACCESS_FILESYSTEM
+	files.use_native_dialog = true
+	files.title = "Onde criar a pasta do mundo" if export else "Escolha a pasta .world a importar"
+	files.dir_selected.connect(func(dir: String) -> void:
+		files.queue_free()
+		if export:
+			_export_world(dir)
+		else:
+			_confirm_import(dir))
+	files.canceled.connect(files.queue_free)
+	hud.add_child(files)
+	files.popup_centered_ratio(0.6)
+
+
+func _export_world(parent: String) -> void:
+	save_clock()
+	domains.save_now()
+	var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace("T", "-")
+	var dir := parent.path_join("Evron-%s.world" % stamp.left(13))
+	var why: String = domains.registry.ExportWorld(dir, ProjectSettings.globalize_path(save_path) if save_path != "" else "")
+	_world_message("Mundo exportado para:
+" + dir if why == "" else "Não deu para exportar: " + why)
+
+
+func _confirm_import(dir: String) -> void:
+	var why: String = domains.registry.CheckWorld(dir)
+	if why != "":
+		_world_message("Essa pasta não pode ser importada: " + why)
+		return
+	var ask := ConfirmationDialog.new()
+	ask.dialog_text = "Trocar o mundo aberto pelo de
+%s?
+
+O mundo atual fica guardado ao lado do banco como .antes-importacao." % dir
+	ask.ok_button_text = "Importar"
+	ask.confirmed.connect(func() -> void: _import_world(dir))
+	ask.canceled.connect(ask.queue_free)
+	hud.add_child(ask)
+	ask.popup_centered()
+
+
+## Fecha o banco (gravando o que faltava), troca os arquivos e recarrega a cena: tudo é lido do mundo novo.
+func _import_world(dir: String) -> void:
+	save_clock()
+	domains.close()
+	var why: String = load("res://scripts/world/Registry.cs").new().ImportWorld(dir, ProjectSettings.globalize_path(domains_db),
+		ProjectSettings.globalize_path(save_path) if save_path != "" else "")
+	if why != "":
+		push_error(why)
+	save_path = ""  # a cena que sai não regrava o relógio por cima do importado
+	get_tree().reload_current_scene()
+
+
+func _world_message(text: String) -> void:
+	var box := AcceptDialog.new()
+	box.dialog_text = text
+	box.confirmed.connect(box.queue_free)
+	box.canceled.connect(box.queue_free)
+	hud.add_child(box)
+	box.popup_centered()
+
+
 func save_clock() -> void:
 	_since_save = 0.0
 	if save_path != "" and not WorldStore.save(clock, save_path):
@@ -367,7 +458,7 @@ func _season_line(n: Vector3) -> String:
 
 func _on_hover(n: Vector3) -> void:
 	layer_panel.show_cursor(describe(n))
-	if domains.painting_territory and domains.territory_mode != "fronteira":
+	if domains.painting_territory and not domains.territory_mode in ["fronteira", "conta-gotas"]:
 		_show_brush(n, domains.territory_radius)  # o anel do pincel de território
 	if tool != ToolPanel.NAVIGATE:
 		_show_brush(n)

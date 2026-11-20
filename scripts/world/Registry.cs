@@ -79,15 +79,30 @@ public partial class Registry : RefCounted
         BordersMigration,  // RegistryBorders.cs
         TerritoryMigration,  // RegistryTerritory.cs
         TerritoryBoundaryMigration,  // RegistryTerritory.cs
+        TerritoryLevelsMigration,  // RegistryTerritory.cs
+        MunicipalityMigration,  // RegistryTerritory.cs
+        TerritoryTilesMigration,  // RegistryTerritory.cs
+        EntityTypesMigration,  // RegistryTypes.cs
     };
 
     WorldDb _db = new();
+    string _openKey = "";  // muda a cada Open: diz se os tiles gravados de uma camada são os deste banco
 
     public void Open(string path)
     {
         _db.Open(path);
+        _openKey = Guid.NewGuid().ToString("N");
         try { _db.Migrate(Migrations); }
         catch { _db.Close(); throw; }  // um banco recusado não fica aberto: as chamadas seguintes falham em vez de escrever nele
+    }
+
+    /// Só para testes de migração: cria/abre o banco aplicando apenas as `version` primeiras migrações (um mundo de uma versão antiga).
+    public void OpenAtVersion(string path, int version)
+    {
+        _db.Open(path);
+        _openKey = Guid.NewGuid().ToString("N");
+        try { _db.Migrate(Migrations[..Math.Clamp(version, 0, Migrations.Length)]); }
+        catch { _db.Close(); throw; }
     }
 
     /// O banco está aberto (Open não foi recusado)?

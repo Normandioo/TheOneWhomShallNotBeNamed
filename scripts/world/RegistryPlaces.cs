@@ -86,13 +86,13 @@ public partial class Registry
     /// A camada do mapa de uma entidade, pelo tipo dela.
     static string LayerOf(string kind) => kind switch
     {
-        "pais" => "politica", "cultura" => "cultural", "etnia" => "etnica", "idioma" => "linguistica", "religiao" => "religiosa", _ => "racial",
+        "pais" or "provincia" or "municipio" => "politica", "cultura" => "cultural", "etnia" => "etnica", "idioma" => "linguistica", "religiao" => "religiosa", _ => "racial",
     };
 
     /// O que se conta para esse tipo de entidade. Contagens de bases diferentes nunca se somam entre si.
     static string BasisOf(string kind) => kind switch
     {
-        "pais" => "habitantes", "idioma" => "falantes", "religiao" => "adeptos", _ => "integrantes",
+        "pais" or "provincia" or "municipio" => "habitantes", "idioma" => "falantes", "religiao" => "adeptos", _ => "integrantes",
     };
 
     static readonly System.Collections.Generic.Dictionary<string, string> DimensionKind = new()

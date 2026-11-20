@@ -108,10 +108,13 @@ func run() -> void:
 	if not reopened.PlanBoundaryClaim(2, controls, id).has("plan"):
 		return fail("um caminho reaberto deve continuar editável pelo país que recebeu a área")
 	registry.Close()
+	# Um mundo de verdade da versão 6 (só as 6 primeiras migrações: a camada numa linha só, sem fronteiras), depois aberto pela versão atual.
+	DirAccess.remove_absolute(db_path)
+	registry.OpenAtVersion(db_path, 6)
+	registry.Close()
 	var db := WorldDb.new()
 	db.Open(db_path)
-	db.Execute("alter table territory drop column boundaries")
-	db.Execute("pragma user_version = 6")
+	db.Execute("insert into territory(id, w, h, data) values (1, %d, %d, X'%s')" % [terrain.Size.x, terrain.Size.y, layer.Pack().hex_encode()])
 	db.Close()
 	registry.Open(db_path)
 	if not registry.LoadTerritory(reopened) or reopened.Pack() != layer.Pack() or not reopened.BoundariesFor(2).is_empty():
@@ -124,9 +127,21 @@ func run() -> void:
 	stack.undo()
 	_rectangle(layer, terrain, Rect2i(160, 56, 5, 47), 2)
 	var two_contacts = layer.PlanBoundaryClaim(2, controls, 0).get("plan")
-	if two_contacts == null or layer.ApplyBoundary(two_contacts) == null or layer.OwnerAt(east) != 2 or layer.OwnerAt(west) != 1:
-		return fail("quando ambos os lados tocam o país escolhido, só o menor pedaço deve mudar")
-	ok("quando os dois lados encostam, o menor pedaço é tomado")
+	var packed: PackedByteArray = layer.Pack()
+	if two_contacts == null or two_contacts.ChoiceCount != 2 or two_contacts.Choice != 0:
+		return fail("quando ambos os lados tocam o país escolhido, o plano oferece os dois lados")
+	var small_km2: float = layer.PlanAreaKm2(two_contacts)
+	var preview: Image = layer.PreviewImage(two_contacts)
+	var east_px: int = terrain.PixelOf(east)
+	if layer.Pack() != packed or preview.get_data().decode_u16(east_px * 2) != 2:
+		return fail("a prévia mostra o lado escolhido sem mudar a camada")
+	two_contacts.Choose(1)
+	if layer.PlanAreaKm2(two_contacts) <= small_km2 or layer.PreviewImage(two_contacts).get_data().decode_u16(east_px * 2) == 2:
+		return fail("escolher o outro lado troca o pedaço da prévia")
+	two_contacts.Choose(0)
+	if layer.ApplyBoundary(two_contacts) == null or layer.OwnerAt(east) != 2 or layer.OwnerAt(west) != 1:
+		return fail("aplicar o lado escolhido muda só o menor pedaço")
+	ok("quando os dois lados encostam: prévia sem mudar a camada, escolha explícita do lado (menor por padrão)")
 
 	var seam := Territory.new()
 	seam.Setup(terrain)
@@ -184,6 +199,9 @@ func _editor() -> void:
 	if DisplayServer.get_name() != "headless":
 		await save("evron-fronteira-antes")
 	await _draw_cut(4.0)
+	if main.territory.OwnerAt(Geo.dir(0, -1)) == selected or not panel._preview_row.visible:
+		return fail("soltar o traço mostra a prévia e ainda não muda a camada: " + panel._boundary_status.text)
+	panel.boundary_apply_requested.emit()
 	if main.territory.OwnerAt(Geo.dir(0, -1)) != selected or main.territory.OwnerAt(Geo.dir(0, 10)) != neighbor or main.territory.OwnerAt(Geo.dir(13, 4)) != third:
 		return fail("soltar o traço deve tomar só a faixa ao lado do país selecionado: " + panel._boundary_status.text)
 	if main.territory.BoundariesFor(selected).size() != 1 or panel._paths.get_selected_id() != 0:
@@ -191,6 +209,7 @@ func _editor() -> void:
 	if DisplayServer.get_name() != "headless":
 		await save("evron-fronteira-depois")
 	await _draw_cut(8.0)
+	panel.boundary_apply_requested.emit()
 	if main.territory.OwnerAt(Geo.dir(0, 6)) != selected or main.territory.OwnerAt(Geo.dir(13, 8)) != third or main.territory.BoundariesFor(selected).size() != 2:
 		return fail("um segundo gesto deve ampliar a região sem exigir nova seleção: " + panel._boundary_status.text)
 	main.undo()
@@ -199,4 +218,4 @@ func _editor() -> void:
 	main.redo()
 	if main.territory.OwnerAt(Geo.dir(0, 6)) != selected:
 		return fail("refazer deve restaurar o último gesto")
-	ok("editor: clique no país, pincel no menu e dois ganhos sucessivos ao soltar o mouse")
+	ok("editor: clique no país, pincel no menu e dois ganhos sucessivos, cada um aplicado depois da prévia")

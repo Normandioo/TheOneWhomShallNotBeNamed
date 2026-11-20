@@ -119,24 +119,31 @@ public partial class Registry
         insert into field_domain(field_id, kind) select id, substr(code, 1, instr(code, '.') - 1) from field_def;
         """;
 
-    static readonly string[] Kinds = { "cultura", "pais", "raca", "etnia", "idioma", "religiao" };
     static readonly CompareOptions Loose = CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace;
 
     // ---- campos ----
 
     /// Definições dos campos que se aplicam a esse tipo, na ordem do cadastro (os personalizados vêm depois).
     public Array<Dictionary> FieldsFor(string kind) => new(
-        _db.Rows("select d.code, d.label, d.hint, d.type, d.unit, d.options, d.is_custom from field_def d join field_domain f on f.field_id = d.id " +
-                 "where f.kind = @0 order by d.is_custom, d.id", kind)
-           .Select(r => new Dictionary { ["code"] = Str(r[0]), ["label"] = Str(r[1]), ["hint"] = Str(r[2]), ["type"] = Str(r[3]),
+        _db.Rows("select d.code, d.label, d.hint, d.type, d.unit, d.options, d.is_custom, d.min_value, d.max_value from field_def d " +
+                 "join field_domain f on f.field_id = d.id where f.kind = @0 order by d.is_custom, d.id", kind)
+           .Select(r => new Dictionary { ["code"] = Str(r[0]), ["label"] = Str(r[1]), ["hint"] = LimitHint(Str(r[2]), r[7], r[8]), ["type"] = Str(r[3]),
                                          ["unit"] = Str(r[4]), ["options"] = Str(r[5]), ["custom"] = Convert.ToInt64(r[6]) == 1 }));
+
+    static string LimitHint(string hint, object? min, object? max)
+    {
+        if (min == null && max == null) return hint;
+        string range = min != null && max != null ? $"De {Convert.ToDouble(min)} a {Convert.ToDouble(max)}."
+            : min != null ? $"No mínimo {Convert.ToDouble(min)}." : $"No máximo {Convert.ToDouble(max)}.";
+        return hint == "" ? range : hint + " " + range;
+    }
 
     /// Campo personalizado do autor. type: text | number | choice | bool; options = uma opção por linha (só em choice).
     /// Aplica-se aos tipos de entidade dados (ao menos um). Devolve o código gerado ("custom.N").
     public string AddField(string label, string type, string unit, string options, string[] kinds)
     {
         label = Clean(label);
-        if (kinds.Length == 0 || kinds.Any(k => !Kinds.Contains(k))) throw new ArgumentException("o campo precisa de ao menos um tipo de entidade válido");
+        if (kinds.Length == 0 || kinds.Any(k => !TypeExists(k))) throw new ArgumentException("o campo precisa de ao menos um tipo de entidade válido");
         if (type == "choice" && options.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length < 2)
             throw new ArgumentException("um campo de escolha precisa de ao menos 2 opções");
         return _db.Tx(() =>
@@ -155,7 +162,7 @@ public partial class Registry
     public void SetField(long id, string code, string state, string value)
     {
         if (state != "known" && state != "unknown" && state != "na") throw new ArgumentException($"estado inválido: {state}");
-        var d = _db.Rows("select d.id, d.type, d.options from field_def d join field_domain f on f.field_id = d.id join entity e on e.kind = f.kind " +
+        var d = _db.Rows("select d.id, d.type, d.options, d.min_value, d.max_value from field_def d join field_domain f on f.field_id = d.id join entity e on e.kind = f.kind " +
                          "where d.code = @0 and e.id = @1", code, id);
         if (d.Count == 0) throw new ArgumentException($"o campo {code} não existe ou não se aplica à entidade {id}");
         long fid = Convert.ToInt64(d[0][0]);
@@ -172,6 +179,8 @@ public partial class Registry
             case "number":
                 if (!double.TryParse(value.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out double n) || !double.IsFinite(n))
                     throw new ArgumentException($"'{value}' não é um número");
+                if (d[0][3] != null && n < Convert.ToDouble(d[0][3])) throw new ArgumentException($"{value} está abaixo do mínimo ({Convert.ToDouble(d[0][3])})");
+                if (d[0][4] != null && n > Convert.ToDouble(d[0][4])) throw new ArgumentException($"{value} está acima do máximo ({Convert.ToDouble(d[0][4])})");
                 Upsert(id, fid, "known", n, null);
                 break;
             case "bool":

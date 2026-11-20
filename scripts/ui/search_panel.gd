@@ -9,12 +9,14 @@ signal entity_chosen(id: int)
 signal create_requested(kind: String, name: String)
 signal society_requested(name: String)
 signal calendars_requested
+signal types_requested
 
 const WIDTH := 320
 const SOCIETY_ID := 100  # item do menu "Novo" que não é um tipo
 
 var _query: LineEdit
 var _filter: OptionButton
+var _new_pop: PopupMenu
 var _list: ItemList
 var _ids: Array[int] = []
 
@@ -37,12 +39,8 @@ func _init() -> void:
 	head.add_child(title)
 	var new_menu := MenuButton.new()
 	new_menu.text = "＋ Novo"
-	var pop := new_menu.get_popup()
-	for i in UiKit.KINDS.size():
-		pop.add_item(UiKit.kind_label(UiKit.KINDS[i]), i)
-	pop.add_separator()
-	pop.add_item("Sociedade (país + cultura + etnia)", SOCIETY_ID)
-	pop.id_pressed.connect(_on_new)
+	_new_pop = new_menu.get_popup()
+	_new_pop.id_pressed.connect(_on_new)
 	new_menu.tooltip_text = "Cria com o texto da busca como nome (pode ser provisório)."
 	head.add_child(new_menu)
 	var cal_btn := Button.new()
@@ -50,6 +48,11 @@ func _init() -> void:
 	cal_btn.tooltip_text = "Criar e ver calendários locais"
 	cal_btn.pressed.connect(func() -> void: calendars_requested.emit())
 	head.add_child(cal_btn)
+	var types_btn := Button.new()
+	types_btn.text = "Tipos…"
+	types_btn.tooltip_text = "Criar tipos de entidade, campos e vínculos"
+	types_btn.pressed.connect(func() -> void: types_requested.emit())
+	head.add_child(types_btn)
 
 	_query = LineEdit.new()
 	_query.placeholder_text = "Buscar por nome"
@@ -59,9 +62,6 @@ func _init() -> void:
 	box.add_child(_query)
 
 	_filter = OptionButton.new()
-	_filter.add_item("Todos os tipos")
-	for k in UiKit.KINDS:
-		_filter.add_item(UiKit.kind_label(k))
 	_filter.item_selected.connect(func(_i: int) -> void: _emit_query())
 	box.add_child(_filter)
 
@@ -69,6 +69,23 @@ func _init() -> void:
 	_list.custom_minimum_size = Vector2(0, 170)
 	_list.item_selected.connect(func(i: int) -> void: entity_chosen.emit(_ids[i]))
 	box.add_child(_list)
+	refresh_kinds()
+
+
+## Refaz os menus de tipo (depois de criar um tipo novo). O filtro escolhido fica, se o tipo ainda existir.
+func refresh_kinds() -> void:
+	var keep := kind_filter() if _filter.item_count > 0 else ""
+	var kinds := UiKit.all_kinds()
+	_new_pop.clear()
+	for i in kinds.size():
+		_new_pop.add_item(UiKit.kind_label(kinds[i]), i)
+	_new_pop.add_separator()
+	_new_pop.add_item("Sociedade (país + cultura + etnia)", SOCIETY_ID)
+	_filter.clear()
+	_filter.add_item("Todos os tipos")
+	for k in kinds:
+		_filter.add_item(UiKit.kind_label(k))
+	_filter.select(kinds.find(keep) + 1)
 
 
 ## Mostra os resultados (cada um: id, kind, name, match). Não repete o evento de seleção.
@@ -90,7 +107,7 @@ func query() -> String:
 
 
 func kind_filter() -> String:
-	return "" if _filter.selected <= 0 else UiKit.KINDS[_filter.selected - 1]
+	return "" if _filter.selected <= 0 else UiKit.all_kinds()[_filter.selected - 1]
 
 
 func _emit_query() -> void:
@@ -101,4 +118,4 @@ func _on_new(id: int) -> void:
 	if id == SOCIETY_ID:
 		society_requested.emit(_query.text)
 	else:
-		create_requested.emit(UiKit.KINDS[id], _query.text)
+		create_requested.emit(UiKit.all_kinds()[id], _query.text)

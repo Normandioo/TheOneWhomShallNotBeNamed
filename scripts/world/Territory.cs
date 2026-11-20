@@ -37,6 +37,7 @@ public partial class Territory : RefCounted
         Size = terrain.Size;
         B = new byte[Size.X * Size.Y * 2];
         _img = Image.CreateFromData(Size.X, Size.Y, false, Image.Format.Rg8, B);
+        ResetTiles();
         _rowTop = int.MaxValue;
         _rowBottom = -1;
         ResetBoundaries();
@@ -53,6 +54,7 @@ public partial class Territory : RefCounted
         int y = idx / Size.X;
         _rowTop = Math.Min(_rowTop, y);
         _rowBottom = Math.Max(_rowBottom, y);
+        MarkTile(idx);
         Dirty = true;
     }
 
@@ -160,6 +162,17 @@ public partial class Territory : RefCounted
         return Apply(all, 0);
     }
 
+    /// Unir: todo o território de `from` passa a ser de `to` (um gesto só para desfazer). Edição ou null se `from` não tinha nada.
+    public TerritoryEdit? ReplaceOwner(int from, int to)
+    {
+        if (to < 0 || to > MaxOwner) throw new ArgumentException($"dono fora de 0..{MaxOwner}: {to}");
+        if (from == 0 || from == to) return null;
+        var all = new List<int>();
+        for (int i = 0; i < Size.X * Size.Y; i++)
+            if (Get(i) == from) all.Add(i);
+        return Apply(all, to);
+    }
+
     /// Apaga o território de vários donos numa passada só (apagar um por um varreria o mapa inteiro para cada um). Edição ou null.
     public TerritoryEdit? ClearOwners(int[] owners)
     {
@@ -205,8 +218,7 @@ public partial class Territory : RefCounted
             int w = Size.X, h = Size.Y;
             for (int y = 0; y < h; y++)
             {
-                double top = Math.PI * (0.5 - (double)y / h), bottom = Math.PI * (0.5 - (double)(y + 1) / h);
-                double pixelArea = EvronGeo.RadiusKm * EvronGeo.RadiusKm * (2 * Math.PI / w) * (Math.Sin(top) - Math.Sin(bottom));
+                double pixelArea = RowCellKm2(y, w, h);
                 var row = new System.Collections.Generic.Dictionary<int, int>();
                 for (int x = 0; x < w; x++)
                 {
@@ -219,6 +231,13 @@ public partial class Territory : RefCounted
             _areasVersion = Version;
         }
         return _areas.GetValueOrDefault(owner);
+    }
+
+    /// A área de um pixel da linha y (km²): perto do polo os pixels são estreitos.
+    public static double RowCellKm2(int y, int w, int h)
+    {
+        double top = Math.PI * (0.5 - (double)y / h), bottom = Math.PI * (0.5 - (double)(y + 1) / h);
+        return EvronGeo.RadiusKm * EvronGeo.RadiusKm * (2 * Math.PI / w) * (Math.Sin(top) - Math.Sin(bottom));
     }
 
     // ---- persistência (quem grava é o Registry) ----

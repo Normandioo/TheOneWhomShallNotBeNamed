@@ -15,12 +15,19 @@ signal grow_requested(all: bool)  # crescer pela terra sem dono: só este país 
 signal snap_requested             # assentar as fronteiras deste país na crista ou no rio mais perto
 signal boundary_selected(id: int)
 signal boundary_reset_requested
+signal boundary_apply_requested    # confirmar a prévia da divisão
+signal boundary_discard_requested  # descartar a prévia
+signal boundary_side_requested     # ver o outro lado do corte
+signal merge_requested(from_id: int)  # unir: o território inteiro de outro cadastro passa para este
+signal import_requested  # importar um PNG para a camada do nível que está sendo pintado
+signal fidelity_changed(index: int)  # modo de fidelidade do traço (TerritoryBoundaryTool.FIDELITY)
 
-const MODES := [["pincel", "Pincel"], ["balde", "Balde"], ["borracha", "Borracha"], ["fronteira", "Fronteira"]]
+const MODES := [["pincel", "Pincel"], ["balde", "Balde"], ["borracha", "Borracha"], ["conta-gotas", "Conta-gotas"], ["fronteira", "Fronteira"]]
 const TIPS := {
 	"pincel": "Arraste no globo para pintar. Pintar sobre outro país toma o território dele.",
 	"balde": "Clique dentro de uma área cercada por pintura para preencher tudo de uma vez.",
 	"borracha": "Arraste para apagar só o território deste país (o dos vizinhos fica).",
+	"conta-gotas": "Clique num território do mesmo nível para passar a pintar com ele.",
 }
 
 var radius_km := 300.0
@@ -40,6 +47,10 @@ var _boundary_controls: VBoxContainer
 var _paths: OptionButton
 var _boundary_status: Label
 var _reset_boundary: Button
+var _preview_row: HBoxContainer
+var _merge_menu: OptionButton
+var _merge_ids: Array = []
+var _side_button: Button
 
 
 func _init() -> void:
@@ -100,6 +111,24 @@ func _init() -> void:
 	_brush_controls.add_child(_tip)
 	_area = Label.new()
 	_brush_controls.add_child(_area)
+	var merge_row := HBoxContainer.new()
+	_merge_menu = OptionButton.new()
+	_merge_menu.fit_to_longest_item = false
+	_merge_menu.custom_minimum_size = Vector2(170, 0)
+	merge_row.add_child(_merge_menu)
+	var merge := Button.new()
+	merge.text = "Unir a este"
+	merge.tooltip_text = "Todo o território do cadastro escolhido passa para este (Ctrl+Z desfaz)."
+	merge.pressed.connect(func() -> void:
+		if _merge_menu.selected >= 0 and _merge_menu.selected < _merge_ids.size():
+			merge_requested.emit(_merge_ids[_merge_menu.selected]))
+	merge_row.add_child(merge)
+	_brush_controls.add_child(merge_row)
+	var import_png := Button.new()
+	import_png.text = "Importar PNG…"
+	import_png.tooltip_text = "Lê um mapa em PNG (equiretangular): cada mancha de cor vira uma região que você liga a um cadastro deste nível."
+	import_png.pressed.connect(func() -> void: import_requested.emit())
+	_brush_controls.add_child(import_png)
 	_natural(_brush_controls)
 	_build_boundary_controls(box)
 	var done := Button.new()
@@ -122,6 +151,13 @@ func _build_boundary_controls(box: VBoxContainer) -> void:
 	_paths.fit_to_longest_item = false
 	_paths.item_selected.connect(func(index: int) -> void: boundary_selected.emit(_paths.get_item_id(index)))
 	_boundary_controls.add_child(_paths)
+	var fidelity := OptionButton.new()
+	for f in preload("res://scripts/edit/territory_boundary_tool.gd").FIDELITY:
+		fidelity.add_item("Traço: " + f[0])
+	fidelity.select(1)
+	fidelity.tooltip_text = "Alta fidelidade segue cada tremida da mão; Suavizado amostra menos e estabiliza o traço."
+	fidelity.item_selected.connect(fidelity_changed.emit)
+	_boundary_controls.add_child(fidelity)
 	_boundary_status = Label.new()
 	_boundary_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_boundary_status.custom_minimum_size.x = 270
@@ -130,6 +166,17 @@ func _build_boundary_controls(box: VBoxContainer) -> void:
 	_reset_boundary.text = "Redesenhar"
 	_reset_boundary.pressed.connect(func() -> void: boundary_reset_requested.emit())
 	_boundary_controls.add_child(_reset_boundary)
+	_preview_row = HBoxContainer.new()
+	_preview_row.visible = false
+	_boundary_controls.add_child(_preview_row)
+	for spec in [["Aplicar", boundary_apply_requested], ["Outro lado", boundary_side_requested], ["Descartar", boundary_discard_requested]]:
+		var b := Button.new()
+		b.text = spec[0]
+		var sig: Signal = spec[1]
+		b.pressed.connect(func() -> void: sig.emit())
+		_preview_row.add_child(b)
+		if spec[0] == "Outro lado":
+			_side_button = b
 
 
 func show_boundary_options(paths: Array, neighbors: Dictionary, path_id: int) -> void:
@@ -144,6 +191,13 @@ func show_boundary_options(paths: Array, neighbors: Dictionary, path_id: int) ->
 
 func show_boundary_state(message: String) -> void:
 	_boundary_status.text = message
+
+
+## Mostra (ou esconde) os botões da prévia; "Outro lado" só quando há mais de um lado possível.
+func show_boundary_preview(on: bool, sides: bool) -> void:
+	_preview_row.visible = on
+	_side_button.visible = sides
+	_position_panel.call_deferred()
 
 
 func set_mode(next_mode: String) -> void:
@@ -185,6 +239,16 @@ func set_area(area_km2: float) -> void:
 func set_message(text: String) -> void:
 	_message.text = text
 	_message.visible = text != ""
+
+
+## Os outros cadastros do nível que podem ser unidos a este: [{id, name}].
+func show_merge_choices(entities: Array) -> void:
+	_merge_menu.clear()
+	_merge_ids.clear()
+	for e in entities:
+		_merge_menu.add_item(String(e.name))
+		_merge_ids.append(int(e.id))
+	_merge_menu.disabled = entities.is_empty()
 
 
 func hide_panel() -> void:
