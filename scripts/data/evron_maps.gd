@@ -40,3 +40,17 @@ static func load_layer(file: String) -> Image:
 static func height_at(img: Image, n: Vector3) -> float:
 	var p := EvronGeo.pixel(n, img.get_size())
 	return img.get_pixel(p.x, p.y).r
+
+
+## Índice espacial e trechos dos rios em texels RGBA float32 (tools/build_indexed_rivers.py).
+static func load_satellite_rivers() -> Image:
+	var file := FileAccess.open(DIR + "rivers_indexed.rgbaf", FileAccess.READ)
+	if file == null:
+		return null
+	var magic := file.get_32()
+	var rows := file.get_32()
+	const WIDTH := 1024
+	if magic != 0x32525645 or rows < 512 or rows > 8192 or file.get_length() != 8 + WIDTH * rows * 16:
+		push_warning("Índice dos rios inválido. Gere os dados com tools/build_indexed_rivers.py.")
+		return null
+	return Image.create_from_data(WIDTH, rows, false, Image.FORMAT_RGBAF, file.get_buffer(WIDTH * rows * 16))

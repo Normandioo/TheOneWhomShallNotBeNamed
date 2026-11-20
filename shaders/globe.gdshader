@@ -6,6 +6,9 @@ shader_type spatial;
 
 #include "res://shaders/relief.gdshaderinc"
 #include "res://shaders/natural.gdshaderinc"
+#include "res://shaders/experimental.gdshaderinc"
+
+uniform bool experimental = false;
 
 uniform sampler2D layer_linear : source_color, filter_linear_mipmap_anisotropic, repeat_enable; // camada atual, valores contínuos
 uniform sampler2D layer_nearest : source_color, filter_nearest, repeat_enable; // a mesma camada, para categorias
@@ -63,6 +66,12 @@ void fragment() {
 			dy = dy2;
 		}
 		vec4 nat = textureGrad(layer_linear, uv, dx, dy);
+		if (experimental) {
+			float wet;
+			col = satellite_surface(nat, n, uv, h, detail_m, wet);
+			SPECULAR = 0.14 * wet;
+			ROUGHNESS = mix(1.0, 0.36, wet);
+		} else {
 		// natural.png: RGB = terra e gelo, A = superfície sólida. O resto é água: o mar pintado ao vivo pela altitude;
 		// acima do nível do mar (lagos) a cor da água vem da imagem (doce ou salgada).
 		solid = smoothstep(0.3, 0.7, nat.a);
@@ -93,6 +102,7 @@ void fragment() {
 		float wet = max(1.0 - solid, river);
 		SPECULAR = 0.35 * wet;
 		ROUGHNESS = mix(1.0, 0.32, wet);
+		}
 		// Halo azul da atmosfera na borda do disco.
 		EMISSION = vec3(0.10, 0.22, 0.55) * pow(1.0 - clamp(dot(geo_normal, VIEW), 0.0, 1.0), 4.0);
 	}

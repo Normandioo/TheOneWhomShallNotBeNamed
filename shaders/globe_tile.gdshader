@@ -8,9 +8,13 @@ render_mode cull_disabled;
 
 #include "res://shaders/relief.gdshaderinc"
 #include "res://shaders/natural.gdshaderinc"
+#include "res://shaders/experimental.gdshaderinc"
+
+uniform bool experimental = false;
 
 uniform sampler2D tile : source_color, filter_linear_mipmap, repeat_disable;
 uniform bool natural = false;
+uniform float tile_inset = 0.0;
 
 varying vec3 obj_pos;
 
@@ -23,12 +27,17 @@ void fragment() {
 	vec3 n = normalize(obj_pos);
 	vec2 guv = globe_uv(n);
 	float h = height(guv);
-	vec4 tex = texture(tile, UV);
+	vec4 tex = texture(tile, mix(vec2(tile_inset), vec2(1.0 - tile_inset), UV));
 	vec3 col = tex.rgb;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
 	float detail_m = 0.0;
-	if (natural) {
+	if (experimental) {
+		float wet;
+		col = satellite_surface(tex, n, guv, h, detail_m, wet);
+		SPECULAR = 0.14 * wet;
+		ROUGHNESS = mix(1.0, 0.36, wet);
+	} else if (natural) {
 		float solid = smoothstep(0.3, 0.7, tex.a);
 		float lat = asin(clamp(n.y, -1.0, 1.0));
 		vec3 water = h >= 0.0 ? tex.rgb : pow(water_color(h, lat), vec3(2.2));
@@ -45,7 +54,7 @@ void fragment() {
 	}
 	ALBEDO = col;
 	NORMAL = relief_normal(n, guv, h, NORMAL, VIEW_MATRIX * MODEL_MATRIX);
-	if (natural) {
+	if (natural || experimental) {
 		NORMAL = bump(NORMAL, VERTEX, detail_m * relief * 1e-6);
 	}
 }

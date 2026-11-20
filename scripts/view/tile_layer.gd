@@ -25,6 +25,7 @@ var tile_px := 512
 var name_id := ""
 
 var drawn: Array[String] = []     # blocos na tela no último quadro (para os testes e as medições)
+var gutter := 0
 var ext := "jpg"                  # extensão dos blocos (manifest "format"): "natural" usa png, para ter alfa
 var _tiles := {}                  # chave "z/y/x" -> {"node": MeshInstance3D, "used": int}
 var _loading := {}                # chave -> id da tarefa
@@ -45,6 +46,7 @@ func open(tile_set: String, globe_radius: float, height_tex: Texture2D) -> bool:
 	levels = int(manifest["levels"])
 	tile_px = int(manifest["tile"])
 	ext = String(manifest.get("format", "jpg"))
+	gutter = int(manifest.get("gutter", 0))
 	radius = globe_radius
 	_height_tex = height_tex
 	for x in 2:
@@ -202,6 +204,8 @@ func _add_tile(key: String, img: Image) -> void:
 	mat.set_shader_parameter("tile", ImageTexture.create_from_image(img))
 	mat.set_shader_parameter("height_map", _height_tex)
 	mat.set_shader_parameter("natural", name_id == "natural")
+	mat.set_shader_parameter("experimental", name_id == "natural_satellite")
+	mat.set_shader_parameter("tile_inset", float(gutter) / (tile_px + 2 * gutter))
 	var node := MeshInstance3D.new()
 	node.mesh = _patch(_bounds(z, int(key.get_slice("/", 1)), int(key.get_slice("/", 2))), SEGMENTS[mini(z, SEGMENTS.size() - 1)])
 	node.material_override = mat

@@ -18,3 +18,22 @@ config/features=PackedStringArray("4.7", "Forward Plus")
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
+
+[shader_globals]
+
+satellite_optics={
+"type": "sampler2D",
+"value": ""
+}
+satellite_river_atlas={
+"type": "sampler2D",
+"value": ""
+}
+satellite_optics_on={
+"type": "float",
+"value": 0.0
+}
+satellite_rivers_on={
+"type": "float",
+"value": 0.0
+}

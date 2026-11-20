@@ -1,0 +1,7 @@
+# tools/: importar os mapas do Gleba (python tools/import_maps.py <mapas.zip>)
+numpy>=2.5
+pillow>=13.0
+scipy>=1.14
+# docs/calibracao/scripts/: refazer a calibração e o PDF
+matplotlib
+reportlab

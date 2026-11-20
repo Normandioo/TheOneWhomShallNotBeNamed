@@ -22,6 +22,8 @@ import numpy as np
 from PIL import Image
 
 import build_natural
+import build_experimental
+import build_indexed_rivers
 import build_natural_tiles
 import build_rivers
 import build_tiles
@@ -65,6 +67,8 @@ def main(zip_path: str) -> None:
 
     build_natural.build()  # cor natural (usa a altitude recém-gravada)
     build_rivers.build()
+    build_experimental.build()
+    build_indexed_rivers.build()
     build_tiles.build_from_zip(zip_path)  # relevo de 16K em blocos
     build_natural_tiles.build()  # cor natural de novo, em 16K, para perto da câmera
 
