@@ -1,6 +1,6 @@
 ## As camadas do mapa: nome no menu, arquivo em data/evron/ e legenda. A ordem é a do menu.
 ## "kind": "image" mostra o PNG do arquivo; "altitude" pinta a altitude calibrada no shader (globe.gdshader);
-## "natural" usa natural.png (terra e gelo, de tools/build_natural.py) e pinta a água pela profundidade.
+## "natural" usa a composição de tools/build_natural.py e pinta o mar pela batimetria.
 ## "nearest": cores que são categorias ou identificadores (sem misturar pixels vizinhos).
 ## Legenda: "items" = cores soltas; "gradient" = [offsets, cores] com 3 rótulos (esquerda, centro, direita).
 ## Os valores vêm da calibração (docs/calibracao): a confiança de cada uma está lá e no texto da legenda.
@@ -23,11 +23,12 @@ const T_IDS := "Cada cor é uma entidade diferente (identificador), não um valo
 static var LAYERS := [  # static var (não const): Color8 não é aceito em expressão constante
 	{"group": "Visão geral", "menu": "Satélite (Gleba)", "file": "Satelite.png", "kind": "image", "title": "Satélite do Gleba",
 		"text": "Imagem de cor natural exportada pelo Gleba, como veio."},
-	{"group": "Visão geral", "menu": "Satélite experimental", "file": "natural.png", "kind": "natural", "title": "Cor natural (experimental)",
-		"text": "Montada a partir dos dados: vegetação, biomas, chuva, temperatura e declividade na terra; rios pelo fluxo de água; o mar pela profundidade; gelo pelo clima. Ilustração, não uma variável medida.",
-		"items": [[Color(0.11, 0.31, 0.43), "Mar raso (plataforma)"], [Color(0.03, 0.09, 0.24), "Mar profundo"],
-		[Color(0.10, 0.24, 0.33), "Rio e lago"],
-		[Color(0.84, 0.72, 0.52), "Deserto"], [Color(0.10, 0.26, 0.08), "Floresta densa"], [Color(0.93, 0.95, 0.98), "Gelo"]]},
+	{"group": "Visão geral", "menu": "Satélite experimental", "file": "natural_satellite.png", "fallback": "natural.png",
+		"kind": "natural", "tiles": "natural_satellite", "title": "Satélite experimental",
+		"text": "Composição de vegetação, clima, solos, rochas, relevo e água. O detalhe fino é sintetizado.",
+		"items": [[Color(0.072, 0.289, 0.326), "Águas rasas quentes"], [Color(0.028, 0.087, 0.164), "Mar profundo"],
+		[Color(0.28, 0.36, 0.30), "Sedimentos costeiros"], [Color(0.10, 0.24, 0.33), "Rio e lago"],
+		[Color(0.73, 0.60, 0.44), "Deserto"], [Color(0.10, 0.22, 0.08), "Floresta densa"], [Color(0.93, 0.95, 0.98), "Gelo"]]},
 	{"group": "Relevo", "menu": "Altitude (calibrada)", "kind": "altitude", "title": "Altitude",
 		"text": "Altitude de Evron em metros, da calibração do projeto. O mar ocupa a metade esquerda da escala.",
 		"gradient": [ALTITUDE_OFFSETS, ALTITUDE_COLORS], "labels": ["−13.500 m", "0 m", "+9.103 m"]},

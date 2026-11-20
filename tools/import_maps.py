@@ -4,7 +4,8 @@ Saída em data/evron/ (fora do git; o zip original é a fonte e não é alterado
   - os PNGs da raiz do zip, como estão (camadas de exibição);
   - height_4096x2048.f32 = float32 little-endian (Image.FORMAT_RF do Godot), altitude em metros,
     convertida de "Elevation GrayScale.png" pela calibração de docs/calibracao/calibracao_evron.json;
-  - natural.png = cor natural da terra e do gelo (tools/build_natural.py);
+  - natural_satellite.png, natural_water.png e tiles/natural_satellite/ entram na composição experimental;
+  - rivers_indexed.rgbaf contém os trechos dos rios renderizados no satélite;
   - tiles/relevo/ = o relevo de 16K (resized/relevo.png) em pirâmide de blocos (tools/build_tiles.py).
 Os .xcf ficam de fora (decisão do autor).
 
@@ -19,6 +20,7 @@ import numpy as np
 from PIL import Image
 
 import build_natural
+import build_rivers
 import build_temperature
 import build_tiles
 
@@ -60,6 +62,7 @@ def main(zip_path: str) -> None:
     assert (h[land] < 0).sum() == 0, "terra abaixo do nível do mar: calibração errada"
 
     build_natural.build()  # cor natural (usa a altitude recém-gravada)
+    build_rivers.build()
     build_temperature.build()  # temperatura de janeiro e julho em °C, para o ciclo sazonal
     build_tiles.build_from_zip(zip_path)  # relevo de 16K em blocos
 

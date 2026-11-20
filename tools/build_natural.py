@@ -1,57 +1,154 @@
-"""Cor natural de Evron (no estilo das imagens de satélite da NASA), montada a partir dos dados do Gleba.
+"""Satélite experimental de Evron em cor natural.
 
-A "Satelite.png" do Gleba tem mar quase preto e manchado e terra num verde só. Aqui a cor sai do que os mapas medem:
-  - terra = mistura de chão nu, gramíneas, arbustos e árvores pelas frações de "Vegetação.png";
-    o tom das árvores vem do bioma (tropical, temperada, conífera), o da grama da chuva e o do chão nu da temperatura;
-  - gelo onde o clima é EF (Köppen) ou o bioma é geleira, e gelo marinho onde o mês mais quente fica abaixo de -2 °C;
-  - rios pelo fluxo de "Waterflow.png": os grandes viram água no alfa (curvas lisas no shader), com mata ciliar no seco.
-O mar NÃO é pintado aqui: o alfa marca terra e gelo (1) e água aberta (0), e o shader pinta a água pela profundidade
-da altitude ao vivo (assim uma edição de terreno muda a cor do mar).
+As proporções de vegetação e a cor de solos e rochas seguem os mapas do Gleba.
+Chuva, temperatura, umidade, permeabilidade, aquíferos e relevo modulam o
+albedo local. Lagos, geleiras e costa seguem as máscaras geográficas. O
+ruído esférico de semente fixa só acrescenta textura entre as amostras.
 
-Saída: data/evron/natural.png (RGBA, 4096x2048). Rodado por import_maps.py; sozinho: python tools/build_natural.py
+Gera uma textura RGBA de 8192 × 4096 com terra e gelo no alfa, uma textura
+com máscara de lagos e estimativas ópticas e a pirâmide de blocos PNG.
+O motor pinta o mar aberto pela batimetria em tempo real.
 """
 import os
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
+from scipy import ndimage
 
-D = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "evron")  # de qualquer pasta
+D = Path(__file__).resolve().parents[1] / "data" / "evron"
+IMAGE = "natural_satellite.png"
+OPTICS = "natural_water.png"
+SW, SH = 4096, 2048     # grade dos mapas do Gleba
+W, H = 8192, 4096       # saída
+BAND = 64               # linhas de saída por vez: limita a memória da interpolação
+SEED = 20261117
+RADIUS_KM = 8282.3      # EvronGeo.RADIUS_KM
+WARP_PX = 1.25          # varia o albedo dentro das massas de terra
 
 VIRIDIS = np.array([(0.267, 0.005, 0.329), (0.279, 0.175, 0.483), (0.230, 0.322, 0.546), (0.173, 0.449, 0.558), (0.128, 0.567, 0.551),
                     (0.158, 0.684, 0.502), (0.369, 0.789, 0.383), (0.678, 0.864, 0.190), (0.993, 0.906, 0.144)])
 MAGMA = np.array([(0.001, 0.000, 0.014), (0.113, 0.065, 0.277), (0.317, 0.072, 0.485), (0.513, 0.148, 0.508), (0.716, 0.215, 0.475),
                   (0.904, 0.320, 0.388), (0.987, 0.536, 0.382), (0.997, 0.770, 0.535), (0.987, 0.991, 0.750)])
 
-# Cores de referência (sRGB 0..1), escolhidas pelo aspecto de imagens de satélite em cor real.
-TREE_TROPICAL = (0.10, 0.26, 0.08)
-TREE_TEMPERATE = (0.17, 0.31, 0.12)
-TREE_CONIFER = (0.10, 0.20, 0.12)
-SHRUB = (0.42, 0.40, 0.26)
-GRASS_WET = (0.36, 0.47, 0.20)
-GRASS_DRY = (0.66, 0.60, 0.38)
-BARE_HOT = (0.84, 0.72, 0.52)
-BARE_MILD = (0.62, 0.55, 0.43)
-BARE_COLD = (0.50, 0.48, 0.45)
-ICE = (0.93, 0.95, 0.98)
-RIVER = (0.09, 0.22, 0.32)
-RIPARIAN = (0.22, 0.38, 0.15)  # mata ciliar: o verde que acompanha o rio no seco (o Nilo visto do espaço)
+# Cores de referência (sRGB 0..1), pelo aspecto de imagens de satélite em cor real (Blue Marble).
+TREE = {  # dossel por bioma
+    "wet_jungle": (0.07, 0.20, 0.06), "dry_jungle": (0.19, 0.27, 0.09), "temperate": (0.14, 0.27, 0.09),
+    "conifer": (0.07, 0.14, 0.08), "mediterranean": (0.24, 0.28, 0.14), "montane": (0.15, 0.23, 0.11),
+}
+DRY_CANOPY = (0.30, 0.31, 0.15)  # floresta seca na estação sem chuva (folhas caídas)
+SHRUB_WET, SHRUB_DRY = (0.26, 0.32, 0.16), (0.46, 0.41, 0.28)
+GRASS_WET, GRASS_DRY = (0.30, 0.42, 0.15), (0.67, 0.60, 0.38)
+GRASS_TUNDRA = (0.43, 0.42, 0.31)
+SAND, SILT, CLAY = (0.86, 0.75, 0.55), (0.67, 0.59, 0.47), (0.58, 0.40, 0.28)
+LAVA = (0.12, 0.11, 0.11)
+SALT = (0.90, 0.88, 0.83)
+SNOW = (0.93, 0.95, 0.98)
+PACK_ICE = (0.86, 0.89, 0.93)
+RIPARIAN = (0.20, 0.34, 0.12)  # mata ciliar: o verde que acompanha o rio no seco (o Nilo visto do espaço)
+LAKE_FRESH, LAKE_SALT = (0.07, 0.19, 0.25), (0.33, 0.52, 0.50)
 
+# Rochas do Gleba: cor no mapa "Bedrock.png" -> real_color (paletas do Gleba 0.3.5, common/mods/*/data).
+# Conglomerado e brecha não têm real_color no Gleba: tons de cascalho escolhidos aqui.
+ROCKS = {
+    (200, 190, 15): (240, 224, 192), (190, 155, 165): (175, 155, 135), (180, 124, 135): (150, 130, 120),
+    (166, 131, 17): (240, 208, 192), (163, 78, 30): (128, 96, 64), (160, 40, 46): (160, 128, 64),
+    (239, 228, 176): (160, 160, 145), (195, 220, 195): (230, 230, 210), (82, 242, 77): (220, 210, 230),
+    (34, 177, 76): (230, 210, 210), (30, 147, 56): (210, 210, 215), (255, 235, 235): (200, 200, 200),
+    (190, 100, 220): (150, 140, 125), (170, 80, 200): (150, 140, 145), (150, 60, 180): (150, 150, 180),
+    (130, 40, 160): (70, 60, 80), (110, 20, 140): (100, 220, 110), (15, 21, 239): (135, 140, 200),
+    (13, 20, 211): (124, 130, 150), (11, 19, 190): (40, 40, 50), (10, 18, 165): (30, 30, 40),
+    (6, 15, 140): (200, 200, 170), (200, 200, 250): (240, 230, 200), (250, 200, 200): (230, 220, 200),
+    (40, 145, 145): (180, 210, 170), (20, 223, 200): (160, 190, 155), (56, 56, 56): (100, 110, 100),
+    (85, 85, 85): (140, 140, 165), (100, 100, 100): (180, 180, 200), (120, 120, 120): (96, 112, 96),
+    (143, 143, 143): (76, 92, 76), (0, 50, 100): (76, 72, 120), (0, 50, 50): (206, 142, 120),
+    (0, 100, 0): (75, 150, 100), (0, 50, 0): (140, 200, 125), (0, 75, 0): (70, 140, 90), (0, 25, 0): (70, 80, 110),
+}
+HALITE = (255, 235, 235)
+LAND_DARKEN = 0.83
+LAND_SATURATE = 1.04
+GROUPS = ["wet_jungle", "dry_jungle", "temperate", "conifer", "mediterranean", "montane",
+          "tundra", "desert", "savanna", "steppe", "glacier"]
+BIOMES = {  # cor em "BiomasGleba.png" -> grupo de tom do dossel ou de cobertura
+    (68, 120, 33): "wet_jungle", (212, 170, 0): "dry_jungle", (113, 200, 55): "temperate",
+    (0, 85, 0): "conifer", (44, 160, 90): "conifer", (200, 113, 55): "mediterranean", (198, 175, 233): "montane",
+    (135, 222, 205): "tundra", (255, 246, 213): "desert", (255, 221, 85): "savanna", (205, 222, 135): "steppe",
+    (236, 236, 236): "glacier",
+}
+VOLCANO_ACTIVE = [(0, 250, 50), (255, 255, 255), (250, 0, 0), (250, 150, 0)]  # Vulcanismo.png (calibração: hipótese)
+LIP = (153, 102, 153)  # Províncias geológicas: grande província ígnea (derrames de basalto)
+
+
+# --- leitura -------------------------------------------------------------------------------------------------------
 
 def load(name):
-    return np.array(Image.open(os.path.join(D, name)).convert("RGB"))
+    with Image.open(D / name) as image:
+        if image.size != (SW, SH):
+            raise ValueError(f"{name}: esperava {SW}x{SH}, veio {image.size}")
+        return np.array(image.convert("RGB"))
 
 
 def ramp_t(rgb, stops):
     """Posição 0..1 de cada cor numa escala de cores (9 pontos interpolados para 256), pela cor mais próxima."""
     x = np.linspace(0, 1, 256)
     lut = np.stack([np.interp(x, np.linspace(0, 1, 9), stops[:, c]) for c in range(3)], 1) * 255
-    u, inv = np.unique(rgb.reshape(-1, 3), axis=0, return_inverse=True)
-    t = ((u[:, None, :].astype(np.float32) - lut[None]) ** 2).sum(-1).argmin(1) / 255.0
-    return t[inv.ravel()].reshape(rgb.shape[:2])
+    keys, inv = np.unique(rgb_keys(rgb), return_inverse=True)
+    colors = np.stack([keys >> 16, (keys >> 8) & 255, keys & 255], -1).astype(np.float32)
+    t = ((colors[:, None, :] - lut[None]) ** 2).sum(-1).argmin(1) / 255.0
+    return t[inv.ravel()].reshape(rgb.shape[:2]).astype(np.float32)
 
+
+def is_color(rgb, col):
+    return (rgb == col).all(-1)
+
+
+def relative(name):
+    return ramp_t(load(name), VIRIDIS)
+
+
+def gaussian(a, sigma):
+    return ndimage.gaussian_filter(a.astype(np.float32), sigma, mode=("nearest", "wrap"))
+
+
+def plate_edges(rgb):
+    edge = np.any(rgb != np.roll(rgb, 1, axis=1), axis=-1)
+    edge[1:] |= np.any(rgb[1:] != rgb[:-1], axis=-1)
+    return edge
+
+
+def water_fields(land, lake, h, river, texture, t_mean):
+    """Canais de óptica com sedimentos, temperatura relativa, lagos e proximidade da costa."""
+    sea = ~(land | lake)
+    coast = sea & (gaussian(land, 0.9) > 0.04)
+    suspended = gaussian(river * (0.56 + 0.44 * texture[..., 1]), 1.6)
+    # Usa o regime de vento costeiro como ajuste leve do espalhamento, sem desenhar faixas de vento.
+    wind = load("Ventos.png").astype(np.float32) / 255
+    offshore = np.clip((wind[..., 0] - wind[..., 2] - 0.22) * 1.8, 0, 1)
+    plume = np.clip(gaussian(coast * suspended * (1 + 0.35 * offshore), 2.6) * 20, 0, 1)
+    plume *= 1 - smooth(20, 650, -h)
+    warm = smooth(11, 28, t_mean)
+    margin = 40  # a influência costeira já tende a zero antes da margem
+    marine = np.pad(sea, ((0, 0), (margin, margin)), mode="wrap")
+    coast_distance = ndimage.distance_transform_edt(marine)[:, margin:-margin].astype(np.float32)
+    near_shore = np.exp(-coast_distance / 5.0)
+    return np.stack([plume, warm, gaussian(lake, 0.55), near_shore], -1)
+
+
+def lookup(rgb, table, default):
+    """Troca cada cor de `rgb` pelo valor de `table` (cor -> tupla); cores fora da tabela recebem `default`."""
+    u, inv = np.unique(rgb_keys(rgb), return_inverse=True)
+    vals = np.array([table.get((k >> 16, (k >> 8) & 255, k & 255), default) for k in u.tolist()], np.float32)
+    return vals[inv.ravel()].reshape(rgb.shape[:2] + vals.shape[1:])
+
+
+def rgb_keys(rgb):
+    return (rgb[..., 0].astype(np.int32) << 16) | (rgb[..., 1].astype(np.int32) << 8) | rgb[..., 2]
+
+
+# --- filtros (longitude dá a volta, latitude não) -------------------------------------------------------------------
 
 def blur(a, r):
-    """Média móvel 2x (quase gaussiana) de raio r; a longitude dá a volta, a latitude não."""
+    """Média móvel 2x (quase gaussiana) de raio r."""
     a = a.astype(np.float32)
     for _ in range(2):
         a = sum(np.roll(a, k, 1) for k in range(-r, r + 1)) / (2 * r + 1)
@@ -60,105 +157,434 @@ def blur(a, r):
     return a
 
 
-def mix(w, col):
-    return w[..., None] * np.array(col, np.float32)
+def fill(a, mask):
+    """Estende `a` (válido só onde mask) para fora da máscara, por pirâmide de médias ponderadas (push-pull).
+    Os dados da terra entram no mar: a amostragem bilinear e o deslocamento na costa não trazem valores do mar."""
+    w = mask.astype(np.float32)
+    wa = a * (w[..., None] if a.ndim == 3 else w)
+    levels = []
+    while min(w.shape[:2]) > 4:
+        levels.append((wa, w))
+        wa = (wa[0::2, 0::2] + wa[1::2, 0::2] + wa[0::2, 1::2] + wa[1::2, 1::2]) / 4
+        w = (w[0::2, 0::2] + w[1::2, 0::2] + w[0::2, 1::2] + w[1::2, 1::2]) / 4
+    res = wa / np.maximum(w, 1e-6)[(...,) + (None,) * (a.ndim - 2)]
+    for la, lw in reversed(levels):
+        up = res.repeat(2, 0).repeat(2, 1)
+        k = lw[(...,) + (None,) * (a.ndim - 2)]
+        res = np.where(k > 0, la / np.maximum(k, 1e-6), 0) * np.minimum(k * 4, 1) + up * (1 - np.minimum(k * 4, 1))
+    return res.astype(np.float32)
 
 
-def is_color(rgb, col):
-    return (rgb == col).all(-1)
+def sample(F, sx, sy):
+    """Bilinear de F (h, w, C) nas coordenadas de pixel (sx, sy) (centro do pixel 0 = 0,0)."""
+    h, w = F.shape[:2]
+    x0 = np.floor(sx).astype(np.int32)
+    y0 = np.floor(sy).astype(np.int32)
+    fx = (sx - x0).astype(np.float32)[..., None]
+    fy = (sy - y0).astype(np.float32)[..., None]
+    x0 %= w
+    x1 = (x0 + 1) % w
+    y1 = np.clip(y0 + 1, 0, h - 1)
+    y0 = np.clip(y0, 0, h - 1)
+    return (F[y0, x0] * (1 - fx) + F[y0, x1] * fx) * (1 - fy) + (F[y1, x0] * (1 - fx) + F[y1, x1] * fx) * fy
 
 
-def build():
+# --- ruído na esfera -----------------------------------------------------------------------------------------------
+
+def _hash(ix, iy, iz, seed):
+    h = (ix * np.uint32(0x8DA6B343)) ^ (iy * np.uint32(0xD8163841)) ^ (iz * np.uint32(0xCB1AB31F)) ^ np.uint32(seed)
+    h ^= h >> np.uint32(15)
+    h *= np.uint32(0x2C1B3C6D)
+    h ^= h >> np.uint32(12)
+    h *= np.uint32(0x297A2D39)
+    h ^= h >> np.uint32(15)
+    return h.astype(np.float32) * np.float32(1 / 4294967295.0)
+
+
+def vnoise(p, seed):
+    """Ruído de valor 3D (-1..1), contínuo, com hash inteiro: estável entre execuções e máquinas."""
+    i = np.floor(p)
+    f = (p - i).astype(np.float32)
+    i = i.astype(np.int64).astype(np.uint32)  # negativos dão a volta em 2^32: o hash continua bem definido
+    u = f * f * (3 - 2 * f)
+    one = np.uint32(1)
+    out = np.zeros(p.shape[:-1], np.float32)
+    for dx in (0, 1):
+        wx = u[..., 0] if dx else 1 - u[..., 0]
+        for dy in (0, 1):
+            wy = u[..., 1] if dy else 1 - u[..., 1]
+            for dz in (0, 1):
+                wz = u[..., 2] if dz else 1 - u[..., 2]
+                out += wx * wy * wz * _hash(i[..., 0] + one * dx, i[..., 1] + one * dy, i[..., 2] + one * dz, seed)
+    return out * 2 - 1
+
+
+def fbm(dirs, freq, octaves, seed):
+    """Soma fractal (-1..1). freq em ciclos por raio: a célula tem 8.282 km / freq."""
+    total, amp, norm = 0, 1.0, 0.0
+    for o in range(octaves):
+        total = total + amp * vnoise(dirs * np.float32(freq * 2 ** o), seed + 101 * o)
+        norm += amp
+        amp *= 0.5
+    return total / norm
+
+
+def sphere_dirs(rows, w, h):
+    """Direções (convenção de EvronGeo) dos centros dos pixels das linhas `rows` de um mapa w x h."""
+    lat = np.deg2rad(90 - (rows + 0.5) * 180 / h).astype(np.float32)[:, None]
+    lon = np.deg2rad((np.arange(w) + 0.5) * 360 / w - 180).astype(np.float32)[None, :]
+    return np.stack(np.broadcast_arrays(np.cos(lat) * np.sin(lon), np.sin(lat), np.cos(lat) * np.cos(lon)), -1)
+
+
+def noise_grid(w, h, freq, octaves, seed):
+    out = np.empty((h, w), np.float32)
+    for y in range(0, h, 256):
+        out[y:y + 256] = fbm(sphere_dirs(np.arange(y, min(y + 256, h)), w, h), freq, octaves, seed)
+    return out
+
+
+# --- etapa 1: campos na grade do Gleba (4096x2048) ----------------------------------------------------------------
+
+def sea_ice_fields(land, t_max):
+    """Gelo marinho: (graus abaixo do limiar, em °C; > 0 = gelo) e o efeito das costas (°C a somar).
+
+    A extensão vem do próprio Gleba: o gelo branco sobre o mar da "Satelite.png" (borda reta perto de 76°, porque a
+    temperatura do mar do Gleba quase não varia ao longo de uma latitude). O limiar de temperatura de cada hemisfério
+    é o que dá a mesma área de gelo; assim a extensão média fica a do Gleba.
+    Costas (regra dos giros subpolares da Terra, nos dois hemisférios): o mar junto à costa leste de um continente
+    recebe corrente fria vinda do polo (Labrador, Oyashio) e tem mais gelo; junto à costa oeste, corrente quente
+    (Noruega, Alasca) e menos gelo. Colado à terra entra o gelo costeiro (preso à costa)."""
+    sea = ~land
+    gleba = (load("Satelite.png").min(-1) > 200) & sea
+    lat = 90 - (np.arange(SH) + 0.5) * 180 / SH
+    thr = np.zeros(SH, np.float32)
+    for hemi in (lat > 0, lat < 0):
+        m = sea & hemi[:, None]
+        frac = gleba[m].mean()
+        thr[hemi] = np.quantile(t_max[m], frac)  # a fração mais fria do mar desse hemisfério vira gelo
+    ice_t = thr[:, None] - t_max
+
+    # Distância (km) até a terra a oeste e a leste ao longo de cada paralelo (a longitude dá a volta).
+    x = np.arange(SW)
+    big = 10 ** 6
+    def last_land(rows):  # índice da última terra à esquerda de cada pixel (em 3 voltas, para atravessar 180°)
+        idx = np.where(np.tile(rows, 3), np.tile(x, 3)[None] + np.repeat(np.arange(3), SW)[None] * SW, -big)
+        return np.maximum.accumulate(idx, 1)[:, SW:2 * SW] - SW
+    km_px = (2 * np.pi * RADIUS_KM / SW) * np.maximum(np.cos(np.deg2rad(lat)), 0.02)[:, None]
+    d_w = (x[None] - last_land(land)) * km_px
+    d_e = (x[None] - last_land(land[:, ::-1]))[:, ::-1] * km_px  # o mesmo, com o paralelo espelhado
+    subpolar = np.clip((np.abs(lat) - 45) / 15, 0, 1)[:, None]
+    # °C; perto da borda a temperatura cai ~1,3 °C por grau de latitude: 6 °C empurram a borda ~4° (Labrador, Noruega).
+    coast = 6.0 * (np.exp(-d_w / 800) - np.exp(-d_e / 800)) + 2.0 * np.exp(-np.minimum(d_w, d_e) / 150)
+    ice_coast = blur(np.where(sea, coast * subpolar, 0), 3)
+    return ice_t.astype(np.float32), ice_coast.astype(np.float32)
+
+
+def fields():
+    """Tudo o que os mapas dizem, por pixel do Gleba. F = campos da terra (estendidos ao mar), G = geografia fixa."""
     land = load("Landmask.png")[..., 0] == 80
-    veg = load("Vegetação.png").astype(np.float32) / 255.0
+    wb = load("Waterbodies.png")
+    lake = ~is_color(wb, (30, 30, 30)) & ~is_color(wb, (80, 80, 80))  # cada lago tem uma cor (identificador)
     biome = load("BiomasGleba.png")
     koppen = load("Clima.png")
     t_jan = -20 + 60 * ramp_t(load("Temperatura Janeiro.png"), MAGMA)
     t_jul = -20 + 60 * ramp_t(load("Temperatura Julho.png"), MAGMA)
-    rain = 20 + 298 * ramp_t(load("Average Rainfall.png"), VIRIDIS)  # mm/mês (faixa escura vira ~20: só seco)
+    t_mean = (t_jan + t_jul) * 0.5
+    t_max = np.maximum(t_jan, t_jul)
+    rain = 20 + 298 * relative("Average Rainfall.png")
+    rain_min = 20 + 298 * np.minimum(relative("January Rainfall.png"), relative("July Rainfall.png"))
+    hum = 0.56 * relative("Umidade Média.png") + 0.22 * (relative("Umidade Janeiro.png") + relative("Umidade Julho.png"))
+    leeward = gaussian(relative("Rain shadows.png") * land, 1.5)
 
     # Frações de vegetação: R arbustos, G gramíneas, B árvores; o resto é chão nu. Suavizadas: o Gleba é em hexágonos.
+    veg = load("Vegetação.png").astype(np.float32) / 255.0
     shrub, grass, trees = (blur(veg[..., c], 1) for c in range(3))
-    total = shrub + grass + trees
-    k = np.where(total > 1.0, 1.0 / np.maximum(total, 1e-6), 1.0)
+    k = np.minimum(1.0, 1.0 / np.maximum(shrub + grass + trees, 1e-6))
     shrub, grass, trees = shrub * k, grass * k, trees * k
-    bare = 1.0 - shrub - grass - trees
 
-    # Tons que dependem do lugar, suavizados para não mostrar as bordas das células.
-    conifer = blur(is_color(biome, (44, 160, 90)) | is_color(biome, (0, 85, 0)), 4)
-    tropical = blur(is_color(biome, (212, 170, 0)) | is_color(biome, (68, 120, 33)), 4)
-    temperate = np.clip(1.0 - conifer - tropical, 0, 1)
-    tree_col = mix(conifer, TREE_CONIFER) + mix(tropical, TREE_TROPICAL) + mix(temperate, TREE_TEMPERATE)
-    wet = blur(np.clip((rain - 30) / 90, 0, 1), 2)
-    grass_col = mix(wet, GRASS_WET) + mix(1 - wet, GRASS_DRY)
-    t_mean = blur((t_jan + t_jul) / 2, 2)
-    hot = np.clip((t_mean - 12) / 12, 0, 1)
-    cold = np.clip((8 - t_mean) / 12, 0, 1)
-    bare_col = mix(hot, BARE_HOT) + mix(cold, BARE_COLD) + mix(np.clip(1 - hot - cold, 0, 1), BARE_MILD)
+    bw = [blur(sum(is_color(biome, c) for c, g in BIOMES.items() if g == n), 3) for n in GROUPS]
 
-    rgb = trees[..., None] * tree_col + shrub[..., None] * np.array(SHRUB) \
-        + grass[..., None] * grass_col + bare[..., None] * bare_col
+    # Solo: textura (R areia, G silte, B argila), espessura e riqueza (relativas).
+    tex = load("Soil Texture.png").astype(np.float32)
+    tex /= np.maximum(tex.sum(-1, keepdims=True), 1)
+    # Solo e rocha mudam de célula em célula: suavizados mais que a vegetação, senão os hexágonos aparecem no chão nu.
+    tex = blur(tex, 2)
+    depth = blur(relative("Soil Depth.png"), 2)
+    rich = blur(relative("Soil Richness.png"), 2)
+    permeability = relative("Soil Permeability.png")
+    has_aquifer = land & ~is_color(load("Aquiferos.png"), (80, 80, 80))
+    groundwater = gaussian(has_aquifer * relative("Aquifer Thickness.png") *
+                           (1 - relative("Profundidade de Aquíferos.png")) ** 3 * permeability, 1.3)
 
-    # Encostas íngremes mostram rocha; sem isso a terra fica lisa como pintura. Declividade da altitude calibrada
-    # (pixel de ~12,7 km achata as encostas: 3° já é íngreme nesta escala).
-    rng = np.random.default_rng(7)  # semente fixa: a importação dá sempre a mesma imagem
-    # O mar conta como 0 m: senão o degrau da costa até o fundo vira "encosta" e toda costa ganha uma borda de rocha.
-    h = np.maximum(np.fromfile(os.path.join(D, "height_4096x2048.f32"), "<f4").reshape(2048, 4096), 0).astype(np.float32)
-    lat = np.deg2rad(90 - (np.arange(2048) + 0.5) * 180 / 2048)[:, None]
-    dy = 8282.3e3 * np.pi / 2048
-    dx = np.maximum(np.cos(lat), 0.05) * dy * 2
+    # Rocha: real_color dessaturada (a paleta do jogo tem rochas verdes e azuis vivas) e com brilho comprimido para
+    # a faixa de albedo de rocha exposta vista do alto.
+    bed = load("Bedrock.png")
+    rock = lookup(bed, ROCKS, (128, 124, 118)) / 255.0
+    lum = (rock @ np.array([0.30, 0.59, 0.11], np.float32))[..., None]
+    rock = lum + 0.35 * (rock - lum)
+    rock *= (0.16 + 0.46 * lum) / np.maximum(lum, 1e-3)
+    rock = blur(rock, 2)
+    halite = is_color(bed, HALITE)
+
+    # Declividade da altitude calibrada (pixel de ~9,77 km achata as encostas: 3° já é íngreme nesta escala).
+    # O mar conta como 0 m: senão o degrau da costa até o fundo vira "encosta".
+    hraw = np.fromfile(os.path.join(D, "height_4096x2048.f32"), "<f4").reshape(SH, SW)
+    h = np.maximum(hraw, 0)
+    lat = np.deg2rad(90 - (np.arange(SH) + 0.5) * 180 / SH)[:, None]
+    dy = RADIUS_KM * 1e3 * np.pi / SH
+    dx = np.maximum(np.cos(lat), 0.05) * dy
     gx = (np.roll(h, -1, 1) - np.roll(h, 1, 1)) / (2 * dx)
-    gy = (np.pad(h, ((1, 1), (0, 0)), mode="edge")[2:] - np.pad(h, ((1, 1), (0, 0)), mode="edge")[:-2]) / (2 * dy)
-    slope = np.degrees(np.arctan(np.hypot(gx, gy)))
-    rock = np.clip((slope - 1.0) / 3.0, 0, 0.8) * land
-    rgb = rgb * (1 - rock[..., None]) + mix(rock, BARE_COLD)
-    # Variação leve de brilho (±3%, manchas de ~5 px), para a terra não parecer pintada a pincel largo.
-    grain = blur(rng.standard_normal(h.shape), 2)
-    rgb *= 1 + 0.03 * (grain / grain.std())[..., None]
+    hp = np.pad(h, ((1, 1), (0, 0)), mode="edge")
+    gy = (hp[2:] - hp[:-2]) / (2 * dy)
+    slope = np.degrees(np.arctan(np.hypot(gx, gy))).astype(np.float32)
+    slope_hint = np.clip((relative("Slope.png") / 0.13) ** 2, 0, 9)
+    slope = (0.88 * slope + 0.12 * slope_hint).astype(np.float32)
+    orogeny = relative("Orogeny Strenght.png")
+    margins = plate_edges(load("Placas tectonicas.png")) | plate_edges(load("Microplacas.png"))
+    margins |= land & ~is_color(load("Plate Boundaries.png"), (80, 80, 80))
+    orogeny *= 0.93 + 0.14 * np.clip(gaussian(margins & land, 2) * 5, 0, 1)
+
+    volcano = load("Vulcanismo.png")
+    volc = blur(sum(is_color(volcano, c) for c in VOLCANO_ACTIVE) > 0, 2) * 3
+    provinces = load("Provincias geologicas.png")
+    lip = blur(is_color(provinces, LIP), 2)
+
+    # Salinas: o fundo (abaixo da média em volta) das bacias endorreicas secas, e a halita exposta.
+    # Bacias endorreicas = os tons de azul-escuro de "Bacias Endorreicas.png" em terra (guia do Gleba).
+    endo_rgb = load("Bacias Endorreicas.png").astype(np.int32)
+    endo = (endo_rgb[..., 2] >= 75) & (endo_rgb[..., 2] > endo_rgb[..., 0] + 20)
+    arid = np.clip((35 - rain) / 15, 0, 1)
+    low = np.clip((blur(h, 4) - h - 20) / 80, 0, 1)
+    playa = np.clip(blur(land * endo * arid * low, 1) * 2.5 + halite * 0.8, 0, 1)
+
+    land_ice = (is_color(koppen, (104, 104, 104)) | is_color(biome, (236, 236, 236))).astype(np.float32)
 
     # Rios pelo fluxo de água do Gleba (viridis, já em escala que realça a rede): os grandes nítidos, os afluentes
-    # mais fracos. Os vales (fluxo médio) escurecem um pouco, e no seco o rio leva uma faixa verde.
-    flow = ramp_t(load("Waterflow.png"), VIRIDIS) * land
+    # mais fracos. Os vales (fluxo médio) escurecem um pouco.
+    flow = relative("Waterflow.png") * land
+    network = is_color(load("River.png"), (254, 231, 36)) & land
     river = np.clip((flow - 0.68) / 0.20, 0, 1) ** 1.5  # t > 0,68 ≈ 4% da terra; > 0,88 ≈ 1% (rio cheio)
-    rgb *= 1 - 0.10 * np.clip((flow - 0.35) / 0.35, 0, 1)[..., None]
-    riparian = np.clip(blur(river, 3) * 4, 0, 1) * (1 - wet) * 0.7
-    rgb = rgb * (1 - riparian[..., None]) + mix(riparian, RIPARIAN)
-    # Afluentes fracos ficam só como um tom mais escuro; os rios grandes viram água no alfa (mais abaixo).
-    rgb = rgb * (1 - 0.5 * river[..., None]) + mix(0.5 * river, RIVER)
+    valley = np.clip((flow - 0.35) / 0.35, 0, 1) * (0.78 + 0.22 * network)
+    riparian = np.clip(blur(river, 1) * 3 + 0.26 * groundwater * blur(network, 1), 0, 1)
 
-    # Gelo: calota (EF) e geleiras em terra; gelo marinho onde nem o mês mais quente passa de -2 °C, com a borda
-    # quebrada por ruído largo (o mapa de temperatura do Gleba é quase uma faixa reta perto dos polos).
-    land_ice_mask = (is_color(koppen, (104, 104, 104)) | is_color(biome, (236, 236, 236))) & land
-    wobble = blur(rng.standard_normal(h.shape), 12)
-    wobble = 1.5 * wobble / wobble.std()  # ±1,5 °C: mais que isso espalha blocos de gelo até latitudes médias
-    sea_ice_mask = (np.maximum(t_jan, t_jul) + wobble < -2) & ~land
-    # Uma máscara só, suavizada junto: borrar terra e mar separados deixa ~50% de gelo na junta (uma linha).
-    ice = np.clip(blur(land_ice_mask | sea_ice_mask, 2), 0, 1)
-    rgb = rgb * (1 - ice[..., None]) + mix(ice, ICE)
+    # Lagos: salgados nas bacias secas (sem saída, a água evapora e o sal fica).
+    saline = gaussian(arid * (0.30 + 0.70 * gaussian(endo, 3)), 2) * lake
+    optics = water_fields(land, lake, hraw, river, tex, t_mean)
 
-    # A água leva a cor da terra vizinha: a mistura do alfa na costa não pode trazer a cor de "chão nu" da água.
-    solid = (land | sea_ice_mask).astype(np.float32)
-    near = blur(rgb * solid[..., None], 2) / np.maximum(blur(solid, 2), 1e-6)[..., None]
-    rgb = np.where(solid[..., None] > 0, rgb, near)
+    print("ruído na grade do Gleba...")
+    n_low = noise_grid(SW, SH, 28, 4, SEED + 1)     # tons regionais (células de ~300 km)
+    n_mid = noise_grid(SW, SH, 160, 3, SEED + 2)    # manchas (~50 km)
+    n_mid2 = noise_grid(SW, SH, 160, 3, SEED + 3)
+    n_xlow = noise_grid(SW, SH, 5, 3, SEED + 7)     # meandros da borda do gelo marinho (~1.600 km)
+    ice_t, ice_coast = sea_ice_fields(land | lake, t_max)
+    warp = np.stack([noise_grid(SW, SH, 200, 2, SEED + 4), noise_grid(SW, SH, 200, 2, SEED + 5)], -1)
 
-    # Alfa: superfície sólida (terra ou gelo) = 1, água aberta = 0. Suavizado junto (uma máscara só), senão a junta
-    # entre terra e gelo marinho fica meio transparente e aparece como linha.
-    # Os rios grandes entram como água: o shader corta o alfa em 0,5 com suavização, e a linha borrada de 1 pixel
-    # vira um rio de curvas lisas (em vez de degraus de 12,7 km), mais largo onde o fluxo é maior.
-    river_water = np.clip(blur(river, 1) * 1.6, 0, 1) * (1 - ice)
-    alpha = np.clip(blur(land | sea_ice_mask, 1), 0, 1) * (1 - river_water)
-    out = np.dstack([np.clip(rgb, 0, 1), alpha]) * 255
-    Image.fromarray(out.round().astype(np.uint8), "RGBA").save(os.path.join(D, "natural.png"))
+    landf = [shrub, grass, trees, *bw, tex[..., 0], tex[..., 1], tex[..., 2], depth, rich, *np.moveaxis(rock, -1, 0),
+             slope, orogeny, volc, lip, playa, land_ice, valley, riparian, groundwater, leeward]
+    raw = [t_mean, t_max, rain, rain_min, hum, n_low, n_mid, n_mid2,
+           n_xlow, ice_t, ice_coast]
+    F = np.empty((SH, SW, len(landf) + len(raw)), np.float32)
+    for offset in range(0, len(landf), 4):
+        batch = landf[offset:offset + 4]
+        F[..., offset:offset + len(batch)] = fill(np.stack(batch, -1), land)
+    for offset, field in enumerate(raw, len(landf)):
+        F[..., offset] = field
+    keys = ["shrub", "grass", "trees", *GROUPS, "sand", "silt", "clay", "depth", "rich", "rock_r", "rock_g", "rock_b",
+            "slope", "orogeny", "volc", "lip", "playa", "land_ice", "valley", "riparian", "groundwater", "leeward",
+            "t_mean", "t_max", "rain", "rain_min", "hum", "n_low", "n_mid", "n_mid2", "n_xlow", "ice_t", "ice_coast"]
+    # A costa arredonda entre as amostras, preservando o lado de cada célula-fonte e a volta na longitude.
+    continent = land | lake
+    coast = gaussian(continent, 0.8)
+    land_soft = np.where(continent, np.maximum(coast, 0.55), np.minimum(coast, 0.45))
+    G = np.stack([land_soft, optics[..., 2], gaussian(saline, 0.7), gaussian(river, 0.9)], -1).astype(np.float32)
+    return F, {k: i for i, k in enumerate(keys)}, G, warp, optics
 
-    # Autoteste: deserto claro e quente, floresta tropical escura e verde, calota polar branca, mar aberto transparente.
-    desert = is_color(biome, (255, 246, 213)) & land & (t_mean > 15)
-    jungle = is_color(biome, (68, 120, 33))
-    assert rgb[desert].mean() > rgb[jungle].mean() + 0.2, "deserto deveria ser bem mais claro que a floresta tropical"
-    assert (rgb[jungle][:, 1] > rgb[jungle][:, 0]).mean() > 0.95, "floresta tropical deveria ser verde"
-    assert ice[:20].mean() > 0.8 and ice[-20:].mean() > 0.8, "os polos deveriam estar cobertos de gelo"
-    open_sea = ~land & (blur(sea_ice_mask, 2) < 0.01)
-    assert alpha[open_sea].mean() < 0.05, "o mar aberto deveria ser transparente"
-    print(f"natural.png: gelo {ice.mean():.1%} do planeta, mar aberto {open_sea.mean():.1%}")
+
+# --- etapa 2: imagem final em 8K, por faixas -----------------------------------------------------------------------
+
+def mix(w, col):
+    return w[..., None] * np.array(col, np.float32)
+
+
+def lerp(a, b, t):
+    return a + (b - a) * t[..., None]
+
+
+def smooth(e0, e1, x):
+    t = np.clip((x - e0) / (e1 - e0), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def render_band(F, ix, G, warp, y0, y1):
+    rows = np.arange(y0, y1)
+    dirs = sphere_dirs(rows, W, H)
+    sx = np.broadcast_to((np.arange(W) + 0.5) * SW / W - 0.5, (y1 - y0, W)).astype(np.float32)
+    sy = np.broadcast_to(((rows + 0.5) * SH / H - 0.5)[:, None], (y1 - y0, W)).astype(np.float32)
+    wv = sample(warp, sx, sy) * WARP_PX
+    f = sample(F, sx + wv[..., 0], sy + wv[..., 1])
+    g = sample(G, sx, sy)
+    land_a = g[..., 0]
+    c = {k: f[..., i] for k, i in ix.items()}
+    n_fine = fbm(dirs, 650, 2, SEED + 6)
+    n_mid, n_low = c["n_mid"], c["n_low"]
+
+    # Biomas: os limites (borrados nas células) viram bordas irregulares; os pesos são renormalizados.
+    bw = {k: smooth(0.0, 1.0, c[k] + 0.20 * n_mid + 0.08 * n_fine) for k in GROUPS}
+    tot = sum(bw.values())
+    bw = {k: v / np.maximum(tot, 1e-6) for k, v in bw.items()}
+
+    # Vegetação com manchas: mais variação onde a cobertura é parcial (savanas, bordas de floresta).
+    def patchy(v, n):
+        return np.clip(v + n * v * (1 - v) * 2.2, 0, 1)
+    trees = patchy(c["trees"], 0.55 * n_mid + 0.30 * n_fine)
+    grass = patchy(c["grass"], 0.40 * c["n_mid2"] + 0.25 * n_fine)
+    shrub = patchy(c["shrub"], 0.40 * c["n_mid2"] - 0.25 * n_fine)
+
+    # Rocha exposta: encosta íngreme, solo raso, orogenia forte; a vegetação recua onde ela aparece.
+    expo = np.clip((c["slope"] - 0.8) / 3.0, 0, 1) * 0.85 + (1 - c["depth"]) ** 2 * 0.35 + c["orogeny"] * 0.15
+    expo = np.clip(expo + 0.18 * n_mid + 0.10 * n_fine, 0, 0.95)
+    keep = 1 - 0.75 * expo
+    trees, grass, shrub = trees * keep, grass * keep, shrub * keep
+    s = trees + grass + shrub
+    k = np.minimum(1.0, 1.0 / np.maximum(s, 1e-6))
+    trees, grass, shrub = trees * k, grass * k, shrub * k
+    bare = 1 - trees - grass - shrub
+
+    wet = np.clip(0.8 * np.clip((c["rain"] - 26) / 100, 0, 1) + 0.2 * c["hum"] +
+                  0.12 * c["groundwater"] - 0.08 * c["leeward"], 0, 1)
+    dry_season = np.clip((40 - c["rain_min"]) / 30, 0, 1)
+    hot = np.clip((c["t_mean"] - 12) / 12, 0, 1)
+    cold = np.clip((4 - c["t_mean"]) / 10, 0, 1)
+    arid = np.clip((40 - c["rain"]) / 25, 0, 1)
+
+    tree_col = sum(mix(bw[k], TREE[k]) for k in TREE) + mix(1 - sum(bw[k] for k in TREE), TREE["temperate"])
+    deciduous = (bw["dry_jungle"] + 0.6 * bw["savanna"] + 0.4 * bw["mediterranean"]) * dry_season
+    tree_col = lerp(tree_col, np.broadcast_to(np.array(DRY_CANOPY, np.float32), tree_col.shape), np.clip(deciduous, 0, 0.35))
+    grass_col = lerp(mix(np.ones_like(wet), GRASS_DRY), mix(np.ones_like(wet), GRASS_WET), wet * (1 - 0.3 * dry_season))
+    grass_col = lerp(grass_col, mix(np.ones_like(wet), GRASS_TUNDRA), np.clip(bw["tundra"] + cold, 0, 1))
+    shrub_col = lerp(mix(np.ones_like(wet), SHRUB_DRY), mix(np.ones_like(wet), SHRUB_WET), wet)
+
+    # Solo nu: textura -> cor; óxido de ferro nos desertos quentes (manchas regionais); matéria orgânica onde chove.
+    soil = mix(c["sand"], SAND) + mix(c["silt"], SILT) + mix(c["clay"], CLAY)
+    iron = arid * hot * np.clip(0.45 + 0.6 * n_low + 0.2 * n_mid, 0, 1)
+    soil *= 1 + iron[..., None] * np.array([0.08, -0.10, -0.22], np.float32)
+    soil *= (1 - 0.40 * c["rich"] * wet - 0.07 * c["groundwater"])[..., None]
+    grey = soil.mean(-1, keepdims=True)
+    soil = lerp(soil, np.broadcast_to(grey, soil.shape), 0.45 * cold)
+    rock = np.stack([c["rock_r"], c["rock_g"], c["rock_b"]], -1)
+    rock = lerp(rock, soil, np.full(rock.shape[:2], 0.25, np.float32))  # rocha intemperizada leva um pouco do solo
+    rock = lerp(rock, np.broadcast_to(np.array(LAVA, np.float32), rock.shape), np.clip(c["lip"], 0, 1) * 0.35)
+    ground = lerp(soil, rock, expo)
+
+    rgb = trees[..., None] * tree_col + shrub[..., None] * shrub_col \
+        + grass[..., None] * grass_col + bare[..., None] * ground
+    grey = rgb.mean(-1, keepdims=True)
+    rgb = (grey + (rgb - grey) * LAND_SATURATE) * LAND_DARKEN  # a paleta acima saía clara e pálida demais
+    rgb = lerp(rgb, np.broadcast_to(np.array(LAVA, np.float32), rgb.shape), np.clip(c["volc"], 0, 1) * (0.35 + 0.25 * n_mid))
+    rgb = lerp(rgb, np.broadcast_to(np.array(SALT, np.float32), rgb.shape),
+               np.clip(c["playa"] * (0.75 + 0.35 * n_mid + 0.2 * n_fine), 0, 1))
+    # Vales escurecem um pouco; no seco o rio leva uma faixa verde.
+    rgb *= (1 - 0.04 * c["valley"])[..., None]
+    rgb = lerp(rgb, np.broadcast_to(np.array(RIPARIAN, np.float32), rgb.shape), np.clip(c["riparian"] * (1 - wet) * 0.7, 0, 1))
+    # Grão fino e variação regional de brilho: a terra não pode parecer pintada a pincel largo.
+    rgb *= (1 + 0.05 * n_fine + 0.035 * n_mid + 0.03 * n_low)[..., None]
+
+    # Gelo: calota e geleiras; neve permanente no alto e no frio (menos nas encostas íngremes, onde ela escorrega).
+    perm = np.clip((1.0 - c["t_max"]) / 5 + 0.25 * n_mid + 0.10 * n_fine, 0, 1) * (1 - 0.35 * expo)
+    snow = np.clip(np.maximum(smooth(0.2, 0.8, c["land_ice"] + 0.25 * n_mid), perm), 0, 1)
+    rgb = lerp(rgb, mix(1 - 0.04 * n_fine, SNOW), snow)
+
+    # Gelo marinho onde nem o mês mais quente passa de -2 °C, em placas: borda larga por ruído médio, rachaduras finas.
+    # Gelo marinho: extensão média do Gleba (ice_t, em °C), entortada pelas correntes junto às costas (ice_coast) e
+    # por meandros de ~1.000 km; na borda (zona marginal) o gelo se quebra em placas pelo ruído médio e fino.
+    # O ruído fractal tem desvio ~0,3: 14 °C de amplitude = meandros de ~±3° de latitude.
+    ice_score = c["ice_t"] + 14.0 * c["n_xlow"] + c["ice_coast"] + 1.4 * n_mid + 0.6 * n_fine
+    sea_ice = smooth(-0.5, 0.5, ice_score) * (1 - land_a)
+    leads = 1 - 0.18 * np.clip(-n_fine * 2, 0, 1)
+    # Perto da borda o gelo é novo e fino (cinza-azulado); para dentro, velho e grosso (branco).
+    young = 1 - smooth(0.0, 4.0, ice_score)
+    ice_col = mix(leads, PACK_ICE) * (1 - 0.22 * young)[..., None] + mix(0.22 * young, (0.10, 0.18, 0.26))
+    rgb = lerp(rgb, ice_col, sea_ice)
+
+    # Água interior: lagos (doces ou salgados, congelados no frio). O RGB guarda a cor da água.
+    lake, saline, valley = g[..., 1], np.clip(g[..., 2] * 1.5, 0, 1), g[..., 3]
+    frozen = smooth(-1, 1, -c["t_max"])
+    lake_ice = lake * frozen
+    water_col = lerp(mix(np.ones_like(lake), LAKE_FRESH), mix(np.ones_like(lake), LAKE_SALT), saline)
+    # As linhas de fluxo do Gleba têm a largura de uma célula (9,77 km): são os vales, não o rio. Aqui o vale grande
+    # fica só um pouco mais escuro (sombra, umidade); a água do rio, com a largura certa, é desenhada pelo shader a
+    # partir de tools/build_rivers.py.
+    rgb *= (1 - 0.12 * np.clip(valley * 2, 0, 1) * (1 - snow))[..., None]
+    wmask = smooth(0.3, 0.7, lake) * (1 - lake_ice)
+    rgb = lerp(rgb, water_col, wmask)
+    rgb = lerp(rgb, mix(1 - 0.025 * n_fine, PACK_ICE), lake_ice)
+
+    # Alfa: superfície sólida (terra ou gelo) = 1, água aberta = 0. O shader corta em 0,5 com suavização: a costa
+    # borrada de 1 pixel do Gleba vira curva lisa.
+    alpha = np.clip(land_a * (1 - lake) + lake_ice + sea_ice, 0, 1)
+    return np.dstack([np.clip(rgb, 0, 1), alpha]), snow, sea_ice, bw
+
+
+def build():
+    import build_tiles
+
+    F, ix, G, warp, optics = fields()
+    out = np.empty((H, W, 4), np.uint8)
+    stats = {"desert": [], "jungle": [], "ice_top": 0.0, "ice_bottom": 0.0}
+    print("imagem 8K...")
+    for y in range(0, H, BAND):
+        band, snow, sea_ice, bw = render_band(F, ix, G, warp, y, min(y + BAND, H))
+        out[y:y + BAND] = np.round(band * 255).astype(np.uint8)
+        if y < 40:
+            stats["ice_top"] = np.maximum(snow, sea_ice)[: 40 - y].mean()
+        if y + BAND > H - 40:
+            stats["ice_bottom"] = np.maximum(snow, sea_ice)[-40:].mean()
+    del F, G, warp
+    check(out, stats)
+    image = Image.fromarray(out, "RGBA")
+    image.save(D / IMAGE, compress_level=3)
+    Image.fromarray(np.round(optics * 255).astype(np.uint8), "RGBA").save(D / OPTICS)
+    build_tiles.build(image, "natural_satellite", D / "tiles", fmt="png", gutter=2)
+
+
+def check(out, stats):
+    """Autoteste: deserto claro e quente, floresta tropical escura e verde, polos de gelo, mar aberto transparente,
+    sem emenda na longitude 180° e costa no mesmo lugar do Landmask."""
+    assert out.shape == (H, W, 4)
+    land = load("Landmask.png")[..., 0] == 80
+    biome = load("BiomasGleba.png")
+    rgb = out[1::2, 1::2, :3].astype(np.float32) / 255  # um pixel de saída por pixel do Gleba
+    alpha = out[1::2, 1::2, 3]
+    core = land & (blur(land, 2) > 0.99)  # longe da costa
+    desert = is_color(biome, (255, 246, 213)) & core & (rgb.min(-1) < 0.85)  # sem neve
+    jungle = is_color(biome, (68, 120, 33)) & core
+    assert rgb[desert].mean() > rgb[jungle].mean() + 0.17, "deserto deveria ser bem mais claro que a floresta tropical"
+    assert (rgb[jungle][:, 1] > rgb[jungle][:, 0]).mean() > 0.9, "floresta tropical deveria ser verde"
+    assert stats["ice_top"] > 0.8 and stats["ice_bottom"] > 0.8, "os polos deveriam estar cobertos de gelo"
+    sea = ~land & (blur(~land, 3) > 0.99)
+    tropic = np.zeros_like(sea)
+    tropic[600:1450] = True
+    assert (alpha[sea & tropic] < 13).mean() > 0.99, "o mar aberto dos trópicos deveria ser transparente"
+    # Costa = pixels com um vizinho do outro lado; fora dos polos (gelo marinho cobre a costa de propósito).
+    near = blur(land, 1)
+    coast = (near > 0.05) & (near < 0.95) & tropic
+    coast_ok = ((alpha > 127) == land)[coast].mean()
+    assert coast_ok > 0.93, f"a costa saiu do lugar ({coast_ok:.0%} dos pixels de costa batem com o Landmask)"
+    # Só onde a cor aparece (terra ou gelo dos dois lados); no mar aberto o RGB é só o preenchimento da terra.
+    def step(a, b):
+        vis = (out[:, a, 3] > 127) & (out[:, b, 3] > 127)
+        return np.abs(out[vis, a, :3].astype(int) - out[vis, b, :3].astype(int)).mean()
+    seam, inner = step(0, -1), np.mean([step(x, x + 1) for x in range(500, W, 500)])
+    # Gelo marinho: mesma área do gelo do Gleba (±25%) e borda que não é uma linha reta (varia > 1° de latitude).
+    sea_solid = (alpha > 127) & ~land
+    gleba = (load("Satelite.png").min(-1) > 200) & ~land
+    ratio = sea_solid.sum() / gleba.sum()
+    edge_deg = [np.std(sea_solid[rows].sum(0)) * 180 / SH for rows in (slice(0, 600), slice(SH - 600, SH))]
+    assert 0.75 < ratio < 1.25, f"gelo marinho {ratio:.0%} da área do Gleba"
+    assert min(edge_deg) > 1.0, f"borda do gelo quase reta: desvio {edge_deg} graus"
+    assert seam < inner * 2 + 2, f"emenda na longitude 180°: diferença {seam:.1f} (dentro da imagem {inner:.1f})"
+    print(f"{IMAGE} 8192x4096: costa {coast_ok:.1%} igual ao Landmask, emenda {seam:.1f} (interior {inner:.1f}); "
+          f"gelo marinho {ratio:.0%} da área do Gleba, borda varia {edge_deg[0]:.1f}° (N) e {edge_deg[1]:.1f}° (S)")
 
 
 if __name__ == "__main__":

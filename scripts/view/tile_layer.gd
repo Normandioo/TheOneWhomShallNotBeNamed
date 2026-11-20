@@ -23,6 +23,8 @@ var radius := 1.0
 var levels := 0
 var tile_px := 512
 var name_id := ""
+var _extension := "jpg"
+var _gutter := 0
 
 var drawn: Array[String] = []     # blocos na tela no último quadro (para os testes e as medições)
 var _tiles := {}                  # chave "z/y/x" -> {"node": MeshInstance3D, "used": int}
@@ -44,12 +46,18 @@ func open(tile_set: String, globe_radius: float, height_tex: Texture2D, river_te
 	name_id = tile_set
 	levels = int(manifest["levels"])
 	tile_px = int(manifest["tile"])
+	_extension = manifest.get("format", "jpg")
+	_gutter = int(manifest.get("gutter", 0))
 	radius = globe_radius
 	_height_tex = height_tex
 	_river_tex = river_tex
 	for x in 2:
 		var key := _key(0, 0, x)
-		_add_tile(key, _load_image(key))
+		var img := _load_image(key)
+		if img == null:
+			close()
+			return false
+		_add_tile(key, img)
 	return true
 
 
@@ -173,7 +181,7 @@ func _request(key: String) -> void:
 
 func _load_image(key: String) -> Image:
 	var z := key.get_slice("/", 0)
-	var path := ProjectSettings.globalize_path("%s%s/%s/%s_%s.jpg" % [ROOT, name_id, z, key.get_slice("/", 1), key.get_slice("/", 2)])
+	var path := ProjectSettings.globalize_path("%s%s/%s/%s_%s.%s" % [ROOT, name_id, z, key.get_slice("/", 1), key.get_slice("/", 2), _extension])
 	var img := Image.load_from_file(path)
 	if img != null:
 		img.generate_mipmaps()  # na thread: de longe o bloco não cintila
@@ -200,6 +208,8 @@ func _add_tile(key: String, img: Image) -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = TILE_SHADER
 	mat.set_shader_parameter("tile", ImageTexture.create_from_image(img))
+	mat.set_shader_parameter("tile_inset", float(_gutter) / (tile_px + 2 * _gutter))
+	mat.set_shader_parameter("satellite", name_id == "natural_satellite")
 	mat.set_shader_parameter("height_map", _height_tex)
 	mat.set_shader_parameter("river_map", _river_tex)
 	var node := MeshInstance3D.new()

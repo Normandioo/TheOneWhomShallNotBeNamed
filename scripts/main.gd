@@ -102,6 +102,9 @@ func _ready() -> void:
 	hud.add_child(presence_panel)
 	hud.move_child(presence_panel, 0)  # por baixo da ficha e da janela de calendários
 	domains.bind_map(globe.places, presence_panel, globe.focus)
+	layer_panel.political_visibility_changed.connect(presence_panel.set_political_visible)
+	presence_panel.political_visibility_changed.connect(_show_political)
+	_show_political("politica" in presence_panel.layers())
 	var draw_panel := DrawPanel.new()
 	hud.add_child(draw_panel)
 	domains.bind_draw(draw_panel)
@@ -221,11 +224,21 @@ func _unhandled_input(e: InputEvent) -> void:
 
 func set_layer(index: int) -> void:
 	layer = index
-	material.show_layer(MapLayers.LAYERS[index])
-	globe.set_tiles(MapLayers.LAYERS[index].get("tiles", ""), material.height_texture, material.river_texture)
+	var selected: Dictionary = MapLayers.LAYERS[index]
+	material.show_layer(selected)
+	var tiles: String = selected.get("tiles", "")
+	if selected["kind"] == "natural" and (material.layer_file != selected["file"] or
+			not FileAccess.file_exists(EvronMaps.DIR + "tiles/" + tiles + "/manifest.json")):
+		tiles = ""
+	globe.set_tiles(tiles, material.height_texture, material.river_texture)
 	legend.show_layer(MapLayers.LAYERS[index])
 	_refresh_stale()
 	layer_panel.show_layer(index)
+
+
+func _show_political(on: bool) -> void:
+	material.show_political(on)
+	layer_panel.show_political(on)
 
 
 ## -1 = navegar; senão uma operação do pincel (TerrainBrush.Op).

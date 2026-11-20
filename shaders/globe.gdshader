@@ -1,5 +1,4 @@
 shader_type spatial;
-render_mode specular_disabled;
 
 // O globo de Evron: uma camada de imagem (ou a altitude calibrada) sobre a esfera, com o relevo na iluminação.
 // A posição na esfera vira lat/lon e daí a coordenada do mapa equiretangular (convenção de EvronGeo).
@@ -7,6 +6,7 @@ render_mode specular_disabled;
 #include "res://shaders/relief.gdshaderinc"
 #include "res://shaders/brush.gdshaderinc"
 #include "res://shaders/political.gdshaderinc"
+#include "res://shaders/natural.gdshaderinc"
 
 uniform sampler2D layer_linear : source_color, filter_linear_mipmap, repeat_enable;   // camada atual, valores contínuos
 uniform sampler2D layer_nearest : source_color, filter_nearest, repeat_enable; // a mesma camada, para categorias
@@ -35,16 +35,6 @@ vec3 altitude_color(float h) {
 	return mix(vec3(0.85, 0.82, 0.8), vec3(0.98, 0.98, 0.98), (t - 0.92) / 0.08);
 }
 
-// Água pela profundidade (h < 0): plataforma rasa clara, talude e fundo escuro, como nas imagens de satélite.
-// Lagos acima do nível do mar não têm profundidade nos dados: cor de lago fixa.
-vec3 water_color(float h) {
-	if (h >= 0.0) return vec3(0.10, 0.24, 0.33);
-	float d = -h;
-	// Contraste baixo de propósito: o fundo do mar do Gleba é em degraus, e cores muito diferentes viram manchas.
-	vec3 col = mix(vec3(0.11, 0.31, 0.43), vec3(0.05, 0.17, 0.34), smoothstep(80.0, 2500.0, d));
-	return mix(col, vec3(0.03, 0.09, 0.24), smoothstep(2000.0, 7000.0, d));
-}
-
 void vertex() {
 	obj_pos = VERTEX;
 }
@@ -66,15 +56,13 @@ void fragment() {
 	vec4 lin = textureGrad(layer_linear, uv, dx, dy);
 	// Categorias sem mipmap: a média de cores de identificadores vizinhos seria uma cor que não existe.
 	vec3 col = nearest ? textureLod(layer_nearest, uv, 0.0).rgb : lin.rgb;
-	vec3 geo_normal = NORMAL;
+	float detail_m = 0.0;
+	float wet = 0.0;
 	if (mode == 1) {
 		col = pow(altitude_color(h), vec3(2.2)); // cores da legenda são sRGB; ALBEDO é linear
 	} else if (mode == 2) {
-		// natural.png: RGB = terra e gelo, A = superfície sólida. O resto é água, pintada ao vivo pela altitude.
-		float solid = smoothstep(0.3, 0.7, lin.a);
-		col = mix(pow(water_color(h), vec3(2.2)), col, solid);
-		// Halo azul da atmosfera na borda do disco.
-		EMISSION = vec3(0.10, 0.22, 0.55) * pow(1.0 - clamp(dot(geo_normal, VIEW), 0.0, 1.0), 4.0);
+		col = satellite_surface(lin, n, uv, h, detail_m, wet);
+		EMISSION = vec3(0.055, 0.115, 0.26) * pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
 	}
 	if (mode == 3) {
 		vec2 tuv = vec2(uv.x, clamp(uv.y, 0.0, 1.0));
@@ -85,6 +73,10 @@ void fragment() {
 	ALBEDO = river_paint(uv, ALBEDO);
 	ALBEDO = political_paint(uv, ALBEDO);
 	ALBEDO = brush_preview(n, ALBEDO);
-	ROUGHNESS = 1.0;
+	SPECULAR = 0.14 * wet;
+	ROUGHNESS = mix(1.0, 0.36, wet);
 	NORMAL = relief_normal(n, uv, h, NORMAL, VIEW_MATRIX * MODEL_MATRIX);
+	if (mode == 2) {
+		NORMAL = bump(NORMAL, VERTEX, detail_m * relief * 1e-6);
+	}
 }

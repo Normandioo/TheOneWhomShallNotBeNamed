@@ -98,6 +98,9 @@ const MODES := {"image": 0, "altitude": 1, "natural": 2, "tiles": 0, "season": 3
 const MapLayers = preload("res://scripts/ui/map_layers.gd")
 
 var _season_loaded := false
+var _satellite_loaded := false
+var _satellite_optics: ImageTexture
+var _satellite_river_atlas: ImageTexture
 
 
 ## Mostra a camada `layer` (uma entrada de MapLayers.LAYERS). A altitude calibrada não precisa de imagem.
@@ -107,6 +110,8 @@ func show_layer(layer: Dictionary) -> void:
 	if layer["kind"] == "season" and not _load_season():
 		push_error("temperatura sazonal: rode python tools/import_maps.py (faltam os mapas em °C)")
 	var file: String = layer.get("file", "")
+	if layer.has("fallback") and not FileAccess.file_exists(EvronMaps.DIR + file):
+		file = layer["fallback"]
 	if file == "" or file == layer_file:
 		return
 	var img := EvronMaps.load_layer(file)
@@ -118,3 +123,22 @@ func show_layer(layer: Dictionary) -> void:
 	material.set_shader_parameter("layer_linear", tex)
 	material.set_shader_parameter("layer_nearest", tex)
 	layer_file = file
+	if layer["kind"] == "natural" and file == layer["file"]:
+		_load_satellite()
+
+
+func _load_satellite() -> void:
+	if _satellite_loaded:
+		return
+	_satellite_loaded = true
+	if FileAccess.file_exists(EvronMaps.DIR + "natural_water.png"):
+		var optics := EvronMaps.load_layer("natural_water.png")
+		if optics != null:
+			_satellite_optics = ImageTexture.create_from_image(optics)
+			RenderingServer.global_shader_parameter_set("satellite_optics", _satellite_optics)
+			RenderingServer.global_shader_parameter_set("satellite_optics_on", 1.0)
+	var rivers := EvronMaps.load_satellite_rivers()
+	if rivers != null:
+		_satellite_river_atlas = ImageTexture.create_from_image(rivers)
+		RenderingServer.global_shader_parameter_set("satellite_river_atlas", _satellite_river_atlas)
+		RenderingServer.global_shader_parameter_set("satellite_rivers_on", 1.0)
