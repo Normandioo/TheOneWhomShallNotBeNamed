@@ -27,6 +27,8 @@ var _extension := "jpg"
 var _gutter := 0
 
 var drawn: Array[String] = []     # blocos na tela no último quadro (para os testes e as medições)
+var gutter := 0
+var ext := "jpg"                  # extensão dos blocos (manifest "format"): "natural" usa png, para ter alfa
 var _tiles := {}                  # chave "z/y/x" -> {"node": MeshInstance3D, "used": int}
 var _loading := {}                # chave -> id da tarefa
 var _ready_images: Array = []     # [chave, Image] vindos das threads
@@ -46,8 +48,8 @@ func open(tile_set: String, globe_radius: float, height_tex: Texture2D, river_te
 	name_id = tile_set
 	levels = int(manifest["levels"])
 	tile_px = int(manifest["tile"])
-	_extension = manifest.get("format", "jpg")
-	_gutter = int(manifest.get("gutter", 0))
+	ext = String(manifest.get("format", "jpg"))
+	gutter = int(manifest.get("gutter", 0))
 	radius = globe_radius
 	_height_tex = height_tex
 	_river_tex = river_tex
@@ -181,7 +183,7 @@ func _request(key: String) -> void:
 
 func _load_image(key: String) -> Image:
 	var z := key.get_slice("/", 0)
-	var path := ProjectSettings.globalize_path("%s%s/%s/%s_%s.%s" % [ROOT, name_id, z, key.get_slice("/", 1), key.get_slice("/", 2), _extension])
+	var path := ProjectSettings.globalize_path("%s%s/%s/%s_%s.%s" % [ROOT, name_id, z, key.get_slice("/", 1), key.get_slice("/", 2), ext])
 	var img := Image.load_from_file(path)
 	if img != null:
 		img.generate_mipmaps()  # na thread: de longe o bloco não cintila
@@ -212,6 +214,8 @@ func _add_tile(key: String, img: Image) -> void:
 	mat.set_shader_parameter("satellite", name_id == "natural_satellite")
 	mat.set_shader_parameter("height_map", _height_tex)
 	mat.set_shader_parameter("river_map", _river_tex)
+	mat.set_shader_parameter("natural", name_id == "natural")
+	mat.set_shader_parameter("experimental", name_id == "natural_satellite")
 	var node := MeshInstance3D.new()
 	node.mesh = _patch(_bounds(z, int(key.get_slice("/", 1)), int(key.get_slice("/", 2))), SEGMENTS[mini(z, SEGMENTS.size() - 1)])
 	node.material_override = mat

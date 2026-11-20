@@ -1,4 +1,5 @@
 shader_type spatial;
+// Especular só na água da cor natural (brilho do sol no mar); nas outras camadas SPECULAR = 0.
 
 // O globo de Evron: uma camada de imagem (ou a altitude calibrada) sobre a esfera, com o relevo na iluminação.
 // A posição na esfera vira lat/lon e daí a coordenada do mapa equiretangular (convenção de EvronGeo).
@@ -7,10 +8,19 @@ shader_type spatial;
 #include "res://shaders/brush.gdshaderinc"
 #include "res://shaders/political.gdshaderinc"
 #include "res://shaders/natural.gdshaderinc"
+#include "res://shaders/experimental.gdshaderinc"
 
-uniform sampler2D layer_linear : source_color, filter_linear_mipmap, repeat_enable;   // camada atual, valores contínuos
+uniform bool experimental = false;
+
+uniform sampler2D layer_linear : source_color, filter_linear_mipmap_anisotropic, repeat_enable; // camada atual, valores contínuos
 uniform sampler2D layer_nearest : source_color, filter_nearest, repeat_enable; // a mesma camada, para categorias
 uniform bool nearest = false;
+// Rios com largura em metros (tools/build_rivers.py; GlobeMaterial liga rivers_on quando os arquivos existem).
+uniform bool rivers_on = false;
+uniform sampler2D river_offset : filter_linear, repeat_enable; // km (leste, norte) até a linha central do rio
+uniform sampler2D river_width : filter_linear, repeat_enable;  // largura: 0..1 = log de RIVER_W_MIN a RIVER_W_MAX
+const float RIVER_W_MIN = 0.1; // km (build_rivers.W_MIN / W_MAX)
+const float RIVER_W_MAX = 5.0;
 uniform int mode = 0;            // 0 camada de imagem, 1 altitude calibrada, 2 cor natural, 3 temperatura sazonal, 4 mapa político (GlobeMaterial.MODES)
 uniform sampler2D coast_map : filter_linear, repeat_enable;  // mapa político: R = distância com sinal até a costa em km (+ terra), G = lago (Terrain.CoastImage)
 // Temperatura sazonal: °C de janeiro e de julho, misturados pelo peso de julho (SeasonalTemperature.july_weight) e só
@@ -129,13 +139,54 @@ void fragment() {
 	vec4 lin = textureGrad(layer_linear, uv, dx, dy);
 	// Categorias sem mipmap: a média de cores de identificadores vizinhos seria uma cor que não existe.
 	vec3 col = nearest ? textureLod(layer_nearest, uv, 0.0).rgb : lin.rgb;
+	vec3 geo_normal = NORMAL;
+	float solid = 1.0;
 	float detail_m = 0.0;
-	float wet = 0.0;
+	SPECULAR = 0.0;
+	ROUGHNESS = 1.0;
 	if (mode == 1) {
 		col = pow(altitude_color(h), vec3(2.2)); // cores da legenda são sRGB; ALBEDO é linear
 	} else if (mode == 2) {
-		col = satellite_surface(lin, n, uv, h, detail_m, wet);
-		EMISSION = vec3(0.055, 0.115, 0.26) * pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 4.0);
+		vec4 nat = lin;
+		if (experimental) {
+			float wet;
+			col = satellite_surface(nat, n, uv, h, detail_m, wet);
+			SPECULAR = 0.14 * wet;
+			ROUGHNESS = mix(1.0, 0.36, wet);
+		} else {
+		// natural.png: RGB = terra e gelo, A = superfície sólida. O resto é água: o mar pintado ao vivo pela altitude;
+		// acima do nível do mar (lagos) a cor da água vem da imagem (doce ou salgada).
+		solid = smoothstep(0.3, 0.7, nat.a);
+		float lat = asin(clamp(n.y, -1.0, 1.0));
+		vec3 water = h >= 0.0 ? nat.rgb : pow(water_color(h, lat), vec3(2.2));
+		// Detalhe fino na terra e no gelo: brilho e relevo que a imagem não tem (sintetizado, semente fixa).
+		vec3 pos_m = n * RADIUS;
+		float px_m = length(fwidth(pos_m));
+		vec2 fd = fine_detail(pos_m, px_m);
+		float rough = 0.35 + 0.65 * smoothstep(200.0, 2500.0, h); // montanha é mais áspera que planície
+		col = nat.rgb * (1.0 + 0.22 * fd.x * solid);
+		detail_m = fd.y * rough * solid;
+		col = mix(water, col, solid);
+		// Rio: o vetor até a linha central, interpolado entre texels, dá a distância certa em qualquer ponto; a margem
+		// fica nítida com 100 m ou 5 km de largura. Mais fino que um pixel da tela, vira um traço de 1 pixel com
+		// opacidade = largura / pixel (de longe o rio quase some, como nas fotos da órbita).
+		float river = 0.0;
+		if (rivers_on) {
+			float dist_km = length(textureLod(river_offset, uv, 0.0).rg);
+			float w_km = RIVER_W_MIN * pow(RIVER_W_MAX / RIVER_W_MIN, textureLod(river_width, uv, 0.0).r);
+			float px_km = max(px_m * 0.001, 1e-4);
+			float line_km = max(w_km, px_km);
+			river = clamp((0.5 * line_km - dist_km) / px_km + 0.5, 0.0, 1.0) * min(1.0, w_km / px_km) * solid;
+			col = mix(col, pow(vec3(0.08, 0.17, 0.20), vec3(2.2)), river);
+			detail_m *= 1.0 - river;
+		}
+		// A água reflete o sol (o brilho que corre pelo oceano nas fotos da órbita); a terra não.
+		float wet = max(1.0 - solid, river);
+		SPECULAR = 0.35 * wet;
+		ROUGHNESS = mix(1.0, 0.32, wet);
+		}
+		// Halo azul da atmosfera na borda do disco.
+		EMISSION = vec3(0.10, 0.22, 0.55) * pow(1.0 - clamp(dot(geo_normal, VIEW), 0.0, 1.0), 4.0);
 	}
 	if (mode == 3) {
 		vec2 tuv = vec2(uv.x, clamp(uv.y, 0.0, 1.0));
@@ -154,8 +205,6 @@ void fragment() {
 		ALBEDO = river_paint(uv, ALBEDO);
 		ALBEDO = political_paint(uv, ALBEDO);
 		ALBEDO = brush_preview(n, ALBEDO);
-		SPECULAR = 0.14 * wet;
-		ROUGHNESS = mix(1.0, 0.36, wet);
 		NORMAL = relief_normal(n, uv, h, NORMAL, VIEW_MATRIX * MODEL_MATRIX);
 		if (mode == 2) {
 			NORMAL = bump(NORMAL, VERTEX, detail_m * relief * 1e-6);

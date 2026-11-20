@@ -4,9 +4,15 @@ Saída em data/evron/ (fora do git; o zip original é a fonte e não é alterado
   - os PNGs da raiz do zip, como estão (camadas de exibição);
   - height_4096x2048.f32 = float32 little-endian (Image.FORMAT_RF do Godot), altitude em metros,
     convertida de "Elevation GrayScale.png" pela calibração de docs/calibracao/calibracao_evron.json;
-  - natural_satellite.png, natural_water.png e tiles/natural_satellite/ entram na composição experimental;
-  - rivers_indexed.rgbaf contém os trechos dos rios renderizados no satélite;
-  - tiles/relevo/ = o relevo de 16K (resized/relevo.png) em pirâmide de blocos (tools/build_tiles.py).
+  - natural.png = cor natural da terra e do gelo, 8192x4096 (tools/build_natural.py, ~5 min);
+  - rivers_8192x4096.rgh + rivers_width.png = rios com largura em metros (tools/build_rivers.py, ~1 min);
+  - natural_satellite.png, natural_water.png e tiles/natural_satellite/ = o satélite experimental
+    (tools/build_experimental.py e tools/build_experimental_tiles.py);
+  - rivers_indexed.rgbaf = os trechos dos rios do satélite experimental (tools/build_indexed_rivers.py);
+  - temperature_*.f32 = temperatura de janeiro e julho em °C (tools/build_temperature.py);
+  - tiles/relevo/ = o relevo de 16K (resized/relevo.png) em pirâmide de blocos (tools/build_tiles.py);
+  - tiles/natural/ = a cor natural de novo, em 16K e com mais grão fino, na mesma pirâmide de blocos
+    (tools/build_natural_tiles.py, ~8-10 min): perto da câmera substitui o natural.png de 8K.
 Os .xcf ficam de fora (decisão do autor).
 
 Requer Pillow e numpy:  python -m pip install -r requirements.txt
@@ -20,6 +26,9 @@ import numpy as np
 from PIL import Image
 
 import build_natural
+import build_experimental
+import build_indexed_rivers
+import build_natural_tiles
 import build_rivers
 import build_temperature
 import build_tiles
@@ -64,7 +73,10 @@ def main(zip_path: str) -> None:
     build_natural.build()  # cor natural (usa a altitude recém-gravada)
     build_rivers.build()
     build_temperature.build()  # temperatura de janeiro e julho em °C, para o ciclo sazonal
+    build_experimental.build()
+    build_indexed_rivers.build()
     build_tiles.build_from_zip(zip_path)  # relevo de 16K em blocos
+    build_natural_tiles.build()  # cor natural de novo, em 16K, para perto da câmera
 
 
 if __name__ == "__main__":
