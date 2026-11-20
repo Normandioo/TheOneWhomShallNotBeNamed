@@ -23,7 +23,7 @@ SW, SH = 4096, 2048     # grade dos mapas do Gleba
 W, H = 8192, 4096       # saída
 BAND = 64               # linhas de saída por vez: limita a memória da interpolação
 SEED = 20261117
-RADIUS_KM = 8282.3      # EvronGeo.RADIUS_KM
+RADIUS_KM = 6371.0      # EvronGeo.RADIUS_KM
 WARP_PX = 1.25          # varia o albedo dentro das massas de terra
 
 VIRIDIS = np.array([(0.267, 0.005, 0.329), (0.279, 0.175, 0.483), (0.230, 0.322, 0.546), (0.173, 0.449, 0.558), (0.128, 0.567, 0.551),

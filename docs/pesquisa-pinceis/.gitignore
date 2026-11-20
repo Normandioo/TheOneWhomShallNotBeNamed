@@ -1,0 +1,3 @@
+# Caches e arquivos gerados (reproduzíveis com figuras.py e variedade.py)
+__pycache__/
+*.npz
