@@ -6,6 +6,7 @@ extends PanelContainer
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 
 signal changed
+signal political_visibility_changed(on: bool)
 
 var _scope: OptionButton
 var _checks := {}  # camada -> CheckBox
@@ -33,6 +34,8 @@ func _init() -> void:
 		c.button_pressed = true
 		c.add_theme_color_override("font_color", UiKit.LAYER_COLOR[layer])
 		c.toggled.connect(func(_on: bool) -> void: changed.emit())
+		if layer == "politica":
+			c.toggled.connect(political_visibility_changed.emit)
 		box.add_child(c)
 		_checks[layer] = c
 
@@ -44,6 +47,10 @@ func layers() -> PackedStringArray:
 		if _checks[layer].button_pressed:
 			out.append(layer)
 	return out
+
+
+func set_political_visible(on: bool) -> void:
+	_checks["politica"].button_pressed = on
 
 
 ## true = todas as entidades; false = só a da ficha aberta.

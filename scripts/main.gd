@@ -109,6 +109,9 @@ func _ready() -> void:
 	hud.add_child(presence_panel)
 	hud.move_child(presence_panel, 0)  # por baixo da ficha e da janela de calendários
 	domains.bind_map(globe.places, presence_panel, globe.focus)
+	layer_panel.political_visibility_changed.connect(presence_panel.set_political_visible)
+	presence_panel.political_visibility_changed.connect(_show_political)
+	_show_political("politica" in presence_panel.layers())
 	var draw_panel := DrawPanel.new()
 	hud.add_child(draw_panel)
 	domains.bind_draw(draw_panel)
@@ -165,6 +168,7 @@ func _process(delta: float) -> void:
 	clock.tick(delta)
 	domains.tick()
 	globe.update(delta)
+	domains.boundary_tool.update_zoom(globe.camera_altitude_km())
 	layer_panel.show_camera_altitude(globe.camera_altitude_km())
 	_since_upload += delta
 	if terrain.Dirty and (not brush.active or _since_upload >= HEIGHT_UPLOAD_SECONDS):
@@ -191,6 +195,19 @@ func _process(delta: float) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		save_clock()
+	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT and domains != null:
+		domains.boundary_tool.cancel()
+		domains.territory_end()
+
+
+func _input(e: InputEvent) -> void:
+	# Conclui o gesto mesmo quando o botão é solto sobre um painel do HUD.
+	if domains == null or not domains.painting_territory or not (e is InputEventMouseButton) or e.pressed or e.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if domains.boundary_tool.dragging or domains.territory_stroking:
+		domains.boundary_tool.release()
+		domains.territory_end()
+		get_viewport().set_input_as_handled()
 
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -205,9 +222,14 @@ func _unhandled_input(e: InputEvent) -> void:
 	if domains.painting_territory:
 		if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
 			if e.pressed:
-				domains.territory_begin(globe.pick(e.position))
-			else:
-				domains.territory_end()
+				var n := globe.pick(e.position)
+				if domains.territory_mode == "fronteira":
+					domains.boundary_tool.press(n, e.position, globe.camera_altitude_km())
+				else:
+					domains.territory_begin(n)
+			return
+		if e is InputEventMouseMotion and domains.boundary_tool.dragging:
+			domains.boundary_tool.drag(globe.pick(e.position), e.position)
 			return
 		if e is InputEventMouseMotion and domains.territory_stroking:
 			domains.territory_drag(globe.pick(e.position))
@@ -232,11 +254,21 @@ func _unhandled_input(e: InputEvent) -> void:
 
 func set_layer(index: int) -> void:
 	layer = index
-	material.show_layer(MapLayers.LAYERS[index])
-	globe.set_tiles(MapLayers.LAYERS[index].get("tiles", ""), material.height_texture, material.river_texture)
+	var selected: Dictionary = MapLayers.LAYERS[index]
+	material.show_layer(selected)
+	var tiles: String = selected.get("tiles", "")
+	if selected["kind"] == "natural" and (material.layer_file != selected["file"] or
+			not FileAccess.file_exists(EvronMaps.DIR + "tiles/" + tiles + "/manifest.json")):
+		tiles = ""
+	globe.set_tiles(tiles, material.height_texture, material.river_texture)
 	legend.show_layer(MapLayers.LAYERS[index])
 	_refresh_stale()
 	layer_panel.show_layer(index)
+
+
+func _show_political(on: bool) -> void:
+	material.show_political(on)
+	layer_panel.show_political(on)
 
 
 ## -1 = navegar; senão uma operação do pincel (TerrainBrush.Op).
@@ -256,10 +288,12 @@ func set_tool(op: int) -> void:
 func undo() -> void:
 	if brush.active:
 		brush.end()
+	domains.territory_end()
 	commands.undo()
 
 
 func redo() -> void:
+	domains.territory_end()
 	commands.redo()
 
 
@@ -333,7 +367,7 @@ func _season_line(n: Vector3) -> String:
 
 func _on_hover(n: Vector3) -> void:
 	layer_panel.show_cursor(describe(n))
-	if domains.painting_territory:
+	if domains.painting_territory and domains.territory_mode != "fronteira":
 		_show_brush(n, domains.territory_radius)  # o anel do pincel de território
 	if tool != ToolPanel.NAVIGATE:
 		_show_brush(n)

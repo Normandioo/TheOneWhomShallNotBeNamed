@@ -326,6 +326,8 @@ func run() -> void:
 			h.sheet.hide_sheet()
 			main.globe.focus(EvronGeo.dir(24.0, 28.0), 1.6)
 			await save("territorio_mapa")
+			if not await _check_visibility():
+				return
 		ok("com a cena: o Main leva a camada à GPU e desenha os países")
 
 		# Com os mapas reais: as capitais do protótipo (tools/mapa_politico.py, vista "oeste") crescem juntas pelas serras e rios do Gleba.
@@ -373,9 +375,63 @@ func run() -> void:
 			main.globe.focus(EvronGeo.dir(24.0, -108.0), 1.25)
 			await save("mapa_politico_perto")
 		main.set_layer(camada_antes)
+		main.commands.undo()  # o crescimento ("Crescer todos") também fez crescer os países pintados acima: as suítes seguintes partem do mapa de antes
 		ok("mapa político: a costa do mapa de 4K sai em %d ms e a camada desenha os países" % costa_ms)
 
 	await _close()
+
+
+func _check_visibility() -> bool:
+	var menu: CheckBox = main.layer_panel._countries
+	var presence_check: CheckBox = main.domains.presence_panel._checks["politica"]
+	var previous_layer: int = main.layer
+	main.globe.focus(EvronGeo.dir(22.0, 20.0), 1.18)
+	main.set_layer(0)
+	menu.button_pressed = true
+	var visible := await _map_color()
+	menu.button_pressed = false
+	var hidden := await _map_color()
+	if presence_check.button_pressed or not _color_changed(visible, hidden):
+		fail("Mostrar países deve ocultar o raster no globo e desmarcar Fronteira política")
+		return false
+
+	if FileAccess.file_exists("res://data/evron/tiles/natural_satellite/manifest.json"):
+		var map_layers = load("res://scripts/ui/map_layers.gd").LAYERS
+		for i in map_layers.size():
+			if map_layers[i].get("tiles", "") == "natural_satellite":
+				main.set_layer(i)
+				break
+		var tiles = main.globe.tiles
+		for frame in 180:
+			await frames(1)
+			if tiles.max_drawn_level() > 0 and tiles._loading.is_empty():
+				break
+		if menu.button_pressed or presence_check.button_pressed or tiles.max_drawn_level() < 1:
+			fail("trocar para o satélite em mosaicos deve preservar a visibilidade desligada")
+			return false
+		hidden = await _map_color()
+		presence_check.button_pressed = true
+		visible = await _map_color()
+		if not menu.button_pressed or not _color_changed(visible, hidden):
+			fail("Fronteira política deve religar Mostrar países e o raster nos mosaicos")
+			return false
+	else:
+		presence_check.button_pressed = true
+	main.set_layer(previous_layer)
+	ok("visibilidade dos países sincronizada entre os painéis, inclusive ao trocar de camada")
+	return true
+
+
+func _map_color() -> Color:
+	await frames(3)
+	await RenderingServer.frame_post_draw
+	var viewport: Viewport = main.globe.camera.cam.get_viewport()
+	var surface := viewport.get_texture().get_image()
+	return surface.get_pixelv(surface.get_size() / 2)
+
+
+func _color_changed(a: Color, b: Color) -> bool:
+	return Vector3(a.r - b.r, a.g - b.g, a.b - b.b).length() > 0.035
 
 
 func stop_all() -> void:

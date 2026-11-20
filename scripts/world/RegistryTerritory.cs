@@ -19,21 +19,24 @@ public partial class Registry
         alter table entity add column color integer;
         """;
 
+    const string TerritoryBoundaryMigration = "alter table territory add column boundaries blob";
+
     /// Grava a camada política (substitui a anterior). Devolve o tamanho gravado, em bytes.
     public long SaveTerritory(Territory t)
     {
         var data = t.Pack();
-        _db.Run("insert into territory(id, w, h, data, saved_at) values (1, @0, @1, @2, unixepoch()) " +
-                "on conflict(id) do update set w = @0, h = @1, data = @2, saved_at = unixepoch()", t.Size.X, t.Size.Y, data);
+        _db.Run("insert into territory(id, w, h, data, boundaries, saved_at) values (1, @0, @1, @2, @3, unixepoch()) " +
+                "on conflict(id) do update set w = @0, h = @1, data = @2, boundaries = @3, saved_at = unixepoch()",
+                t.Size.X, t.Size.Y, data, t.PackBoundaries());
         return data.Length;
     }
 
     /// Lê a camada política gravada para o Territory. false se não há nenhuma (começa vazio) ou se é de outra grade (não é aplicada).
     public bool LoadTerritory(Territory t)
     {
-        var r = _db.Rows("select w, h, data from territory where id = 1");
+        var r = _db.Rows("select w, h, data, boundaries from territory where id = 1");
         if (r.Count == 0) return false;
-        return t.Unpack((byte[])r[0][2]!, Convert.ToInt32(r[0][0]), Convert.ToInt32(r[0][1]));
+        return t.Restore((byte[])r[0][2]!, Convert.ToInt32(r[0][0]), Convert.ToInt32(r[0][1]), (byte[]?)r[0][3]);
     }
 
     /// A cor do cadastro (RGB de 24 bits): a escolhida ou a automática.

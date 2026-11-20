@@ -13,8 +13,10 @@ signal finish_requested
 signal reach_changed(km: float)
 signal grow_requested(all: bool)  # crescer pela terra sem dono: só este país (false) ou todos (true)
 signal snap_requested             # assentar as fronteiras deste país na crista ou no rio mais perto
+signal boundary_selected(id: int)
+signal boundary_reset_requested
 
-const MODES := [["pincel", "Pincel"], ["balde", "Balde"], ["borracha", "Borracha"]]
+const MODES := [["pincel", "Pincel"], ["balde", "Balde"], ["borracha", "Borracha"], ["fronteira", "Fronteira"]]
 const TIPS := {
 	"pincel": "Arraste no globo para pintar. Pintar sobre outro país toma o território dele.",
 	"balde": "Clique dentro de uma área cercada por pintura para preencher tudo de uma vez.",
@@ -33,19 +35,21 @@ var _radius_label: Label
 var _reach_label: Label
 var _message: Label
 var _buttons: Dictionary = {}
+var _brush_controls: VBoxContainer
+var _boundary_controls: VBoxContainer
+var _paths: OptionButton
+var _boundary_status: Label
+var _reset_boundary: Button
 
 
 func _init() -> void:
 	visible = false
 	add_theme_stylebox_override("panel", UiKit.panel_style())
-	set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	grow_vertical = Control.GROW_DIRECTION_BEGIN
-	position = Vector2(-12, -150)  # acima da legenda
 	custom_minimum_size = Vector2(300, 0)
 	var box := VBoxContainer.new()
 	add_child(box)
 	_title = Label.new()
+	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_title.add_theme_font_size_override("font_size", 16)
 	_title.modulate = Color(1.0, 0.92, 0.35)
 	box.add_child(_title)
@@ -59,13 +63,14 @@ func _init() -> void:
 		b.button_group = group
 		b.button_pressed = m[0] == mode
 		b.pressed.connect(func() -> void:
-			mode = m[0]
-			_tip.text = TIPS[mode]
+			set_mode(m[0])
 			mode_changed.emit(mode))
 		tools.add_child(b)
 		_buttons[m[0]] = b
+	_brush_controls = VBoxContainer.new()
+	box.add_child(_brush_controls)
 	var row := HBoxContainer.new()
-	box.add_child(row)
+	_brush_controls.add_child(row)
 	_radius_label = Label.new()
 	row.add_child(_radius_label)
 	var slider := HSlider.new()
@@ -86,29 +91,90 @@ func _init() -> void:
 	land.toggled.connect(func(on: bool) -> void:
 		land_only = on
 		land_only_changed.emit(on))
-	box.add_child(land)
+	_brush_controls.add_child(land)
 	_tip = Label.new()
 	_tip.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_tip.custom_minimum_size = Vector2(280, 0)
 	_tip.modulate = Color(1, 1, 1, 0.75)
 	_tip.text = TIPS[mode]
-	box.add_child(_tip)
+	_brush_controls.add_child(_tip)
 	_area = Label.new()
-	box.add_child(_area)
-	_natural(box)
+	_brush_controls.add_child(_area)
+	_natural(_brush_controls)
+	_build_boundary_controls(box)
 	var done := Button.new()
 	done.text = "Terminar"
 	done.pressed.connect(func() -> void: finish_requested.emit())
 	box.add_child(done)
 	_show_radius()
+	_update_controls()
+
+
+func _ready() -> void:
+	get_viewport().size_changed.connect(_position_panel)
+	minimum_size_changed.connect(_position_panel)
+
+
+func _build_boundary_controls(box: VBoxContainer) -> void:
+	_boundary_controls = VBoxContainer.new()
+	box.add_child(_boundary_controls)
+	_paths = OptionButton.new()
+	_paths.fit_to_longest_item = false
+	_paths.item_selected.connect(func(index: int) -> void: boundary_selected.emit(_paths.get_item_id(index)))
+	_boundary_controls.add_child(_paths)
+	_boundary_status = Label.new()
+	_boundary_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_boundary_status.custom_minimum_size.x = 270
+	_boundary_controls.add_child(_boundary_status)
+	_reset_boundary = Button.new()
+	_reset_boundary.text = "Redesenhar"
+	_reset_boundary.pressed.connect(func() -> void: boundary_reset_requested.emit())
+	_boundary_controls.add_child(_reset_boundary)
+
+
+func show_boundary_options(paths: Array, neighbors: Dictionary, path_id: int) -> void:
+	_paths.clear()
+	_paths.add_item("Nova fronteira", 0)
+	for path in paths:
+		_paths.add_item("Fronteira %d · %s" % [path.id, neighbors.get(path.source, "País %d" % path.source)], path.id)
+	_paths.select(_paths.get_item_index(path_id))
+	_paths.visible = not paths.is_empty()
+	_reset_boundary.visible = path_id != 0
+
+
+func show_boundary_state(message: String) -> void:
+	_boundary_status.text = message
+
+
+func set_mode(next_mode: String) -> void:
+	mode = next_mode
+	_buttons[mode].set_pressed_no_signal(true)
+	_update_controls()
+
+
+func _update_controls() -> void:
+	_boundary_controls.visible = mode == "fronteira"
+	_brush_controls.visible = mode != "fronteira"
+	if _brush_controls.visible:
+		_tip.text = TIPS[mode]
+	_position_panel.call_deferred()
+
+
+func _position_panel() -> void:
+	if not is_inside_tree() or not visible:
+		return
+	size = get_combined_minimum_size()
+	var room := get_viewport_rect().size - size - Vector2(12, 12)
+	position = Vector2(maxf(0.0, room.x), maxf(0.0, room.y - 138.0))
 
 
 ## Abre a barra para o país, com a área que ele já tem.
 func show_state(country_name: String, area_km2: float) -> void:
 	visible = true
-	_title.text = "Pintando território: %s" % country_name
+	_title.text = "Território de %s" % country_name
 	set_message("")
 	set_area(area_km2)
+	_position_panel.call_deferred()
 
 
 func set_area(area_km2: float) -> void:

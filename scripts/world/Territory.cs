@@ -39,6 +39,8 @@ public partial class Territory : RefCounted
         _img = Image.CreateFromData(Size.X, Size.Y, false, Image.Format.Rg8, B);
         _rowTop = int.MaxValue;
         _rowBottom = -1;
+        ResetBoundaries();
+        Touch();
         Dirty = true;
     }
 
@@ -230,11 +232,14 @@ public partial class Territory : RefCounted
     }
 
     /// Restaura os donos de Pack(); recusa uma camada de outro tamanho (a grade da altitude mudou). Não cria edição: é uma abertura de arquivo.
-    public bool Unpack(byte[] data, int w, int h)
+    public bool Unpack(byte[] data, int w, int h) => Restore(data, w, h, null);
+
+    internal bool Restore(byte[] data, int w, int h, byte[]? boundaries)
     {
         if (w != Size.X || h != Size.Y) return false;
         var bytes = new byte[B.Length];
         using (var z = new DeflateStream(new MemoryStream(data), CompressionMode.Decompress)) z.ReadExactly(bytes, 0, bytes.Length);
+        RestoreBoundaries(boundaries);
         B = bytes;
         _rowTop = 0;
         _rowBottom = Size.Y - 1;

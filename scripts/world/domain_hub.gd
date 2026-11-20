@@ -11,6 +11,8 @@ const UiKit = preload("res://scripts/ui/ui_kit.gd")
 const Calendar = preload("res://scripts/world/calendar.gd")
 const LocalCalendar = preload("res://scripts/world/local_calendar.gd")
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
+const TerritoryBoundaryTool = preload("res://scripts/edit/territory_boundary_tool.gd")
+const TerritoryEdit = preload("res://scripts/edit/TerritoryEdit.cs")
 
 signal painting_changed(on: bool)      # entrou ou saiu do modo pintar território
 signal palette_changed(entries: Array)  # as cores dos países mudaram ([{id, rgb}]): quem desenha atualiza a paleta
@@ -39,10 +41,11 @@ var draw_panel             # a barra do modo desenhar fronteira
 var territory              # a camada política (Territory, C#): o dono de cada pixel
 var commands               # a pilha de desfazer (a mesma do terreno)
 var territory_panel        # a barra do modo pintar território
+var boundary_tool := TerritoryBoundaryTool.new()
 var painting_territory := false  # no modo pintar: o botão esquerdo do mouse pinta
 var territory_stroking := false  # uma pincelada em andamento
 var territory_owner := 0         # o país que está sendo pintado
-var territory_mode := "pincel"   # pincel | balde | borracha
+var territory_mode := "pincel"   # pincel | balde | borracha | fronteira
 var territory_radius := 300.0
 var territory_land_only := true
 var territory_reach := 800.0     # alcance de "crescer" (km de caminho)
@@ -138,6 +141,7 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 		_reload())
 	sheet.place_focus_requested.connect(focus_place)
 	sheet.territory_paint_requested.connect(func() -> void: start_painting(_current))
+	sheet.territory_boundary_requested.connect(func() -> void: start_painting(_current, "fronteira"))
 	sheet.territory_clear_requested.connect(_on_territory_clear)
 	sheet.entity_color_changed.connect(_on_color_changed)
 	sheet.border_draw_requested.connect(func(n: String, role: String) -> void: start_border(n, role, 0))
@@ -163,7 +167,8 @@ func bind_territory(t, stack, panel) -> void:
 		registry.LoadTerritory(territory)
 	_territory_seen = territory.Version
 	_territory_saved = territory.Version
-	panel.mode_changed.connect(func(m: String) -> void: territory_mode = m)
+	boundary_tool.setup(territory, registry, map, panel, commands)
+	panel.mode_changed.connect(_set_territory_mode)
 	panel.radius_changed.connect(func(km: float) -> void: territory_radius = km)
 	panel.land_only_changed.connect(func(on: bool) -> void: territory_land_only = on)
 	panel.finish_requested.connect(stop_painting)
@@ -184,6 +189,7 @@ func bind_draw(panel) -> void:
 
 func close() -> void:
 	if registry != null:
+		territory_end()
 		_save_territory()
 		registry.Close()
 
@@ -199,6 +205,8 @@ func open(id: int) -> void:
 		_draw_message = "Conclua ou cancele o desenho antes de abrir outro cadastro."
 		_refresh_draw()
 		return
+	if painting_territory and territory_mode == "fronteira" and id != territory_owner:
+		stop_painting()
 	_current = id
 	_reload()
 
@@ -238,11 +246,17 @@ func set_fixed_point(dir: Vector3) -> void:
 		sheet.show_fixed_point(_fixed_text(), dir != Vector3.ZERO)
 
 
-## Clique no mapa: as presenças visíveis (mesmas camadas e escopo do desenho) que cobrem o ponto, dentro do raio do lugar ou da tolerância
-## (km). Uma só entidade abre a ficha dela (se já é a aberta, a ficha fica como está: refazê-la apagaria o que se digita nela); várias aparecem
-## na lista de busca para escolher. Devolve quantas entidades foram achadas.
+## O clique na camada política seleciona o dono do pixel. Onde ela não tem um dono visível, consulta as presenças do mapa.
 func pick(dir: Vector3, tolerance_km: float) -> int:
-	if not usable or drawing or painting_territory or map == null or dir == Vector3.ZERO or (not presence_panel.all_entities() and _current == 0):
+	if not usable or drawing or painting_territory or map == null or dir == Vector3.ZERO:
+		return 0
+	if territory != null and "politica" in presence_panel.layers():
+		var owner: int = territory.OwnerAt(dir)
+		if owner != 0 and registry.Kind(owner) == "pais":
+			if owner != _current or not sheet.visible:
+				open(owner)
+			return 1
+	if not presence_panel.all_entities() and _current == 0:
 		return 0
 	var ll := EvronGeo.lat_lon(dir)
 	var only := 0 if presence_panel.all_entities() else _current
@@ -251,11 +265,6 @@ func pick(dir: Vector3, tolerance_km: float) -> int:
 	for h in (hits if hits != null else []):
 		if not found.has(int(h.entity_id)):
 			found[int(h.entity_id)] = h
-	if territory != null and "politica" in presence_panel.layers():  # o território pintado também se seleciona: o dono do pixel
-		var owner: int = territory.OwnerAt(dir)
-		var who: String = registry.Name(owner) if owner != 0 else ""
-		if who != "" and not found.has(owner) and (presence_panel.all_entities() or owner == _current):
-			found[owner] = {"entity_id": owner, "kind": "pais", "entity": who, "place": "território pintado", "role": "territorio"}
 	if found.size() == 1:
 		var only_id: int = found.keys()[0]
 		if only_id != _current:
@@ -297,7 +306,7 @@ func refresh_map() -> void:
 # --- pintar território -----------------------------------------------------------------------------------------------
 
 ## Entra no modo pintar território para o país: o botão esquerdo do mouse no globo passa a pintar (Main roteia), com pincel, balde ou borracha.
-func start_painting(id: int) -> void:
+func start_painting(id: int, mode := "pincel") -> void:
 	if not usable or territory == null or drawing or painting_territory or id == 0:
 		return
 	if registry.Kind(id) != "pais" or id > 65535:
@@ -306,7 +315,12 @@ func start_painting(id: int) -> void:
 	territory_owner = id
 	painting_territory = true
 	territory_stroking = false
+	territory_mode = mode
+	territory_panel.set_mode(mode)
 	territory_panel.show_state(registry.Name(id), territory.AreaKm2(id))
+	if territory_mode == "fronteira":
+		sheet.hide()
+		boundary_tool.start(territory_owner)
 	painting_changed.emit(true)
 
 
@@ -315,6 +329,7 @@ func stop_painting() -> void:
 		return
 	if territory_stroking:
 		territory_end()
+	boundary_tool.stop()
 	painting_territory = false
 	territory_panel.hide_panel()
 	painting_changed.emit(false)
@@ -322,9 +337,22 @@ func stop_painting() -> void:
 		_reload()  # a área da ficha
 
 
+func _set_territory_mode(mode: String) -> void:
+	if mode == territory_mode:
+		return
+	territory_end()
+	territory_mode = mode
+	if mode == "fronteira":
+		sheet.hide()
+		boundary_tool.start(territory_owner)
+	else:
+		boundary_tool.stop()
+	painting_changed.emit(true)
+
+
 ## O botão esquerdo apertou no globo em n. Pincel e borracha começam uma pincelada; o balde preenche na hora.
 func territory_begin(n: Vector3) -> void:
-	if not painting_territory or n == Vector3.ZERO:
+	if not painting_territory or territory_mode == "fronteira" or n == Vector3.ZERO:
 		return
 	if territory_mode == "balde":
 		var edit = territory.Fill(n, territory_owner, territory_land_only)
@@ -448,8 +476,10 @@ func _save_territory_if_due() -> void:
 
 func _save_territory() -> void:
 	if territory != null and usable and territory.Version != _territory_saved:
-		registry.SaveTerritory(territory)
-		_territory_saved = territory.Version
+		if registry.SaveTerritory(territory) != null:
+			_territory_saved = territory.Version
+		else:
+			_territory_changed_ms = Time.get_ticks_msec()
 
 
 # --- desenhar fronteira ----------------------------------------------------------------------------------------------
@@ -462,6 +492,7 @@ func start_border(place_name: String, role: String, place_id: int = 0) -> void:
 	if place_id == 0 and place_name.strip_edges() == "":
 		sheet.show_border_message("Dê um nome à região antes de desenhar.")
 		return
+	stop_painting()
 	drawing = true
 	_draw_entity = _current
 	_draw_name = place_name.strip_edges()
@@ -619,11 +650,19 @@ func _on_link_search(text: String, dst_kind: String) -> void:
 
 
 func _on_delete() -> void:
-	if territory != null and registry.Kind(_current) == "pais":
-		if painting_territory and territory_owner == _current:
+	var deleted := _current
+	var has_territory: bool = territory != null and registry.Kind(deleted) == "pais" and deleted <= 65535
+	if has_territory:
+		territory_end()
+		if painting_territory and territory_owner == deleted:
 			stop_painting()
-		territory.ClearOwner(_current)  # o território do país apagado some com ele (sem desfazer: o cadastro não volta)
-	registry.Delete(_current)
+	if registry.Delete(deleted) == null:
+		return
+	if has_territory:
+		territory.ClearOwner(deleted)
+		territory.ForgetOwnerBoundaries(deleted)
+		commands.discard_matching(func(cmd: Object) -> bool:
+			return cmd.get_script() == TerritoryEdit and cmd.TouchesOwner(deleted))
 	_current = 0
 	_sheet_hash = 0
 	sheet.hide_sheet()
@@ -718,6 +757,8 @@ func _reload() -> void:
 	else:
 		_sheet_hash = s.hash()
 		sheet.show_sheet(s, registry.LinkTypesFor(s.kind), _calendar_info(s), _geo_info(s))
+		if painting_territory and territory_mode == "fronteira":
+			sheet.hide()
 	refresh_search()
 	refresh_map()
 	refresh_palette()

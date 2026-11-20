@@ -41,3 +41,19 @@ political_on={
 "type": "float",
 "value": 1.0
 }
+satellite_optics={
+"type": "sampler2D",
+"value": "res://shaders/political_default.tres"
+}
+satellite_river_atlas={
+"type": "sampler2D",
+"value": "res://shaders/political_default.tres"
+}
+satellite_optics_on={
+"type": "float",
+"value": 0.0
+}
+satellite_rivers_on={
+"type": "float",
+"value": 0.0
+}

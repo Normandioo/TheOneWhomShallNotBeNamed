@@ -6,8 +6,10 @@ const UiKit = preload("res://scripts/ui/ui_kit.gd")
 const MapLayers = preload("res://scripts/ui/map_layers.gd")
 
 signal layer_selected(index: int)
+signal political_visibility_changed(on: bool)
 
 var layers: OptionButton
+var _countries: CheckBox
 var _cursor: Label
 var _selection: Label
 var _camera: Label
@@ -36,6 +38,11 @@ func _init() -> void:
 		layers.add_item(l["menu"])
 	layers.item_selected.connect(func(item: int) -> void: layer_selected.emit(_item_layer[item]))
 	box.add_child(layers)
+	_countries = CheckBox.new()
+	_countries.text = "Mostrar países"
+	_countries.button_pressed = true
+	_countries.toggled.connect(political_visibility_changed.emit)
+	box.add_child(_countries)
 
 	box.add_child(HSeparator.new())
 	_cursor = _add_label(box, "Passe o mouse sobre o planeta.")
@@ -50,6 +57,10 @@ func show_layer(index: int) -> void:
 	for item in _item_layer:
 		if _item_layer[item] == index:
 			layers.select(item)
+
+
+func show_political(on: bool) -> void:
+	_countries.set_pressed_no_signal(on)
 
 
 func show_cursor(text: String) -> void:
