@@ -43,6 +43,17 @@ func redo() -> bool:
 	return true
 
 
+## Remove comandos ligados a um cadastro excluído definitivamente.
+func discard_matching(matches: Callable) -> void:
+	for history in [_undo, _redo]:
+		for i in range(history.size() - 1, -1, -1):
+			var cmd: Object = history[i]["cmd"]
+			if matches.call(cmd):
+				_bytes -= cmd.Bytes
+				history.remove_at(i)
+	changed.emit()
+
+
 ## Algum comando que dá para desfazer é desse tipo (o script do objeto, como TerrainEdit.cs)? Para saber o que foi editado.
 func has_undoable(script: Script) -> bool:
 	for c in _undo:

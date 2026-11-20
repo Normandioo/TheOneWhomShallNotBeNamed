@@ -166,9 +166,6 @@ func _ribbon(verts: PackedVector3Array, colors: PackedColorArray, dirs: Array[Ve
 ## O contorno que está sendo desenhado: a linha pelos pontos (e, com 3 ou mais, o lado que fecharia, mais fraco) e uma marca em cada ponto.
 ## dirs: direções dos pontos na ordem em que foram clicados; vazio apaga o rascunho.
 func show_draft(dirs: Array) -> void:
-	for l in _draft_labels:
-		l.queue_free()
-	_draft_labels.clear()
 	draft_count = dirs.size()
 	var verts := PackedVector3Array()
 	var colors := PackedColorArray()
@@ -184,7 +181,27 @@ func show_draft(dirs: Array) -> void:
 		if typed.size() >= 3:
 			_ribbon(verts, colors, [typed[typed.size() - 1], typed[0]] as Array[Vector3], w * 0.6, Color(1.0, 0.92, 0.35, 0.35), false)
 	_draft_node.mesh = _build_mesh(verts, colors)
-	for i in typed.size():
+	_show_draft_marks(PackedVector3Array(typed), Color(1.0, 0.92, 0.35))
+
+
+func show_territory_path(curve: PackedVector3Array, controls: PackedVector3Array, draft: bool, altitude_km: float) -> void:
+	var verts := PackedVector3Array()
+	var colors := PackedColorArray()
+	var color := Color(1.0, 0.73, 0.22) if draft else Color(0.28, 1.0, 0.78)
+	if curve.size() >= 2:
+		var dirs: Array[Vector3] = []
+		dirs.assign(Array(curve))
+		var width := clampf(altitude_km / EvronGeo.RADIUS_KM * 0.003, 0.000005, 0.003)
+		_ribbon(verts, colors, dirs, width, color, false)
+	_draft_node.mesh = _build_mesh(verts, colors)
+	_show_draft_marks(controls, color)
+
+
+func _show_draft_marks(points: PackedVector3Array, color: Color) -> void:
+	for label in _draft_labels:
+		label.queue_free()
+	_draft_labels.clear()
+	for i in points.size():
 		var mark := Label3D.new()
 		mark.text = "◉" if i == 0 else "●"
 		mark.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -193,9 +210,9 @@ func show_draft(dirs: Array) -> void:
 		mark.font_size = 36
 		mark.outline_size = 8
 		mark.outline_modulate = Color(0, 0, 0, 0.9)
-		mark.modulate = Color(1.0, 0.92, 0.35)
+		mark.modulate = color
 		mark.no_depth_test = false
-		mark.position = typed[i] * radius * (HEIGHT + 0.0012)
+		mark.position = points[i] * radius * (HEIGHT + 0.0012)
 		add_child(mark)
 		_draft_labels.append(mark)
 

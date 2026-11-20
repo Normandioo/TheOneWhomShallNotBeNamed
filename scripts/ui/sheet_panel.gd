@@ -26,6 +26,7 @@ signal place_focus_requested(place_id: int)
 signal border_draw_requested(name: String, role: String)   # desenhar uma fronteira nova no globo
 signal border_redraw_requested(place_id: int, role: String)  # refazer o contorno de um lugar que já é contorno
 signal territory_paint_requested                              # entrar no modo pintar território para este país
+signal territory_boundary_requested                           # entrar direto no pincel de fronteira do país selecionado
 signal territory_clear_requested                              # apagar todo o território deste país (desfaz com Ctrl+Z)
 signal entity_color_changed(entity_id: int, rgb: int, final: bool)  # final = o usuário fechou o seletor (grava); senão, prévia na paleta
 signal place_search(text: String)  # buscar lugares para os menus (o hub responde com show_place_candidates)
@@ -47,6 +48,7 @@ const ROLES := [
 ]
 
 var _title: Label
+var _boundary_brush: Button
 var _scroll: ScrollContainer
 var _body: VBoxContainer
 var _confirm: ConfirmationDialog
@@ -88,6 +90,11 @@ func _init() -> void:
 	_title.add_theme_font_size_override("font_size", 18)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
+	_boundary_brush = Button.new()
+	_boundary_brush.text = "Pincel de fronteira"
+	_boundary_brush.visible = false
+	_boundary_brush.pressed.connect(func() -> void: territory_boundary_requested.emit())
+	head.add_child(_boundary_brush)
 	var close := Button.new()
 	close.text = "✕"
 	close.flat = true
@@ -118,6 +125,7 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	_geo = geo
 	visible = true
 	_title.text = "Ficha · " + UiKit.kind_label(sheet.kind)
+	_boundary_brush.visible = sheet.kind == "pais" and geo.get("territory", {}).get("ok", false)
 	if _body != null:
 		_scroll.remove_child(_body)
 		_body.queue_free()
