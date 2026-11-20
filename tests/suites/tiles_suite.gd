@@ -134,7 +134,7 @@ func _check_river_repairs() -> bool:
 	await _settle()
 	await save("satelite-ligacao-restaurada")
 	# A primeira falha é a da captura do usuário. A última exigiu ligar uma lacuna dos dados de origem.
-	var repaired := [Vector2(21.505507, 100.796194), Vector2(5.605087, -111.073151), Vector2(-6.063766, 108.500977)]
+	var repaired := [Vector2(21.505507, 100.796194), Vector2(5.612512, -111.079113), Vector2(-6.063766, 108.500977)]
 	for place: Vector2 in repaired:
 		cam.look_at_dir(EvronGeo.dir(place.x, place.y), 1.012)
 		await _settle()

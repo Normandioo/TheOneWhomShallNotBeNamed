@@ -24,6 +24,7 @@ import build_natural as bn
 D = bn.D
 T0 = 0.60
 SOURCE_WIDTH, LARGEST_WIDTH = 0.04, 3.6
+DISPLAY_WIDTH_SCALE = 0.42
 GRID_W, GRID_H = 1024, 512
 # Com canais de até 4,1 km, a cobertura do shader zera a 20 km ou menos.
 HALO_KM = 20.5
@@ -385,7 +386,11 @@ def network():
     mlon = lon[m] + 0.78 * dx_out[np.arange(len(m)), toward] * 360 / sw
     mlat = lat[m] - 0.78 * dy_out[np.arange(len(m)), toward] * 180 / sh
     segs.append((lon[m], lat[m], w[m], mlon, mlat, w[m] * (1 + 0.12 * openness[m])))
-    return [np.concatenate(c) for c in zip(*segs)], n
+    segments = [np.concatenate(c) for c in zip(*segs)]
+    # A escala de exibição preserva o eixo e a forma dos meandros.
+    segments[2] *= DISPLAY_WIDTH_SCALE
+    segments[5] *= DISPLAY_WIDTH_SCALE
+    return segments, n
 
 
 def index_atlas(segs):
