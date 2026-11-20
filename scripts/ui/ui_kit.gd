@@ -40,9 +40,33 @@ static func set_types(types: Array) -> void:
 			custom_labels[String(t.code)] = String(t.label)
 
 
+## As camadas do mapa de presenças vindas do banco (Registry.MapLayers): as de fábrica e as criadas pelo usuário. Começam com as de fábrica.
+static var layer_list: Array = LAYERS.duplicate()
+static var layer_color: Dictionary = LAYER_COLOR.duplicate()
+static var layer_label: Dictionary = LAYER_LABEL.duplicate()
+
+
+static func set_layers(layers: Array) -> void:
+	layer_list = []
+	for l in layers:
+		var code := String(l.code)
+		layer_list.append(code)
+		layer_label[code] = String(l.label)
+		if not LAYER_COLOR.has(code):
+			var rgb := int(l.rgb)
+			layer_color[code] = Color8((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255)
+
+
 ## Todos os tipos de entidade: os de fábrica e depois os criados.
 static func all_kinds() -> Array:
 	return KINDS + custom_kinds
+
+
+## Um número para mostrar: inteiro sem casas, senão com até 2 casas; NaN = "—".
+static func number_text(v: float) -> String:
+	if is_nan(v):
+		return "—"
+	return str(int(v)) if v == floorf(v) and absf(v) < 1e15 else str(snappedf(v, 0.01))
 
 
 static func kind_label(kind: String) -> String:

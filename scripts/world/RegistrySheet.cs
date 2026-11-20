@@ -276,9 +276,11 @@ public partial class Registry
         var values = _db.Rows("select d.code, v.state, v.num, v.text from field_value v join field_def d on d.id = v.field_id where v.entity_id = @0", id)
                         .ToDictionary(r => Str(r[0]), r => r);
         var fields = new GArray();
+        var computedNow = ComputedFields(id, t);
         foreach (var d in FieldsFor(kind))
         {
             string code = (string)d["code"], type = (string)d["type"];
+            if (computedNow.ContainsKey(code)) d["computed"] = computedNow[code];
             d["state"] = "unfilled";
             d["value"] = "";
             if (values.TryGetValue(code, out var v))

@@ -34,6 +34,54 @@ public partial class Registry
         alter table field_def add column max_value real;
         """;
 
+    // As camadas do mapa de presenças como dados: cada tipo de entidade aparece em uma camada (ou em nenhuma). As 6 de fábrica com as
+    // cores de antes; o usuário cria outras e escolhe quais tipos vão para elas.
+    const string MapLayersMigration = """
+        create table map_layer(
+            code text primary key,
+            label text not null,
+            rgb integer not null,
+            builtin integer not null default 0);
+        insert into map_layer(code, label, rgb, builtin) values
+            ('politica', 'Fronteira política', 15889229, 1), ('cultural', 'Presença cultural', 15912013, 1),
+            ('etnica', 'Distribuição étnica', 7592320, 1), ('linguistica', 'Área linguística', 6737138, 1),
+            ('religiosa', 'Presença religiosa', 12553458, 1), ('racial', 'Habitat de raça', 15892671, 1);
+        alter table entity_type add column layer text references map_layer(code);
+        update entity_type set layer = case code
+            when 'pais' then 'politica' when 'provincia' then 'politica' when 'municipio' then 'politica' when 'cultura' then 'cultural'
+            when 'etnia' then 'etnica' when 'idioma' then 'linguistica' when 'religiao' then 'religiosa' when 'raca' then 'racial' end;
+        """;
+
+    /// As camadas do mapa de presenças, as de fábrica primeiro: {code, label, rgb, builtin, kinds (os tipos que ela mostra)}.
+    public Array<Dictionary> MapLayers()
+    {
+        var kinds = _db.Rows("select layer, code from entity_type where layer is not null order by rowid")
+            .GroupBy(r => Str(r[0])).ToDictionary(g => g.Key, g => g.Select(r => Str(r[1])).ToArray());
+        return new(_db.Rows("select code, label, rgb, builtin from map_layer order by builtin desc, rowid")
+            .Select(r => new Dictionary { ["code"] = Str(r[0]), ["label"] = Str(r[1]), ["rgb"] = Convert.ToInt64(r[2]),
+                                          ["builtin"] = Convert.ToInt64(r[3]) == 1,
+                                          ["kinds"] = kinds.TryGetValue(Str(r[0]), out var k) ? k : System.Array.Empty<string>() }));
+    }
+
+    /// Cria uma camada do mapa de presenças (cor RGB de 24 bits) e passa para ela os tipos dados (cada tipo fica numa camada só).
+    /// Devolve o código.
+    public string CreateMapLayer(string label, long rgb, string[] kinds)
+    {
+        label = Clean(label);
+        if (rgb < 0 || rgb > 0xFFFFFF) throw new ArgumentException($"cor fora de 0..16777215: {rgb}");
+        if (kinds.Any(k => !TypeExists(k))) throw new ArgumentException("tipo de entidade inexistente");
+        if (_db.Scalar("select 1 from map_layer where label = @0 collate nocase", label) != null)
+            throw new ArgumentException($"já existe uma camada chamada {label}");
+        return _db.Tx(() =>
+        {
+            string code = UniqueCode(Slug(label, "camada"), c => _db.Scalar("select 1 from map_layer where code = @0", c) != null);
+            _db.Run("insert into map_layer(code, label, rgb) values (@0, @1, @2)", code, label, rgb);
+            foreach (var k in kinds.Distinct()) _db.Run("update entity_type set layer = @0 where code = @1", code, k);
+            _layerOf = null;
+            return code;
+        });
+    }
+
     /// Os tipos de entidade: os de fábrica primeiro, depois os criados, na ordem de criação. {code, label, builtin}.
     public Array<Dictionary> EntityTypes() => new(
         _db.Rows("select code, label, builtin from entity_type order by builtin desc, rowid")

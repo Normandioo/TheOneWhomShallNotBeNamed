@@ -95,7 +95,7 @@ func _add_polygon(verts: PackedVector3Array, colors: PackedColorArray, it: Dicti
 	var dirs: Array[Vector3] = []
 	for i in flat.size() / 2:
 		dirs.append(EvronGeo.dir(flat[2 * i], flat[2 * i + 1]))
-	var color: Color = UiKit.LAYER_COLOR.get(it.layer, Color.WHITE)
+	var color: Color = UiKit.layer_color.get(it.layer, Color.WHITE)
 	var tri := _triangulate(dirs, EvronGeo.dir(it.lat, it.lon))
 	for k in range(0, tri.size(), 3):
 		_fill_triangle(verts, colors, dirs[tri[k]], dirs[tri[k + 1]], dirs[tri[k + 2]], Color(color, 0.16), 0)
@@ -223,7 +223,7 @@ func _add_disc(verts: PackedVector3Array, colors: PackedColorArray, it: Dictiona
 	var any := Vector3.UP if absf(c.y) < 0.99 else Vector3.RIGHT
 	var u := c.cross(any).normalized()
 	var v := c.cross(u)
-	var color: Color = UiKit.LAYER_COLOR.get(it.layer, Color.WHITE)
+	var color: Color = UiKit.layer_color.get(it.layer, Color.WHITE)
 	var steps := clampi(ceili(a / MAX_RING_STEP), 1, 24)
 	for k in range(1, steps + 1):  # preenchimento translúcido, de dentro para fora
 		_band(verts, colors, c, u, v, a * (k - 1) / steps, a * k / steps, HEIGHT - 0.0007, Color(color, 0.16))
@@ -274,7 +274,7 @@ func _add_label(group: Array) -> void:
 	label.font_size = 32
 	label.outline_size = 10
 	label.outline_modulate = Color(0, 0, 0, 0.9)
-	label.modulate = UiKit.LAYER_COLOR.get(first.layer, Color.WHITE).lightened(0.25)
+	label.modulate = UiKit.layer_color.get(first.layer, Color.WHITE).lightened(0.25)
 	label.no_depth_test = false
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	label.position = EvronGeo.dir(first.lat, first.lon) * radius * (HEIGHT + 0.0008)

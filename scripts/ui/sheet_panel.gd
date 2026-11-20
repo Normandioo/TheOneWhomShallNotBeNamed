@@ -369,6 +369,20 @@ func _make_field(f: Dictionary) -> Dictionary:
 			editor.tooltip_text = f.hint
 			editor.placeholder_text = f.hint
 	row.add_child(editor)
+	if f.has("computed"):  # regra automática ou valor fixado, na data mostrada
+		var c: Dictionary = f.computed
+		var shown := Label.new()
+		shown.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		var number := UiKit.number_text(c.value)
+		match String(c.status):
+			"fixado":
+				shown.text = "🔒 %s fixado na data mostrada%s" % [number, " (" + c.note + ")" if c.note != "" else ""]
+			"erro":
+				shown.text = "⚠ a regra \"%s\" não calculou: %s" % [c.rule, c.note]
+			_:
+				shown.text = "= %s pela regra \"%s\" na data mostrada" % [number, c.rule]
+		shown.modulate = Color(0.55, 0.85, 1.0)
+		row.add_child(shown)
 	var entry := {"row": row, "state": state, "editor": editor, "type": f.type, "last_state": f.state, "last_value": f.value}
 	_fields[f.code] = entry
 	_write_editor(entry, f.value)
@@ -532,8 +546,8 @@ func _build_places() -> void:
 			what = "área de %s km" % LayerPanel._thousands(roundi(p.radius_km))
 		var label := Label.new()
 		label.text = "%s · %s (%s)" % [UiKit.role_label(p.role), p.place, what]
-		label.tooltip_text = "%s · certeza %s" % [UiKit.LAYER_LABEL.get(p.layer, p.layer), UiKit.CERTAINTY_LABEL.get(p.certainty, p.certainty)]
-		label.modulate = UiKit.LAYER_COLOR.get(p.layer, Color.WHITE).lightened(0.3)
+		label.tooltip_text = "%s · certeza %s" % [UiKit.layer_label.get(p.layer, p.layer), UiKit.CERTAINTY_LABEL.get(p.certainty, p.certainty)]
+		label.modulate = UiKit.layer_color.get(p.layer, Color.WHITE).lightened(0.3)
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(label)
 		var focus := Button.new()

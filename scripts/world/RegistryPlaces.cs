@@ -81,13 +81,12 @@ public partial class Registry
             primary key (distribution_id, category_id));
         """;
 
-    static readonly string[] Layers = { "politica", "cultural", "etnica", "linguistica", "religiosa", "racial" };
+    System.Collections.Generic.Dictionary<string, string>? _layerOf;  // tipo -> camada do mapa (entity_type.layer); null = reler
 
-    /// A camada do mapa de uma entidade, pelo tipo dela.
-    static string LayerOf(string kind) => kind switch
-    {
-        "pais" or "provincia" or "municipio" => "politica", "cultura" => "cultural", "etnia" => "etnica", "idioma" => "linguistica", "religiao" => "religiosa", _ => "racial",
-    };
+    /// A camada do mapa de uma entidade, pelo tipo dela ("" = o tipo não está em nenhuma camada: não aparece no mapa de presenças).
+    string LayerOf(string kind) =>
+        (_layerOf ??= _db.Rows("select code, layer from entity_type").ToDictionary(r => Str(r[0]), r => Str(r[1])))
+            .TryGetValue(kind, out var layer) ? layer : "";
 
     /// O que se conta para esse tipo de entidade. Contagens de bases diferentes nunca se somam entre si.
     static string BasisOf(string kind) => kind switch
@@ -177,7 +176,7 @@ public partial class Registry
 
     /// Cada presença: id, entity_id, entity, kind, layer, role, certainty, place_id, place, place_kind, lat/lon (o ponto, o centro do disco ou do contorno),
     /// radius_km (0 se ponto ou contorno), vertices (lat0, lon0, lat1, lon1...; vazio se não é contorno), area_km2 (0 se ponto), from e to.
-    static Dictionary PresenceDict(object?[] r, System.Collections.Generic.Dictionary<long, (double[] Flat, double Area)> shapes)
+    Dictionary PresenceDict(object?[] r, System.Collections.Generic.Dictionary<long, (double[] Flat, double Area)> shapes)
     {
         double radius = Convert.ToDouble(r[10]);
         double[] flat = new double[0];

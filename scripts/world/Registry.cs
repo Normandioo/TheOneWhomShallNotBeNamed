@@ -83,6 +83,8 @@ public partial class Registry : RefCounted
         MunicipalityMigration,  // RegistryTerritory.cs
         TerritoryTilesMigration,  // RegistryTerritory.cs
         EntityTypesMigration,  // RegistryTypes.cs
+        MapLayersMigration,  // RegistryTypes.cs
+        RulesMigration,  // RegistryRules.cs
     };
 
     WorldDb _db = new();
@@ -92,6 +94,7 @@ public partial class Registry : RefCounted
     {
         _db.Open(path);
         _openKey = Guid.NewGuid().ToString("N");
+        _layerOf = null;
         try { _db.Migrate(Migrations); }
         catch { _db.Close(); throw; }  // um banco recusado não fica aberto: as chamadas seguintes falham em vez de escrever nele
     }

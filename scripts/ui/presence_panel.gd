@@ -10,6 +10,7 @@ signal political_visibility_changed(on: bool)
 
 var _scope: OptionButton
 var _checks := {}  # camada -> CheckBox
+var _box: VBoxContainer
 
 
 func _init() -> void:
@@ -28,23 +29,31 @@ func _init() -> void:
 	_scope.add_item("Todas as entidades")
 	_scope.item_selected.connect(func(_i: int) -> void: changed.emit())
 	box.add_child(_scope)
-	for layer in UiKit.LAYERS:
+	_box = box
+	refresh_layers()
+
+
+## Acrescenta as camadas que ainda não têm caixa (UiKit.layer_list, vindas do banco): uma camada nova já aparece marcada.
+func refresh_layers() -> void:
+	for layer in UiKit.layer_list:
+		if _checks.has(layer):
+			continue
 		var c := CheckBox.new()
-		c.text = UiKit.LAYER_LABEL[layer]
+		c.text = UiKit.layer_label[layer]
 		c.button_pressed = true
-		c.add_theme_color_override("font_color", UiKit.LAYER_COLOR[layer])
+		c.add_theme_color_override("font_color", UiKit.layer_color[layer])
 		c.toggled.connect(func(_on: bool) -> void: changed.emit())
 		if layer == "politica":
 			c.toggled.connect(political_visibility_changed.emit)
-		box.add_child(c)
+		_box.add_child(c)
 		_checks[layer] = c
 
 
 ## As camadas marcadas.
 func layers() -> PackedStringArray:
 	var out := PackedStringArray()
-	for layer in UiKit.LAYERS:
-		if _checks[layer].button_pressed:
+	for layer in UiKit.layer_list:
+		if _checks.has(layer) and _checks[layer].button_pressed:
 			out.append(layer)
 	return out
 

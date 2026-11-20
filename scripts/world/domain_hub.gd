@@ -14,6 +14,7 @@ const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const TerritoryBoundaryTool = preload("res://scripts/edit/territory_boundary_tool.gd")
 const TerritoryEdit = preload("res://scripts/edit/TerritoryEdit.cs")
 const LayerPanel = preload("res://scripts/ui/layer_panel.gd")
+const Rules = preload("res://scripts/world/rules.gd")
 
 signal painting_changed(on: bool)      # entrou ou saiu do modo pintar território
 signal palette_changed(entries: Array)  # as cores dos países mudaram ([{id, rgb}]): quem desenha atualiza a paleta
@@ -47,6 +48,7 @@ var commands               # a pilha de desfazer (a mesma do terreno)
 var territory_panel        # a barra do modo pintar território
 var import_panel           # a janela de importar PNG
 var types_panel            # o designer de tipos, campos e vínculos
+var rules_panel            # a janela de regras
 var boundary_tool := TerritoryBoundaryTool.new()
 var painting_territory := false  # no modo pintar: o botão esquerdo do mouse pinta
 var territory_stroking := false  # uma pincelada em andamento
@@ -90,6 +92,7 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 	sheet = sheet_panel
 	calendars = calendar_panel
 	UiKit.set_types(registry.EntityTypes())
+	UiKit.set_layers(registry.MapLayers())
 	search.refresh_kinds()
 	search.query_changed.connect(func(_t: String, _k: String) -> void: refresh_search())
 	search.entity_chosen.connect(open)
@@ -162,6 +165,7 @@ func bind_map(place_layer, panel, focus: Callable) -> void:
 	map = place_layer
 	presence_panel = panel
 	focus_map = focus
+	panel.refresh_layers()
 	panel.changed.connect(refresh_map)
 	refresh_map()
 
@@ -177,6 +181,7 @@ func bind_territory(t, stack, panel, more := {}) -> void:
 	for level in levels:
 		if usable:
 			registry.LoadTerritoryLevel(level, levels[level])
+			registry.UseTerritory(level, levels[level])  # o nó "área" das regras lê a área pintada
 		_territory_seen[level] = levels[level].Version
 		_territory_saved[level] = levels[level].Version
 	boundary_tool.setup(territory, registry, map, panel, commands)
@@ -209,6 +214,12 @@ func bind_types(panel) -> void:
 		_types_done(registry.CreateEntityType(label), "Tipo \"%s\" criado: já aparece em \"＋ Novo\"." % label.strip_edges(),
 			"Não deu para criar o tipo (já existe um com esse nome?)."))
 	panel.field_requested.connect(_on_field_requested)
+	panel.layer_requested.connect(func(label: String, rgb: int, kinds: PackedStringArray) -> void:
+		if label.strip_edges() == "" or kinds.is_empty():
+			panel.show_message("Dê um nome à camada e marque ao menos um tipo.")
+			return
+		_types_done(registry.CreateMapLayer(label, rgb, kinds), "Camada \"%s\" criada: aparece em Presenças no mapa." % label.strip_edges(),
+			"Não deu para criar a camada (já existe uma com esse nome?)."))
 	panel.relation_requested.connect(func(out_label: String, in_label: String, src: String, dst: String) -> void:
 		if out_label.strip_edges() == "" or in_label.strip_edges() == "":
 			panel.show_message("Escreva o nome do vínculo nas duas pontas.")
@@ -237,11 +248,97 @@ func _types_done(result, ok_text: String, fail_text: String) -> void:
 	types_panel.show_message(ok_text)
 	types_panel.clear_inputs()
 	UiKit.set_types(registry.EntityTypes())
+	UiKit.set_layers(registry.MapLayers())
 	search.refresh_kinds()
+	if presence_panel != null:
+		presence_panel.refresh_layers()
+		_map_key = 0
+		refresh_map()
 	types_panel.show_types(registry.EntityTypes())
 	if _current != 0:
 		_sheet_hash = 0
 		_reload()
+
+
+## Liga a janela de regras (E3): montar, executar na data mostrada e fixar valores.
+func bind_rules(panel) -> void:
+	rules_panel = panel
+	if not usable:
+		return
+	search.rules_requested.connect(func() -> void:
+		_refresh_rules_panel()
+		panel.open_dialog())
+	panel.kind_selected.connect(func(kind: String) -> void:
+		panel.show_inputs(_numeric_fields(kind), registry.LinkTypesFor(kind), registry.Search("", "", "", 0, shown_t)))
+	panel.save_requested.connect(func(rule_id: int, rule_name: String, definition: String) -> void:
+		if rule_name.strip_edges() == "":
+			panel.show_message("Dê um nome à regra.")
+			return
+		var why: String = registry.ValidateRule(definition)
+		if why != "":
+			panel.show_message("A regra não vale: " + why)
+			return
+		var saved = registry.SaveRule(rule_id, rule_name, definition)
+		if saved == null:
+			panel.show_message("Não deu para salvar a regra.")
+			return
+		panel.saved(int(saved))
+		panel.show_message("Regra salva%s." % (" (versão nova)" if rule_id != 0 else ""))
+		_refresh_rules_panel()
+		_refresh_sheet())
+	panel.run_requested.connect(func(rule_id: int) -> void:
+		var result = registry.RunRule(rule_id, shown_t)
+		if result == null:
+			panel.show_message("A regra não executou (está desativada?).")
+			return
+		result["when"] = Calendar.format(shown_t, false) if has_clock else str(shown_t)
+		panel.show_run(result, rule_id))
+	panel.mode_requested.connect(func(rule_id: int, _mode: String) -> void:
+		for r in registry.Rules():
+			if int(r.id) == rule_id:
+				var modes: Array = panel.MODES
+				registry.SetRuleMode(rule_id, modes[(modes.find(r.mode) + 1) % modes.size()])
+		_refresh_rules_panel()
+		_refresh_sheet())
+	panel.pin_requested.connect(func(entity_id: int, code: String, value: float, reason: String) -> void:
+		if registry.PinField(entity_id, code, value, shown_t, 9223372036854775807, reason) == null:
+			panel.show_message("Não deu para fixar esse valor.")
+		else:
+			panel.show_message("%s fixado em %s a partir de %s. Execute de novo: a regra respeita o valor fixado." % [
+				registry.Name(entity_id), str(value), Calendar.format(shown_t, false) if has_clock else str(shown_t)])
+			_refresh_sheet())
+
+
+func _refresh_sheet() -> void:
+	if _current != 0:
+		_sheet_hash = 0
+		_reload()
+
+
+func _numeric_fields(kind: String) -> Array:
+	return registry.FieldsFor(kind).filter(func(f): return f.type == "number")
+
+
+func _refresh_rules_panel() -> void:
+	var kinds: Array = []
+	for t in registry.EntityTypes():
+		if not _numeric_fields(String(t.code)).is_empty():
+			kinds.append(String(t.code))
+	rules_panel.show_kinds(kinds)
+	var rules: Array = []
+	for r in registry.Rules():
+		var def = JSON.parse_string(r.definition)
+		var names := {}
+		for f in registry.FieldsFor(def.kind):
+			names[f.code] = f.label
+		for l in registry.LinkTypesFor(def.kind):
+			names[l.code] = l.label
+		for e in registry.Search("", "", "", 0, shown_t):
+			names["#%d" % int(e.id)] = e.name
+		var row: Dictionary = r.duplicate()
+		row["text"] = "%s = %s" % [names.get(def.field, def.field), Rules.describe(def.expr, names)]
+		rules.append(row)
+	rules_panel.show_rules(rules)
 
 
 ## Liga a janela de importar PNG.

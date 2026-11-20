@@ -10,6 +10,7 @@ signal create_requested(kind: String, name: String)
 signal society_requested(name: String)
 signal calendars_requested
 signal types_requested
+signal rules_requested
 
 const WIDTH := 320
 const SOCIETY_ID := 100  # item do menu "Novo" que não é um tipo
@@ -53,6 +54,11 @@ func _init() -> void:
 	types_btn.tooltip_text = "Criar tipos de entidade, campos e vínculos"
 	types_btn.pressed.connect(func() -> void: types_requested.emit())
 	head.add_child(types_btn)
+	var rules_btn := Button.new()
+	rules_btn.text = "Regras…"
+	rules_btn.tooltip_text = "Regras que calculam campos, executadas numa data do mundo"
+	rules_btn.pressed.connect(func() -> void: rules_requested.emit())
+	head.add_child(rules_btn)
 
 	_query = LineEdit.new()
 	_query.placeholder_text = "Buscar por nome"

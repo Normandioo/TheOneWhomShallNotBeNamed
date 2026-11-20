@@ -7,6 +7,7 @@ const FIELD_TYPES := [["text", "Texto"], ["number", "Número"], ["choice", "Esco
 
 signal type_requested(label: String)
 signal field_requested(label: String, type: String, unit: String, options: String, min_value: float, max_value: float, kinds: PackedStringArray)
+signal layer_requested(label: String, rgb: int, kinds: PackedStringArray)
 signal relation_requested(out_label: String, in_label: String, src_kind: String, dst_kind: String)
 
 var _dialog: AcceptDialog
@@ -24,6 +25,9 @@ var _rel_out: LineEdit
 var _rel_in: LineEdit
 var _rel_src: OptionButton
 var _rel_dst: OptionButton
+var _layer_name: LineEdit
+var _layer_color: ColorPickerButton
+var _layer_checks: VBoxContainer
 var _codes: Array = []  # códigos dos tipos, na ordem dos menus
 
 
@@ -90,6 +94,23 @@ func _ready() -> void:
 		r2.add_child(pair[1])
 	_button(box, "Criar vínculo", func() -> void:
 		relation_requested.emit(_rel_out.text, _rel_in.text, _menu_code(_rel_src), _menu_code(_rel_dst)))
+	_title(box, "Nova camada do mapa")
+	var l1 := HBoxContainer.new()
+	box.add_child(l1)
+	_layer_name = _line(l1, "Nome da camada (ex.: Fortificações)")
+	_layer_color = ColorPickerButton.new()
+	_layer_color.edit_alpha = false
+	_layer_color.color = Color(0.85, 0.85, 0.85)
+	_layer_color.custom_minimum_size = Vector2(60, 0)
+	l1.add_child(_layer_color)
+	var shows := Label.new()
+	shows.text = "Mostra os tipos (cada tipo fica numa camada só):"
+	box.add_child(shows)
+	_layer_checks = VBoxContainer.new()
+	box.add_child(_layer_checks)
+	_button(box, "Criar camada", func() -> void:
+		var c := _layer_color.color
+		layer_requested.emit(_layer_name.text, (roundi(c.r * 255) << 16) | (roundi(c.g * 255) << 8) | roundi(c.b * 255), _checked(_layer_checks)))
 	add_child(_dialog)
 	_show_field_extras()
 
@@ -102,8 +123,10 @@ func open_dialog() -> void:
 ## Os tipos que existem ({code, label}): refaz os menus e as caixas de "vale para".
 func show_types(types: Array) -> void:
 	_codes.clear()
-	for c in _kind_checks.get_children():
-		c.queue_free()
+	for holder in [_kind_checks, _layer_checks]:
+		for c in holder.get_children():
+			holder.remove_child(c)
+			c.queue_free()
 	for m in [_rel_src, _rel_dst]:
 		m.clear()
 		m.add_item("Qualquer tipo")
@@ -113,6 +136,10 @@ func show_types(types: Array) -> void:
 		check.text = String(t.label)
 		check.set_meta("code", String(t.code))
 		_kind_checks.add_child(check)
+		var lcheck := CheckBox.new()
+		lcheck.text = String(t.label)
+		lcheck.set_meta("code", String(t.code))
+		_layer_checks.add_child(lcheck)
 		for m in [_rel_src, _rel_dst]:
 			m.add_item(String(t.label))
 
@@ -122,16 +149,21 @@ func show_message(text: String) -> void:
 
 
 func clear_inputs() -> void:
-	for e in [_type_name, _field_name, _unit, _min, _max, _rel_out, _rel_in]:
+	for e in [_type_name, _field_name, _unit, _min, _max, _rel_out, _rel_in, _layer_name]:
 		e.text = ""
 	_options.text = ""
 
 
-func _request_field() -> void:
+func _checked(holder: VBoxContainer) -> PackedStringArray:
 	var kinds := PackedStringArray()
-	for c in _kind_checks.get_children():
+	for c in holder.get_children():
 		if c is CheckBox and c.button_pressed:
 			kinds.append(c.get_meta("code"))
+	return kinds
+
+
+func _request_field() -> void:
+	var kinds := _checked(_kind_checks)
 	var type: String = FIELD_TYPES[_field_type.selected][0]
 	field_requested.emit(_field_name.text, type, _unit.text, _options.text, _number(_min.text), _number(_max.text), kinds)
 
