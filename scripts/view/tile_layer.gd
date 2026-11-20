@@ -23,8 +23,6 @@ var radius := 1.0
 var levels := 0
 var tile_px := 512
 var name_id := ""
-var _extension := "jpg"
-var _gutter := 0
 
 var drawn: Array[String] = []     # blocos na tela no último quadro (para os testes e as medições)
 var gutter := 0
@@ -210,8 +208,7 @@ func _add_tile(key: String, img: Image) -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = TILE_SHADER
 	mat.set_shader_parameter("tile", ImageTexture.create_from_image(img))
-	mat.set_shader_parameter("tile_inset", float(_gutter) / (tile_px + 2 * _gutter))
-	mat.set_shader_parameter("satellite", name_id == "natural_satellite")
+	mat.set_shader_parameter("tile_inset", float(gutter) / (tile_px + 2 * gutter))
 	mat.set_shader_parameter("height_map", _height_tex)
 	mat.set_shader_parameter("river_map", _river_tex)
 	mat.set_shader_parameter("natural", name_id == "natural")

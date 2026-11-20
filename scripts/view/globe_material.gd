@@ -113,9 +113,6 @@ const MODES := {"image": 0, "altitude": 1, "natural": 2, "tiles": 0, "season": 3
 const MapLayers = preload("res://scripts/ui/map_layers.gd")
 
 var _season_loaded := false
-var _satellite_loaded := false
-var _satellite_optics: ImageTexture
-var _satellite_river_atlas: ImageTexture
 
 
 ## Mostra a camada `layer` (uma entrada de MapLayers.LAYERS). A altitude calibrada não precisa de imagem.

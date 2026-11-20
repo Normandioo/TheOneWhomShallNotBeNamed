@@ -2,6 +2,7 @@
 ## A pasta tem .gdignore: o Godot não importa as imagens, elas são lidas em tempo de execução e ficam sem perda.
 
 
+const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const DIR := "res://data/evron/"
 # shortcut: data/evron/ não entra no export (tem .gdignore); ao distribuir, ler de uma pasta do projeto do usuário.
 const HEIGHT_FILE := "height_4096x2048.f32"
