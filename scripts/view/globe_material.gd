@@ -13,6 +13,7 @@ var material: ShaderMaterial
 var river_texture: ImageTexture
 var political_texture: ImageTexture          # os donos de cada pixel (RG8)
 var political_palette_texture: ImageTexture  # 256×256: a cor de cada país por id
+var political_top_texture: ImageTexture      # 256×256 RG8: o país de cada id (a província aponta para o país)
 var height_texture: ImageTexture  # também usada pelos blocos (TileLayer), para o mesmo relevo
 var coast_texture: ImageTexture   # mapa político: distância à costa e lagos (Terrain.CoastImage)
 var layer_file := ""  # arquivo da camada carregada ("" = nenhuma)
@@ -44,19 +45,30 @@ func refresh_political(owners: Image) -> void:
 	political_texture.update(owners)
 
 
-## A paleta: entries = [{id, rgb}] (Registry.CountryPalette). Ids sem entrada ficam sem cor (alfa 0).
+## A paleta: entries = [{id, rgb, top}] (top: o país de uma província; sem top = o próprio id). Ids sem entrada ficam sem cor (alfa 0).
 func set_political_palette(entries: Array) -> void:
 	var img := Image.create(256, 256, false, Image.FORMAT_RGBA8)
+	var tops := Image.create(256, 256, false, Image.FORMAT_RG8)
 	for e in entries:
 		var id := int(e.id)
 		var rgb := int(e.rgb)
+		var top := int(e.get("top", id))
 		if id > 0 and id <= 65535:
 			img.set_pixel(id & 255, id >> 8, Color8((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, 255))
+			tops.set_pixel(id & 255, id >> 8, Color8(top & 255, (top >> 8) & 255, 0, 255))
 	if political_palette_texture == null:
 		political_palette_texture = ImageTexture.create_from_image(img)
+		political_top_texture = ImageTexture.create_from_image(tops)
 		RenderingServer.global_shader_parameter_set("political_palette", political_palette_texture)
+		RenderingServer.global_shader_parameter_set("political_top", political_top_texture)
 	else:
 		political_palette_texture.update(img)
+		political_top_texture.update(tops)
+
+
+## O país (ou o topo) selecionado na ficha fica destacado no mapa; 0 = nenhum.
+func set_political_selected(id: int) -> void:
+	RenderingServer.global_shader_parameter_set("political_selected", id)
 
 
 ## A costa do mapa político (RGH: km até a costa, lago). Cria a textura na primeira vez; depois só a atualiza.

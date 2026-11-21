@@ -60,9 +60,27 @@ public partial class Registry
             primary key (level, tx, ty));
         """;
 
-    /// Os níveis territoriais, do maior para o menor. O nível de uma entidade é o tipo dela; cada nível abaixo do primeiro se liga
-    /// ao de cima pelo vínculo "<nível>_de" (província de, município de).
-    public static readonly string[] Levels = { "pais", "provincia", "municipio" };
+    // Áreas pintadas de religião, cultura, etnia, raça e idioma: cada uma é uma camada como a dos países (o que predomina em cada pixel).
+    const string CulturalLayersMigration = """
+        PRAGMA writable_schema = ON;
+        update sqlite_master set sql = replace(sql, 'municipio''))', 'municipio'',''religiao'',''cultura'',''etnia'',''raca'',''idioma''))')
+            where type = 'table' and name = 'territory_layer';
+        PRAGMA writable_schema = RESET;
+        """;
+
+    /// As camadas pintáveis. As três primeiras são a hierarquia política, do maior para o menor: cada nível abaixo do primeiro se liga ao
+    /// de cima pelo vínculo "<nível>_de" (província de, município de). As outras são áreas de predominância, independentes.
+    public static readonly string[] Levels = { "pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma" };
+    static readonly string[] Hierarchy = { "pais", "provincia", "municipio" };
+
+    /// O cadastro do nível de cima a que esta província ou município pertence hoje (vínculo "<nível>_de"); 0 se não tem ou não é desses níveis.
+    public long TerritoryParent(long id)
+    {
+        string kind = Kind(id);
+        if (System.Array.IndexOf(Hierarchy, kind) < 1) return 0;
+        return _db.Scalar("select dst from relation where src = @0 and type = @1 and valid_to = @2 order by valid_from desc limit 1",
+            id, kind + "_de", Forever) is object o ? Convert.ToInt64(o) : 0;
+    }
 
     /// Grava a camada dos países (substitui a anterior). Devolve o tamanho gravado, em bytes.
     public long SaveTerritory(Territory t) => SaveTerritoryLevel("pais", t);

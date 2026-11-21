@@ -1,0 +1,165 @@
+extends "res://tests/test_suite.gd"
+## Na cena: "Nova província" pela ficha do país (cria, liga e já pinta só dentro do país), a tela do modo província com os países por
+## baixo, e pintar a área de uma religião na camada dela. Roda com a cena (argumento "scene").
+
+const EvronGeo = preload("res://scripts/data/evron_geo.gd")
+
+
+var c_lat := 0.0
+var c_lon := 0.0
+
+
+## Onde há mais terra (o mapa real é quase todo mar nos pontos fixos): os países do teste ficam ali.
+func _land_center() -> void:
+	var best := -1
+	for lat in range(-40, 41, 10):
+		for lon in range(-180, 180, 10):
+			var n := 0
+			for dy in range(-12, 13, 4):
+				for dx in range(-24, 25, 4):
+					if main.terrain.HeightAt(EvronGeo.dir(lat + dy, lon + dx)) >= 0.0:
+						n += 1
+			if n > best:
+				best = n
+				c_lat = lat
+				c_lon = lon
+
+
+func _d(lat: float, lon: float) -> Vector3:
+	return EvronGeo.dir(c_lat + lat, c_lon + lon)
+
+
+func run() -> void:
+	_land_center()
+	var hub = main.domains
+	var reg = hub.registry
+	var aren: int = reg.Create("pais", "Aren")
+	var dravia: int = reg.Create("pais", "Dravia")
+	for pair in [[aren, 20.0], [dravia, 60.0]]:
+		main.territory.Begin()
+		main.territory.Dab(_d(0, pair[1] - 40.0), 1500, pair[0], true, -1)
+		main.territory.End()
+	hub.open(aren)
+	await frames(2)
+	hub.sheet.subdivision_requested.emit()
+	var prov: int = hub.current()
+	if reg.Kind(prov) != "provincia" or reg.TerritoryParent(prov) != aren or not hub.painting_territory or hub.territory_level != "provincia":
+		return fail("Nova província cria, liga ao país e abre o pincel no nível província")
+	var shown: PackedByteArray = hub.political_image().get_data()
+	var aren_px: int = main.terrain.PixelOf(_d(0, -20))
+	if shown.decode_u16(aren_px * 2) != aren:
+		return fail("no modo província o mapa ainda mostra os países (antes ficava vazio)")
+	hub.territory_radius = 4000.0
+	hub.territory_land_only = false  # o mapa real tem mar nesses pontos
+	hub.territory_begin(_d(0, 0))
+	hub.territory_end()
+	var provinces = hub.layer("provincia")
+	if provinces.OwnerAt(_d(0, -20)) != prov or provinces.OwnerAt(_d(0, 20)) != 0:
+		return fail("a província pinta só dentro de Aren (Dravia fica de fora): %d %d %d" % [provinces.OwnerAt(_d(0, -20)), provinces.OwnerAt(_d(0, 20)), provinces.Pixels(prov)])
+	shown = hub.political_image().get_data()
+	if shown.decode_u16(aren_px * 2) != prov or shown.decode_u16(main.terrain.PixelOf(_d(0, 20)) * 2) != dravia:
+		return fail("a tela mostra a província por cima e Dravia por baixo")
+	hub.stop_painting()
+	hub.open(aren)
+	hub.sheet.subdivision_requested.emit()
+	var prov2: int = hub.current()
+	hub.territory_radius = 700.0
+	hub.territory_begin(_d(3, -14))
+	hub.territory_end()
+	hub.stop_painting()
+	if hub.layer("provincia").OwnerAt(_d(3, -14)) != prov2:
+		return fail("uma segunda província dentro de Aren")
+	# Estilo Europa Universalis: a província tem a cor do país (a paleta aponta a província para o país).
+	var second = _id_of(hub, "provincia", prov)
+	if hub.selection_changed.get_connections().is_empty() or hub._selected_top != aren:
+		return fail("com a província aberta, o país dela fica selecionado no mapa: %d" % hub._selected_top)
+	hub.open(aren)
+	if hub._selected_top != aren:
+		return fail("abrir o país o seleciona")
+	if DisplayServer.get_name() != "headless":
+		await _shots(hub, aren)
+	ok("Nova província: criada e ligada pela ficha, pinta só dentro do país, e o mapa mostra os países por baixo")
+
+	# O caso relatado: país novo, contorno fechado em terra vazia com o pincel de fronteira. Parar o mouse mostra a prévia sem mudar
+	# nada; soltar aplica; Terminar mantém (antes a prévia era descartada e o país ficava sem território).
+	var fresh: int = reg.Create("pais", "Teste vazio")
+	hub.open(fresh)
+	hub.start_painting(fresh, "fronteira")
+	var tool = hub.boundary_tool
+	tool.land_only = false
+	var ring := [[_d(8, 40), Vector2(0, 0)], [_d(8, 52), Vector2(120, 0)], [_d(-8, 52), Vector2(120, 120)], [_d(-8, 40), Vector2(0, 120)], [_d(7, 40.5), Vector2(4, 4)]]
+	tool.press(ring[0][0], ring[0][1], 3000.0)
+	for k in range(1, ring.size()):
+		tool.drag(ring[k][0], ring[k][1])
+	tool._moved_ms -= 1000  # o mouse parou
+	tool.tick()
+	if not tool.has_preview() or main.territory.AreaKm2(fresh) != 0.0:
+		return fail("parar o mouse mostra a prévia e ainda não muda o mapa: " + hub.territory_panel._boundary_status.text)
+	tool.release()
+	if tool.has_preview() or main.territory.OwnerAt(_d(0, 46)) != fresh:
+		return fail("soltar o mouse aplica o contorno")
+	hub.territory_panel.finish_requested.emit()  # o botão Terminar
+	if main.territory.OwnerAt(_d(0, 46)) != fresh or main.territory.AreaKm2(fresh) <= 0.0:
+		return fail("Terminar com a prévia na tela confirma o contorno: o país fica com o território")
+	main.undo()
+	if main.territory.AreaKm2(fresh) != 0.0:
+		return fail("Ctrl+Z desfaz o contorno confirmado pelo Terminar")
+	main.redo()
+	# Linha aberta em terra livre: sai da borda do país e volta a ela; o bolsão entre a linha e o território passa para o país.
+	hub.open(fresh)
+	hub.start_painting(fresh, "fronteira")
+	tool.land_only = false
+	var before_km2: float = main.territory.AreaKm2(fresh)
+	var bulge := [[_d(-6, 47), Vector2(0, 0)], [_d(-6, 58), Vector2(80, 0)], [_d(6, 58), Vector2(80, 90)], [_d(6, 47), Vector2(0, 90)]]
+	tool.press(bulge[0][0], bulge[0][1], 3000.0)
+	for k in range(1, bulge.size()):
+		tool.drag(bulge[k][0], bulge[k][1])
+	tool.release()
+	if main.territory.OwnerAt(_d(0, 55)) != fresh or main.territory.AreaKm2(fresh) <= before_km2:
+		return fail("a linha aberta pela terra livre amplia o país: " + hub.territory_panel._boundary_status.text)
+	if main.territory.OwnerAt(_d(0, 62)) == fresh:
+		return fail("só o bolsão entre a linha e o país, não o resto do mundo")
+	hub.stop_painting()
+	ok("país novo: contorno fechado em terra vazia (prévia ao parar o mouse, aplica ao soltar, Terminar mantém); linha aberta amplia por terra livre")
+
+	var faith: int = reg.Create("religiao", "Fé do Sol")
+	hub.open(faith)
+	hub.start_painting(faith)
+	if hub.territory_level != "religiao" or not hub.painting_territory:
+		return fail("pintar uma religião abre a camada de religiões")
+	hub.territory_begin(_d(5, -10))
+	hub.territory_end()
+	if hub.layer("religiao").OwnerAt(_d(5, -10)) != faith or main.territory.OwnerAt(_d(5, -10)) == faith:
+		return fail("a religião fica na camada dela, sem mexer nos países")
+	if not main.layer_panel._level.get_item_text(main.layer_panel.LEVELS.find("religiao")).begins_with("Religi"):
+		return fail("o menu de camadas tem Religiões")
+	hub.stop_painting()
+	ok("área de religião pintada na camada própria; o menu de camadas tem Religiões, Culturas, Etnias, Raças e Idiomas")
+
+
+func _id_of(_hub, _kind: String, id: int) -> int:
+	return id
+
+
+## Capturas para conferir o visual: o país selecionado com as províncias, no mapa político e na camada de satélite, e sem seleção.
+func _shots(hub, aren: int) -> void:
+	var MapLayers = load("res://scripts/ui/map_layers.gd")
+	var political := -1
+	for i in MapLayers.LAYERS.size():
+		if MapLayers.LAYERS[i]["menu"] == "Mapa político":
+			political = i
+	main.globe.focus(_d(0, -10), 1.9)
+	hub.sheet.hide()
+	main.hud.visible = false
+	main.set_layer(political)
+	await frames(30)
+	await save("eu_mapa_politico_selecionado")
+	main.set_layer(0)
+	await frames(30)
+	await save("eu_satelite_selecionado")
+	hub._current = 0
+	hub._refresh_selection()
+	main.set_layer(political)
+	await frames(30)
+	await save("eu_mapa_politico_sem_selecao")
+	main.hud.visible = true

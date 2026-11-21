@@ -80,6 +80,8 @@ public partial class Territory
         RestoreBoundaries(boundaries);
         B = bytes;
         _rowTop = 0;
+        _compTop = 0;
+        _compBottom = Size.Y - 1;
         _rowBottom = Size.Y - 1;
         Dirty = true;
         Touch();

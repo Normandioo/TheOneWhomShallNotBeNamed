@@ -47,8 +47,6 @@ var domains_db := "user://evron_world.db"
 
 var terrain: Terrain
 var territory: Territory  # a camada dos países: o dono de cada pixel
-var provinces: Territory  # a camada das províncias, independente da dos países
-var municipalities: Territory  # a camada dos municípios
 var commands := CommandStack.new()
 var brush: TerrainBrush
 var material := GlobeMaterial.new()
@@ -73,6 +71,18 @@ var _since_political := 0.0
 var _coast_stale := true  # a costa do mapa político está atrasada em relação à altitude
 
 
+var _flow: Image  # os rios grandes do Gleba, para as camadas criadas depois
+
+
+## Uma camada pintável vazia, na mesma grade (o DomainHub cria as de província, religião etc. na primeira vez que são usadas).
+func _new_layer() -> Territory:
+	var t := Territory.new()
+	t.Setup(terrain)
+	if _flow != null:
+		t.SetRiverFlow(_flow)
+	return t
+
+
 func _ready() -> void:
 	if not EvronMaps.available():
 		push_error("Mapas não encontrados em data/evron/. Rode: python tools/import_maps.py <caminho>/mapas.zip")
@@ -81,18 +91,13 @@ func _ready() -> void:
 	brush = TerrainBrush.new(terrain, commands)
 	territory = Territory.new()
 	territory.Setup(terrain)
-	provinces = Territory.new()
-	provinces.Setup(terrain)
-	municipalities = Territory.new()
-	municipalities.Setup(terrain)
 	var lakes := EvronMaps.load_layer("Waterbodies.png")
 	if lakes != null:
 		terrain.SetLakes(lakes)  # lagos do Gleba: água no mapa político e nas fronteiras naturais
 	var flow := EvronMaps.load_layer("Waterflow.png")
 	if flow != null:
 		territory.SetRiverFlow(flow)  # os rios grandes do Gleba seguram as fronteiras naturais
-		provinces.SetRiverFlow(flow)
-		municipalities.SetRiverFlow(flow)
+	_flow = flow
 	material.set_height(terrain.HeightImage())
 	material.set_rivers(terrain.RiversImage())
 	globe = GlobeView.new()
@@ -126,11 +131,12 @@ func _ready() -> void:
 	var territory_panel := TerritoryPanel.new()
 	hud.add_child(territory_panel)
 	domains.palette_changed.connect(material.set_political_palette)
+	domains.selection_changed.connect(material.set_political_selected)
 	domains.painting_changed.connect(_on_painting_changed)
-	domains.bind_territory(territory, commands, territory_panel, {"provincia": provinces, "municipio": municipalities})  # lê as camadas gravadas e manda a paleta
+	domains.bind_territory(territory, commands, territory_panel, {}, _new_layer)  # lê a camada dos países e manda a paleta; as outras sob demanda
 	material.set_political(territory.OwnersImage())
-	domains.territory_level_shown.connect(func(level: String, layer) -> void:
-		material.set_political(layer.OwnersImage())
+	domains.territory_level_shown.connect(func(level: String, _layer) -> void:
+		material.set_political(domains.political_image())
 		layer_panel.show_level(level))
 	layer_panel.level_selected.connect(domains.show_level)
 	layer_panel.export_requested.connect(func() -> void: _world_dialog(true))
@@ -145,7 +151,7 @@ func _ready() -> void:
 	hud.add_child(import_panel)
 	domains.bind_import(import_panel)
 	domains.boundary_tool.preview_changed.connect(func(img) -> void:
-		material.set_political(img if img != null else domains.territory.OwnersImage()))
+		material.set_political(img if img != null else domains.political_image()))
 	if save_path != "":
 		WorldStore.load_into(clock, save_path)  # sem salvamento válido, abre o cenário técnico, pausado
 	demo.attach(clock)
@@ -204,10 +210,10 @@ func _process(delta: float) -> void:
 	if _coast_stale and not brush.active and MapLayers.LAYERS[layer]["kind"] == "political":
 		material.set_coast(terrain.CoastImage())  # só com o mapa político na tela e fora da pincelada
 		_coast_stale = false
-	var shown = domains.territory  # só a camada do nível mostrado vai à GPU; a outra é enviada inteira ao ser mostrada
-	if shown.Dirty and (not domains.territory_stroking or _since_political >= 0.1):
-		material.refresh_political(shown.OwnersImage())  # durante a pincelada, no máximo 10x por segundo (a camada inteira: 16 MiB)
-		shown.Dirty = false
+	domains.boundary_tool.tick()  # prévia do traço de fronteira quando o mouse para
+	# Só as camadas mostradas (a do nível e as de cima) vão à GPU, compostas; durante a pincelada, no máximo 10x por segundo (16 MiB).
+	if (not domains.territory_stroking or _since_political >= 0.1) and domains.political_dirty():
+		material.refresh_political(domains.political_image())
 		_since_political = 0.0
 	_since_political += delta
 	if terrain.RiversDirty and not brush.active:  # os rios só mudam ao soltar o mouse, desfazer ou refazer

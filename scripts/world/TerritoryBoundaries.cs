@@ -62,7 +62,11 @@ public partial class Territory
     }
 
     /// Descobre o país cortado e a parte ligada ao país selecionado, sem alterar o mapa.
-    public Godot.Collections.Dictionary PlanBoundaryClaim(int target, Vector3[] controls, int id)
+    public Godot.Collections.Dictionary PlanBoundaryClaim(int target, Vector3[] controls, int id) => PlanBoundaryClaimOn(target, controls, id, false);
+
+    /// Como PlanBoundaryClaim, e também em terra sem dono: uma linha aberta que sai da borda do selecionado e volta a ela toma o bolsão
+    /// de terra livre entre a linha e o território (o menor lado que encosta nele). landOnly: desse bolsão, só a terra.
+    public Godot.Collections.Dictionary PlanBoundaryClaimOn(int target, Vector3[] controls, int id, bool landOnly)
     {
         if (_stroke != null || !ValidOwner(target)) return RefuseBoundary("Selecione um país no mapa.");
         if (!ValidBoundaryPoints(controls))
@@ -126,7 +130,7 @@ public partial class Territory
         {
             int p = (int)(edge >> 32), q = (int)edge;
             int owner = OwnerBefore(p);
-            if (owner == 0 || owner == target || OwnerBefore(q) != owner || (previous != null && owner != previous.Source)) continue;
+            if (owner == target || OwnerBefore(q) != owner || (previous != null && owner != previous.Source)) continue;
             int left = LabelPart(p, owner), right = LabelPart(q, owner);
             if (left == right) continue;
             if (!cuts.TryGetValue(owner, out var cut)) cut = (new HashSet<int>(), 0);
@@ -134,7 +138,7 @@ public partial class Territory
             cut.Parts.Add(right);
             cuts[owner] = (cut.Parts, cut.Crossings + 1);
         }
-        if (cuts.Count == 0) return RefuseBoundary("Atravesse o país vizinho de uma borda à outra para separar um pedaço.");
+        if (cuts.Count == 0) return RefuseBoundary("Comece e termine o traço DENTRO do território (atravessando um vizinho, ou saindo pela terra livre e voltando), ou feche um contorno em terra livre.");
 
         // As pontas podem passar pela borda de um terceiro país. Só usa o corte claramente predominante.
         var ranked = cuts.OrderByDescending(c => c.Value.Crossings).ToArray();
@@ -148,7 +152,12 @@ public partial class Territory
         if (candidates.Length == 0) return RefuseBoundary("O pedaço separado precisa encostar no país selecionado.");
 
         // Mais de um lado encosta no selecionado: nada é escolhido às escondidas; o plano leva todos e quem decide é o usuário (Choose).
-        var choices = candidates.Select(c => { var px = c.Pixels.ToArray(); Array.Sort(px); return px; }).ToArray();
+        // Em terra livre o bolsão leva só o que pode: terra (landOnly) e dentro da máscara (a província dentro do país).
+        var choices = candidates
+            .Select(c => c.Pixels.Where(p => source != 0 || ((!landOnly || terrain.H[p] >= 0f) && Allowed(p))).ToArray())
+            .Where(px => px.Length > 0)
+            .Select(px => { Array.Sort(px); return px; }).ToArray();
+        if (choices.Length == 0) return RefuseBoundary("O pedaço separado não tem terra que possa ser tomada.");
         var plan = new TerritoryBoundaryPlan
         {
             Map = this,
@@ -245,7 +254,7 @@ public partial class Territory
 
     private static bool ValidBoundaryPoints(Vector3[] points)
     {
-        if (points.Length < 2 || points.Length > MaxBoundaryPoints) return false;
+        if (points.Length < 2 || points.Length > MaxBoundaryPoints + 1) return false;  // +1: o contorno fechado repete o primeiro ponto
         for (int i = 0; i < points.Length; i++)
         {
             if (!points[i].IsFinite() || !points[i].IsNormalized()) return false;
@@ -321,8 +330,9 @@ public partial class Territory
         {
             int id = reader.ReadInt32(), source = reader.ReadInt32(), target = reader.ReadInt32();
             int pointsCount = reader.ReadInt32();
-            if (id <= 0 || id == int.MaxValue || !ValidOwner(source) || !ValidOwner(target) || source == target ||
-                pointsCount < 2 || pointsCount > MaxBoundaryPoints)
+            // source 0 = a área veio de terra sem dono (contorno fechado ou bolsão de terra livre); o contorno guarda o ponto de volta (+1).
+            if (id <= 0 || id == int.MaxValue || (source != 0 && !ValidOwner(source)) || !ValidOwner(target) || source == target ||
+                pointsCount < 2 || pointsCount > MaxBoundaryPoints + 1)
                 throw new InvalidDataException("Identidade ou geometria de fronteira inválida.");
             var points = new Vector3[pointsCount];
             for (int p = 0; p < points.Length; p++) points[p] = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());

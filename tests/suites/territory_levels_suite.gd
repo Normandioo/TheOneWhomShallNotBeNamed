@@ -137,6 +137,68 @@ func run() -> void:
 	reg.Close()
 	ok("gravar e reabrir conserva cada camada; paleta por nível; municípios com avisos em relação à província (critério 7)")
 
+	# A tela no modo província: países por baixo onde não há província (a camada das províncias sozinha estaria quase vazia).
+	reg.Open(path)
+	var comp: Image = provinces.Composite([countries])
+	var at_p1: int = terrain.PixelOf(EvronGeo.dir(0, 55))
+	var at_a_only: int = terrain.PixelOf(EvronGeo.dir(-12, 45))
+	var at_b: int = terrain.PixelOf(EvronGeo.dir(0, 130))
+	var bytes: PackedByteArray = comp.get_data()
+	if bytes.decode_u16(at_p1 * 2) != p1 or bytes.decode_u16(at_a_only * 2) != a or bytes.decode_u16(at_b * 2) != b:
+		return fail("a composição mostra a província por cima e o país onde não há província")
+	# Máscara: a província só pinta dentro do país ligado a ela (Dravia fica de fora).
+	if reg.TerritoryParent(p1) != a or reg.TerritoryParent(a) != 0:
+		return fail("o país de uma província vem do vínculo")
+	var masked = _layer(terrain)
+	masked.SetMask(countries, a)
+	_paint(masked, 0, 90, 4000, p1)  # um disco enorme que cobre Aren e Dravia
+	if masked.OwnerAt(EvronGeo.dir(0, 60)) != p1 or masked.OwnerAt(EvronGeo.dir(0, 130)) != 0 or masked.OwnerAt(EvronGeo.dir(60, -100)) != 0:
+		return fail("com a máscara a província pinta só dentro de Aren")
+	ok("tela do modo província: países por baixo; província só pinta dentro do seu país")
+
+	# Contorno fechado em terra vazia: o mundo começa sem dono.
+	var empty_world = _layer(terrain)
+	var loop := PackedVector3Array([EvronGeo.dir(10, -60), EvronGeo.dir(10, -40), EvronGeo.dir(-10, -40), EvronGeo.dir(-10, -60)])
+	var claim: Dictionary = empty_world.PlanLoopClaim(a, loop, 0, false)
+	if not claim.has("plan"):
+		return fail("o contorno fechado em terra vazia gera um plano: %s" % [claim])
+	var edit = empty_world.ApplyBoundary(claim.plan)
+	if edit == null or empty_world.OwnerAt(EvronGeo.dir(0, -50)) != a or empty_world.OwnerAt(EvronGeo.dir(0, -30)) != 0 or empty_world.OwnerAt(EvronGeo.dir(30, -50)) != 0:
+		return fail("só o de dentro do contorno passa para Aren")
+	if empty_world.BoundariesFor(a).size() != 1 or int(empty_world.BoundariesFor(a)[0].source) != 0:
+		return fail("o contorno fica guardado e editável (origem: terra sem dono)")
+	reg.SaveTerritoryLevel("municipio", empty_world)  # qualquer nível serve: o contorno (origem 0) precisa voltar ao reabrir
+	var reloaded = _layer(terrain)
+	if not reg.LoadTerritoryLevel("municipio", reloaded) or reloaded.Pack() != empty_world.Pack() 			or reloaded.BoundariesFor(a).size() != 1 or int(reloaded.BoundariesFor(a)[0].source) != 0:
+		return fail("o contorno em terra sem dono é gravado e relido (antes a leitura recusava a origem 0 e a camada não abria)")
+	var twice: Dictionary = empty_world.PlanLoopClaim(a, loop, 0, false)
+	if twice.has("plan"):
+		return fail("um contorno onde já não há terra sem dono é recusado")
+	edit.Undo()
+	if empty_world.OwnerAt(EvronGeo.dir(0, -50)) != 0:
+		return fail("desfazer o contorno devolve a terra")
+	ok("contorno fechado toma só a terra sem dono de dentro, fica editável e se desfaz")
+
+	# Áreas de religião, cultura, etnia, raça e idioma: camadas pintáveis gravadas à parte.
+	var faith: int = reg.Create("religiao", "Fé do Sol")
+	var tongue: int = reg.Create("idioma", "Ariano")
+	var faith_layer = _layer(terrain)
+	var tongue_layer = _layer(terrain)
+	_paint(faith_layer, 20, 20, 1500, faith)
+	_paint(tongue_layer, 0, 60, 900, tongue)
+	reg.SaveTerritoryLevel("religiao", faith_layer)
+	reg.SaveTerritoryLevel("idioma", tongue_layer)
+	reg.Close()
+	reg.Open(path)
+	var faith_back = _layer(terrain)
+	var tongue_back = _layer(terrain)
+	if not reg.LoadTerritoryLevel("religiao", faith_back) or faith_back.Pack() != faith_layer.Pack() 			or not reg.LoadTerritoryLevel("idioma", tongue_back) or tongue_back.Pack() != tongue_layer.Pack():
+		return fail("as áreas de religião e idioma são gravadas e voltam iguais")
+	if reg.Palette("religiao").size() != 1 or not reg.LoadTerritoryLevel("pais", _layer(terrain)):
+		return fail("paleta por nível e os países continuam lá")
+	reg.Close()
+	ok("áreas de religião e idioma: camadas próprias, gravadas e relidas")
+
 	# Tiles: numa grade de 1024 × 512 (2 × 1 tiles de 512), só o tile mexido é regravado; reabrir monta a camada igual.
 	var wide_img := Image.create(1024, 512, false, Image.FORMAT_RF)
 	var wide = load("res://scripts/world/Terrain.cs").new()

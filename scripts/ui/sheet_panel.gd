@@ -27,6 +27,7 @@ signal border_draw_requested(name: String, role: String)   # desenhar uma fronte
 signal border_redraw_requested(place_id: int, role: String)  # refazer o contorno de um lugar que já é contorno
 signal territory_paint_requested                              # entrar no modo pintar território para este país
 signal territory_boundary_requested                           # entrar direto no pincel de fronteira do país selecionado
+signal subdivision_requested                                # criar uma província (ou município) dentro deste cadastro e pintá-la
 signal territory_clear_requested                              # apagar todo o território deste país (desfaz com Ctrl+Z)
 signal entity_color_changed(entity_id: int, rgb: int, final: bool)  # final = o usuário fechou o seletor (grava); senão, prévia na paleta
 signal place_search(text: String)  # buscar lugares para os menus (o hub responde com show_place_candidates)
@@ -125,7 +126,7 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	_geo = geo
 	visible = true
 	_title.text = "Ficha · " + UiKit.kind_label(sheet.kind)
-	_boundary_brush.visible = sheet.kind in ["pais", "provincia", "municipio"] and geo.get("territory", {}).get("ok", false)
+	_boundary_brush.visible = geo.get("territory", {}).get("ok", false)
 	if _body != null:
 		_scroll.remove_child(_body)
 		_body.queue_free()
@@ -491,7 +492,7 @@ func _build_territory() -> void:
 		return
 	var info: Dictionary = _geo.territory
 	var eid := int(_sheet.id)
-	var box := _section("Território")
+	var box := _section("Território" if _sheet.kind in ["pais", "provincia", "municipio"] else "Área no mapa")
 	box.add_child(_note("≈ %s km² pintados no mapa." % LayerPanel._thousands(roundi(info.area_km2)) if info.area_km2 > 0.0 else "Ainda sem território pintado."))
 	var color_row := HBoxContainer.new()
 	box.add_child(color_row)
@@ -521,6 +522,14 @@ func _build_territory() -> void:
 	clear.tooltip_text = "Apaga todo o território pintado deste cadastro (Ctrl+Z desfaz)"
 	clear.pressed.connect(func() -> void: territory_clear_requested.emit())
 	row.add_child(clear)
+	var child_label: String = {"pais": "Nova província", "provincia": "Novo município"}.get(_sheet.kind, "")
+	if child_label != "":
+		var sub := Button.new()
+		sub.text = child_label
+		sub.tooltip_text = "Cria, liga a este cadastro e já abre o pincel: a pintura fica dentro do território dele."
+		sub.disabled = not info.ok or info.area_km2 <= 0.0
+		sub.pressed.connect(func() -> void: subdivision_requested.emit())
+		row.add_child(sub)
 	_territory_msg = _note("")
 	box.add_child(_territory_msg)
 

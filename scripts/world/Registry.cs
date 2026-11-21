@@ -85,6 +85,7 @@ public partial class Registry : RefCounted
         EntityTypesMigration,  // RegistryTypes.cs
         MapLayersMigration,  // RegistryTypes.cs
         RulesMigration,  // RegistryRules.cs
+        CulturalLayersMigration,  // RegistryTerritory.cs
     };
 
     WorldDb _db = new();

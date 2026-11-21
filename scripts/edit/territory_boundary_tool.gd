@@ -1,5 +1,6 @@
 extends RefCounted
-## Desenha uma nova divisão para o selecionado. Ao soltar o mouse mostra a PRÉVIA (o mapa como ficaria, a área e de quem sai);
+## Desenha uma nova divisão para o selecionado, ou um CONTORNO FECHADO (terminar perto de onde começou) que toma a terra sem dono de
+## dentro: o mundo começa vazio. Ao soltar o mouse mostra a PRÉVIA (o mapa como ficaria, a área e de quem sai);
 ## só muda a camada quando o usuário confirma. Se mais de um lado do corte encosta no selecionado, ele escolhe qual.
 
 signal preview_changed(image)  # Image = mostrar o mapa como ficaria; null = voltar ao mapa de verdade
@@ -32,7 +33,15 @@ var _inserting := false
 var _last_screen := Vector2.ZERO
 var _tail := Vector3.ZERO
 var _altitude_km := 1000.0
-var _plan = null  # o plano em prévia, esperando confirmação
+var _plan = null  # o plano da prévia (mostrada quando o mouse para durante o traço)
+var _moved_ms := 0
+var _preview_points := PackedVector3Array()
+var _last_side := {}  # o último corte aplicado com mais de um lado possível (para "Outro lado")
+const PAUSE_MS := 350  # parado com o botão apertado por isto = mostra a prévia
+var below: Array = []   # as camadas de cima que a tela mostra por baixo (a prévia é composta sobre elas)
+var land_only := true   # o contorno fechado toma só terra
+var _first_screen := Vector2.ZERO
+const CLOSE_PX := 30.0  # terminar a menos disto (px de tela) do começo fecha o contorno
 var _spacing := SPACING_PX
 var _stabilize := 0
 
@@ -100,7 +109,10 @@ func select_path(id: int) -> void:
 func press(dir: Vector3, screen: Vector2, altitude_km: float) -> void:
 	if dir == Vector3.ZERO or dragging:
 		return
-	_drop_preview()  # mexer no traço descarta a prévia; soltar de novo faz outra
+	_drop_preview()
+	_last_side = {}
+	_preview_points = PackedVector3Array()
+	_moved_ms = Time.get_ticks_msec()
 	_altitude_km = altitude_km
 	if _id == 0 or _points.is_empty():
 		_capturing = true
@@ -108,6 +120,7 @@ func press(dir: Vector3, screen: Vector2, altitude_km: float) -> void:
 		_points.clear()
 		_points.append(dir)
 		_last_screen = screen
+		_first_screen = screen
 		_tail = dir
 		_refresh()
 		return
@@ -131,6 +144,7 @@ func press(dir: Vector3, screen: Vector2, altitude_km: float) -> void:
 
 
 func drag(dir: Vector3, screen: Vector2) -> void:
+	_moved_ms = Time.get_ticks_msec()
 	if dir == Vector3.ZERO:
 		if _capturing:
 			_outside = true
@@ -177,8 +191,18 @@ func release() -> void:
 	_handle = -1
 	_inserting = false
 	if _points.size() >= 2 and _points != _saved:
-		_plan_stroke()
+		# Solta = aplica. Reaproveita a prévia se ela é deste mesmo traço e o mapa não mudou; senão planeja agora.
+		if _plan == null or _preview_points != _points or _plan.Version != _territory.Version:
+			var result := _make_plan(_points)
+			if not result.has("plan"):
+				_drop_preview()
+				_points = _saved.duplicate()
+				_refresh(String(result.message))
+				return
+			_plan = result.plan
+		apply_preview()
 	else:
+		_drop_preview()
 		_refresh()
 
 
@@ -194,54 +218,109 @@ func update_zoom(altitude_km: float) -> void:
 	_show_path()
 
 
-func _plan_stroke() -> void:
-	var result: Dictionary = _territory.PlanBoundaryClaim(_owner, _points, _id)
+## O traço é um contorno fechado? Um caminho já aplicado continua o que era (o contorno é guardado fechado: último ponto = primeiro);
+## um novo, se terminou perto de onde começou.
+func _is_loop() -> bool:
+	for path in _paths:
+		if path.id == _id and _id != 0:
+			var pts: PackedVector3Array = path.points
+			return int(path.source) == 0 and pts.size() >= 3 and pts[0].is_equal_approx(pts[-1])
+	return _points.size() >= 3 and _last_screen.distance_to(_first_screen) <= CLOSE_PX
+
+
+## O plano para estes pontos: {plan} ou {message}. Contorno fechado (terra livre de dentro) ou linha (corte de vizinho ou bolsão de terra livre).
+func _make_plan(points: PackedVector3Array) -> Dictionary:
+	var loop := _is_loop()
+	var result: Dictionary = _territory.PlanLoopClaim(_owner, points, _id, land_only) if loop else _territory.PlanBoundaryClaimOn(_owner, points, _id, land_only)
 	var plan = result.get("plan")
-	if plan == null:
-		_points = _saved.duplicate()
-		_refresh(result.message)
+	if plan != null and plan.SourceOwner != 0 and (_registry.Name(plan.SourceOwner).is_empty() or _registry.Kind(plan.SourceOwner) != _registry.Kind(_owner)):
+		return {"message": "O território cortado precisa pertencer a um cadastro do mesmo nível (país com país, província com província)."}
+	return result
+
+
+## Os pontos do traço como estão agora (com a ponta sob o mouse e a estabilização do modo suavizado).
+func _current_points() -> PackedVector3Array:
+	var pts := _points.duplicate()
+	if _capturing:
+		if not pts.is_empty() and not _tail.is_equal_approx(pts[-1]) and pts.size() < MAX_POINTS:
+			pts.append(_tail)
+		pts = stabilized(pts, _stabilize)
+	return pts
+
+
+## A cada quadro (Main): com o botão apertado e o mouse parado por PAUSE_MS, mostra a prévia do traço como está.
+func tick() -> void:
+	if not dragging or Time.get_ticks_msec() - _moved_ms < PAUSE_MS:
 		return
-	if _registry.Name(plan.SourceOwner).is_empty() or _registry.Kind(plan.SourceOwner) != _registry.Kind(_owner):
-		_points = _saved.duplicate()
-		_refresh("O território cortado precisa pertencer a um cadastro do mesmo nível (país com país, província com província).")
+	var pts := _current_points()
+	if pts.size() < 2 or pts == _preview_points or pts == _saved:
 		return
-	_plan = plan
-	_show_preview()
+	_preview_points = pts
+	var result := _make_plan(pts)
+	if result.has("plan"):
+		_plan = result.plan
+		_show_preview()
+	else:
+		_drop_preview()
+		_panel.show_boundary_state(String(result.message))
 
 
 ## Mostra no mapa o lado escolhido e diz o que vai acontecer.
 func _show_preview() -> void:
-	preview_changed.emit(_territory.PreviewImage(_plan))
-	var text := "Prévia: ≈ %s km² de %s passam para %s." % [
-		_thousands(roundi(_territory.PlanAreaKm2(_plan))), _registry.Name(_plan.SourceOwner), _registry.Name(_plan.TargetOwner)]
+	preview_changed.emit(_territory.PreviewImageOver(_plan, below))
+	var source: String = _registry.Name(_plan.SourceOwner) if _plan.SourceOwner != 0 else "terra sem dono"
+	var text := "Prévia: ≈ %s km² de %s passam para %s. Solte o mouse para aplicar." % [
+		_thousands(roundi(_territory.PlanAreaKm2(_plan))), source, _registry.Name(_plan.TargetOwner)]
 	if _plan.ChoiceCount > 1:
-		text += " Mais de um lado encosta: este é o lado %d de %d." % [_plan.Choice + 1, _plan.ChoiceCount]
-	_panel.show_boundary_preview(true, _plan.ChoiceCount > 1)
+		text += " Mais de um lado encosta: depois de soltar, \"Outro lado\" troca."
 	_panel.show_boundary_state(text)
 	_show_path()
 
 
-## Mostra o outro lado do corte (quando há mais de um que encosta no selecionado).
+## Depois de aplicar um corte em que mais de um lado encosta: desfaz e aplica o outro lado (só se nada mudou desde então).
 func next_side() -> void:
-	if _plan != null and _plan.ChoiceCount > 1:
-		_plan.Choose((_plan.Choice + 1) % _plan.ChoiceCount)
-		_show_preview()
+	if _last_side.is_empty() or dragging or _territory.Version != _last_side.version:
+		return
+	var side: Dictionary = _last_side
+	_last_side = {}
+	_commands.undo()
+	var keep := _id
+	_id = side.id
+	var result := _make_plan(side.points)
+	_id = keep
+	if not result.has("plan"):
+		_refresh(String(result.get("message", "")))
+		return
+	result.plan.Choose((side.choice + 1) % side.count)
+	_plan = result.plan
+	apply_preview()
 
 
-## Confirma a prévia: só agora a camada muda (um comando na pilha de desfazer).
+## Aplica o plano: a camada muda (um comando na pilha de desfazer).
 func apply_preview() -> void:
 	if _plan == null:
 		return
 	var plan = _plan
-	var neighbor: String = _registry.Name(plan.SourceOwner)
+	var neighbor: String = _registry.Name(plan.SourceOwner) if plan.SourceOwner != 0 else "a terra sem dono"
+	var applied_id := _id
+	var points := _points.duplicate()
 	_drop_preview()
 	var edit = _territory.ApplyBoundary(plan)
 	if edit == null:
 		_points = _saved.duplicate()
-		_refresh("O mapa mudou depois da prévia. Desenhe novamente.")
+		_refresh("O mapa mudou durante o traço. Desenhe novamente.")
 		return
 	_commands.push("Redesenhar fronteira", edit)
-	_refresh("Fronteira com %s atualizada." % neighbor)
+	_last_side = {}
+	if plan.ChoiceCount > 1:
+		_last_side = {"points": points, "id": applied_id, "choice": plan.Choice, "count": plan.ChoiceCount, "version": _territory.Version}
+	_panel.show_boundary_preview(false, plan.ChoiceCount > 1)
+	_refresh("Fronteira com %s atualizada.%s" % [neighbor, " Mais de um lado encostava: \"Outro lado\" troca." if plan.ChoiceCount > 1 else ""])
+
+
+## Há uma prévia na tela (traço em andamento)?
+func has_preview() -> bool:
+	return _plan != null
 
 
 func _drop_preview() -> void:
@@ -249,7 +328,6 @@ func _drop_preview() -> void:
 		return
 	_plan = null
 	preview_changed.emit(null)
-	_panel.show_boundary_preview(false, false)
 
 
 ## Média móvel (vizinho, ponto, vizinho, pesos 1-2-1) na esfera, `passes` vezes; as pontas não se movem.
@@ -299,7 +377,7 @@ func _refresh_menus() -> void:
 	var neighbors := {}
 	for path in _paths:
 		if not neighbors.has(path.source):
-			neighbors[path.source] = _registry.Name(path.source)
+			neighbors[path.source] = _registry.Name(path.source) if int(path.source) != 0 else "contorno em terra livre"
 	_panel.show_boundary_options(_paths, neighbors, _id)
 
 
@@ -307,15 +385,18 @@ func _show_path() -> void:
 	if _map != null:
 		var controls := PackedVector3Array() if dragging else _points
 		var draft := _id == 0 or _points != _saved
-		_map.show_territory_path(_territory.SmoothBoundary(_points), controls, draft, _altitude_km)
+		var curve := _points.duplicate()
+		if not dragging and curve.size() >= 3 and _is_loop() and not curve[-1].is_equal_approx(curve[0]):
+			curve.append(curve[0])  # o contorno fechado aparece fechado
+		_map.show_territory_path(_territory.SmoothBoundary(curve), controls, draft, _altitude_km)
 
 
 func _refresh(message := "") -> void:
 	if message.is_empty():
 		if dragging:
-			message = "Solte o mouse para ver a prévia do traço."
+			message = "Pare o mouse para ver a prévia; solte para aplicar."
 		elif _points.size() < 2:
-			message = "Trace de uma borda à outra dentro do vizinho. Ao soltar, aparece a prévia; nada muda até você aplicar."
+			message = "Saia da borda do território e volte a ela (por um vizinho ou por terra livre), ou desenhe um contorno fechado em terra livre. Pare o mouse para ver a prévia; solte para aplicar."
 		else:
 			message = "Arraste a linha ou os pontos para ajustar o traço."
 	_panel.show_boundary_state(message)

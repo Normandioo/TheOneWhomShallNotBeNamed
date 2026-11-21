@@ -199,9 +199,6 @@ func _editor() -> void:
 	if DisplayServer.get_name() != "headless":
 		await save("evron-fronteira-antes")
 	await _draw_cut(4.0)
-	if main.territory.OwnerAt(Geo.dir(0, -1)) == selected or not panel._preview_row.visible:
-		return fail("soltar o traço mostra a prévia e ainda não muda a camada: " + panel._boundary_status.text)
-	panel.boundary_apply_requested.emit()
 	if main.territory.OwnerAt(Geo.dir(0, -1)) != selected or main.territory.OwnerAt(Geo.dir(0, 10)) != neighbor or main.territory.OwnerAt(Geo.dir(13, 4)) != third:
 		return fail("soltar o traço deve tomar só a faixa ao lado do país selecionado: " + panel._boundary_status.text)
 	if main.territory.BoundariesFor(selected).size() != 1 or panel._paths.get_selected_id() != 0:
@@ -209,7 +206,6 @@ func _editor() -> void:
 	if DisplayServer.get_name() != "headless":
 		await save("evron-fronteira-depois")
 	await _draw_cut(8.0)
-	panel.boundary_apply_requested.emit()
 	if main.territory.OwnerAt(Geo.dir(0, 6)) != selected or main.territory.OwnerAt(Geo.dir(13, 8)) != third or main.territory.BoundariesFor(selected).size() != 2:
 		return fail("um segundo gesto deve ampliar a região sem exigir nova seleção: " + panel._boundary_status.text)
 	main.undo()
@@ -218,4 +214,4 @@ func _editor() -> void:
 	main.redo()
 	if main.territory.OwnerAt(Geo.dir(0, 6)) != selected:
 		return fail("refazer deve restaurar o último gesto")
-	ok("editor: clique no país, pincel no menu e dois ganhos sucessivos, cada um aplicado depois da prévia")
+	ok("editor: clique no país, pincel no menu e dois ganhos sucessivos, cada um aplicado ao soltar o mouse")

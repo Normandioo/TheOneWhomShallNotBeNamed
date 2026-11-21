@@ -193,10 +193,11 @@ func show_boundary_state(message: String) -> void:
 	_boundary_status.text = message
 
 
-## Mostra (ou esconde) os botões da prévia; "Outro lado" só quando há mais de um lado possível.
-func show_boundary_preview(on: bool, sides: bool) -> void:
-	_preview_row.visible = on
-	_side_button.visible = sides
+## O traço se aplica ao soltar o mouse: da fila de botões só resta "Outro lado", depois de um corte em que mais de um lado encostava.
+func show_boundary_preview(_on: bool, sides: bool) -> void:
+	_preview_row.visible = sides
+	for b in _preview_row.get_children():
+		b.visible = b == _side_button
 	_position_panel.call_deferred()
 
 

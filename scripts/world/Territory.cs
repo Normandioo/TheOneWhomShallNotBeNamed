@@ -54,6 +54,8 @@ public partial class Territory : RefCounted
         int y = idx / Size.X;
         _rowTop = Math.Min(_rowTop, y);
         _rowBottom = Math.Max(_rowBottom, y);
+        _compTop = Math.Min(_compTop, y);
+        _compBottom = Math.Max(_compBottom, y);
         MarkTile(idx);
         Dirty = true;
     }
@@ -98,6 +100,7 @@ public partial class Territory : RefCounted
             int cur = Get(i);
             if (cur == owner || (onlyOwner >= 0 && cur != onlyOwner)) continue;
             if (owner != 0 && landOnly && _terrain.H[i] < 0f) continue;
+            if (owner != 0 && !Allowed(i)) continue;
             _stroke!.TryAdd(i, (ushort)cur);
             Put(i, owner);
             changed++;
@@ -132,7 +135,7 @@ public partial class Territory : RefCounted
         int start = t.PixelOf(n);
         int cur = Get(start);
         bool startLand = t.H[start] >= 0f;
-        if (cur == owner || (owner != 0 && landOnly && !startLand)) return null;
+        if (cur == owner || (owner != 0 && landOnly && !startLand) || (owner != 0 && !Allowed(start))) return null;
         var seen = new HashSet<int> { start };
         var stack = new Stack<int>();
         stack.Push(start);
@@ -146,6 +149,7 @@ public partial class Territory : RefCounted
                 int q = t.Neighbor(p, dx, dy);
                 if (q < 0 || seen.Contains(q) || Get(q) != cur) continue;
                 if (landOnly && (t.H[q] >= 0f) != startLand) continue;
+                if (owner != 0 && !Allowed(q)) continue;
                 seen.Add(q);
                 stack.Push(q);
             }
@@ -214,19 +218,20 @@ public partial class Territory : RefCounted
     {
         if (_areas == null || _areasVersion != Version)
         {
-            var areas = new System.Collections.Generic.Dictionary<int, double>();
+            var sum = new double[MaxOwner + 1];  // um vetor por dono: sem dicionário por linha (a varredura é feita a cada pincelada)
             int w = Size.X, h = Size.Y;
             for (int y = 0; y < h; y++)
             {
                 double pixelArea = RowCellKm2(y, w, h);
-                var row = new System.Collections.Generic.Dictionary<int, int>();
-                for (int x = 0; x < w; x++)
+                for (int i = y * w * 2, end = (y + 1) * w * 2; i < end; i += 2)
                 {
-                    int o = Get(y * w + x);
-                    if (o != 0) row[o] = row.GetValueOrDefault(o) + 1;
+                    int o = B[i] | (B[i + 1] << 8);
+                    if (o != 0) sum[o] += pixelArea;
                 }
-                foreach (var (o, c) in row) areas[o] = areas.GetValueOrDefault(o) + c * pixelArea;
             }
+            var areas = new System.Collections.Generic.Dictionary<int, double>();
+            for (int o = 1; o <= MaxOwner; o++)
+                if (sum[o] > 0) areas[o] = sum[o];
             _areas = areas;
             _areasVersion = Version;
         }
@@ -261,6 +266,8 @@ public partial class Territory : RefCounted
         RestoreBoundaries(boundaries);
         B = bytes;
         _rowTop = 0;
+        _compTop = 0;
+        _compBottom = Size.Y - 1;
         _rowBottom = Size.Y - 1;
         Dirty = true;
         Touch();

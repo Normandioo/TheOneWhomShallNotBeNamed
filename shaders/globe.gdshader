@@ -93,14 +93,23 @@ vec3 political_style(vec3 n, vec2 uv, float h) {
 	vec2 c = textureLod(coast_map, vec2(uv.x, clamp(uv.y, 0.0, 1.0)), 0.0).rg;
 	float d = c.r;
 	float km_px = max(fwidth(d), 0.001);  // km por pixel de tela (o campo é uma distância)
-	float line;
-	int id = political_owner(uv, 1.4, line);
+	float line, sub;
+	int id = political_owner(uv, 1.4, line, sub);
 	// Terra: o país (ou a terra sem dono, #a08a62) sob o sombreado; a sombra puxa para um marrom escuro; fronteira #1a1716.
+	// Províncias têm a cor do país (estilo Europa Universalis): só uma linha fina e discreta entre elas. O país selecionado fica mais claro,
+	// com as províncias mais evidentes e o contorno claro; os outros ficam um pouco apagados.
+	float focus = id != 0 ? political_focus(id) : (political_selected != 0 ? -1.0 : 0.0);
 	vec3 base = id != 0 ? map_tone(political_color(id).rgb) : vec3(0.627, 0.541, 0.384);
+	if (focus > 0.5) {
+		base = mix(base, vec3(1.0), 0.18);
+	} else if (focus < -0.5) {
+		base = mix(base, vec3(dot(base, vec3(0.299, 0.587, 0.114))), 0.35) * 0.85;
+	}
 	float t = map_shade(n, uv) - 1.0;
 	float lit = clamp(t, 0.0, 0.6), dark = clamp(-t, 0.0, 0.85);
 	vec3 land = base * (1.0 + 0.4 * lit) * (1.0 - 0.62 * dark) + dark * 0.10 * vec3(0.165, 0.102, 0.078);
-	land = mix(land, vec3(0.102, 0.090, 0.086), line * 0.9);
+	land = mix(land, land * 0.55, sub * (focus > 0.5 ? 0.85 : 0.4));
+	land = mix(land, focus > 0.5 ? vec3(0.98, 0.93, 0.70) : vec3(0.102, 0.090, 0.086), line * 0.9);
 	// Água: mar pela profundidade, lago de cor fixa; halo claro e anéis paralelos à costa (somem quando o pixel passa de ~6 km).
 	bool lake = c.g > 0.5;
 	float dist = max(-d, 0.0);

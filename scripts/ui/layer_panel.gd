@@ -14,7 +14,8 @@ signal level_selected(level: String)  # "pais", "provincia" ou "municipio": qual
 var layers: OptionButton
 var _countries: CheckBox
 var _level: OptionButton
-const LEVELS := ["pais", "provincia", "municipio"]
+const LEVELS := ["pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma"]
+const LEVEL_MENU := ["Países", "Províncias", "Municípios", "Religiões", "Culturas", "Etnias", "Raças", "Idiomas"]
 var _cursor: Label
 var _selection: Label
 var _camera: Label
@@ -48,9 +49,8 @@ func _init() -> void:
 	_countries.button_pressed = true
 	_countries.toggled.connect(political_visibility_changed.emit)
 	_level = OptionButton.new()
-	_level.add_item("Países")
-	_level.add_item("Províncias")
-	_level.add_item("Municípios")
+	for item in LEVEL_MENU:
+		_level.add_item(item)
 	_level.tooltip_text = "Cada nível é uma camada separada: pintar províncias não muda os países."
 	_level.item_selected.connect(func(i: int) -> void: level_selected.emit(LEVELS[i]))
 	var level_row := HBoxContainer.new()

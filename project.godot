@@ -41,6 +41,14 @@ political_on={
 "type": "float",
 "value": 1.0
 }
+political_top={
+"type": "sampler2D",
+"value": "res://shaders/political_default.tres"
+}
+political_selected={
+"type": "int",
+"value": 0
+}
 satellite_optics={
 "type": "sampler2D",
 "value": "res://shaders/political_default.tres"
