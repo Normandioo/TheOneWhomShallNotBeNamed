@@ -66,3 +66,12 @@ satellite_rivers_on={
 "type": "float",
 "value": 0.0
 }
+
+satellite_water_preview={
+"type": "sampler2D",
+"value": "res://shaders/political_default.tres"
+}
+satellite_water_region={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}

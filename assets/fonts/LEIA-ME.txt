@@ -1,0 +1,4 @@
+Fontes da interface (licença SIL Open Font License 1.1, texto em OFL-Cinzel.txt; as duas usam a mesma licença):
+- Cinzel (títulos): https://fonts.google.com/specimen/Cinzel
+- Source Sans 3 (texto): https://fonts.google.com/specimen/Source+Sans+3
+Baixadas do repositório google/fonts (pasta ofl/). Fontes variáveis: o peso vem de FontVariation (wght).

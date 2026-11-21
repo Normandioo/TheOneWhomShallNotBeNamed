@@ -18,6 +18,9 @@ public partial class Terrain : RefCounted
     internal byte[] R = Array.Empty<byte>();
     private const int EditTileSize = 64;
     internal readonly HashSet<int> EditedTiles = new();
+
+    /// Há edições de relevo ainda não gravadas no banco?
+    public bool HasEdits => EditedTiles.Count > 0;
     private int EditTilesAcross => (Size.X + EditTileSize - 1) / EditTileSize;
 
     private Image? _heightImg;

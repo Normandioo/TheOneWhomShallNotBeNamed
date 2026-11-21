@@ -1,5 +1,5 @@
 extends PanelContainer
-## Legenda da camada atual, no canto inferior direito: o que as cores significam.
+## Legenda da camada atual, no canto inferior esquerdo: o que as cores significam.
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 
@@ -13,13 +13,9 @@ var _stale: Label
 
 func _init() -> void:
 	add_theme_stylebox_override("panel", UiKit.panel_style())
-	set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	grow_vertical = Control.GROW_DIRECTION_BEGIN
-	position = Vector2(-12, -12)
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.custom_minimum_size = Vector2(WIDTH, 230)
+	scroll.custom_minimum_size = Vector2(WIDTH, 150)
 	add_child(scroll)
 	var box := VBoxContainer.new()
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL

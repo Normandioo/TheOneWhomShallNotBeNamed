@@ -1,5 +1,5 @@
 extends VBoxContainer
-## Barra de tempo, embaixo à esquerda (a janela do calendário abre em cima dela): data e hora mostradas, pausa, velocidade e avanços; e a janela do calendário
+## Barra de tempo: uma placa no topo ao centro (a janela do calendário abre embaixo dela): data e hora mostradas, pausa, velocidade e avanços; e a janela do calendário
 ## (consultar uma data, avançar até uma data, marcos). Só mostra e pede: avisa por sinais, o relógio decide.
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
@@ -34,33 +34,50 @@ var _markers: Label
 var _go_buttons: Array[Button] = []  # "Avançar até": só vale fora da consulta
 
 
+const TOP := 0.0  # a placa pende da borda de cima, no centro, na linha da barra de ferramentas
+const NARROW := 1500.0  # abaixo disto a placa não cabe entre os grupos da barra: desce para a linha de baixo
+
+
 func _init() -> void:
-	set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	grow_vertical = Control.GROW_DIRECTION_BEGIN
-	position = Vector2(12, -12)
-	_build_window()  # primeiro filho: fica acima da barra
+	set_anchors_preset(Control.PRESET_CENTER_TOP)
+	grow_horizontal = Control.GROW_DIRECTION_BOTH
+	grow_vertical = Control.GROW_DIRECTION_END
+	offset_top = TOP
 	var bar := PanelContainer.new()
-	bar.add_theme_stylebox_override("panel", UiKit.panel_style())
+	bar.add_theme_stylebox_override("panel", UiKit.plate_style())
 	add_child(bar)
+	_build_window()  # depois da placa: abre embaixo dela
 	var box := VBoxContainer.new()
 	bar.add_child(box)
 
 	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 10)
 	box.add_child(top)
+	_play = _button(top, "", func() -> void: play_toggled.emit())  # só o ícone; a dica diz Continuar/Pausar
+	_play.icon = preload("res://assets/ui/play.png")
+	_play.tooltip_text = "Continuar"
+	_play.custom_minimum_size = Vector2(38, 38)
+	var when := VBoxContainer.new()
+	when.add_theme_constant_override("separation", 0)
+	top.add_child(when)
 	_date = Label.new()
 	UiKit.style_heading(_date)
-	_date.add_theme_font_size_override("font_size", 18)
-	top.add_child(_date)
+	_date.add_theme_font_size_override("font_size", 16)
+	when.add_child(_date)
 	_state = Label.new()
-	top.add_child(_state)
-	_play = _button(top, "Continuar", func() -> void: play_toggled.emit())
-	_play.icon = preload("res://assets/ui/play.png")
+	_state.add_theme_font_size_override("font_size", 12)
+	_state.add_theme_color_override("font_color", Color("#9fb0a8"))
+	when.add_child(_state)
 	_speed = OptionButton.new()
 	for s in SPEEDS:
 		_speed.add_item(s[0])
 	_speed.item_selected.connect(func(i: int) -> void: speed_selected.emit(SPEEDS[i][1]))
+	_speed.fit_to_longest_item = false  # a placa fica estreita; a lista aberta mostra os nomes inteiros
+	_speed.custom_minimum_size = Vector2(84, 0)
 	top.add_child(_speed)
-	_button(top, "Calendário", func() -> void: _window.visible = not _window.visible).icon = preload("res://assets/ui/clock.png")
+	var calendar_button := _button(top, "", func() -> void: _window.visible = not _window.visible)
+	calendar_button.icon = preload("res://assets/ui/clock.png")
+	calendar_button.tooltip_text = "Calendário: consultar uma data, avançar até ela e ver os marcos"
 
 	var advance := Button.new()
 	advance.text = "Avançar…"
@@ -83,18 +100,30 @@ func _init() -> void:
 	box.add_child(_message)
 
 
+func _ready() -> void:
+	var host := get_parent() as Control
+	if host != null:
+		host.resized.connect(_place.bind(host))
+		_place.call_deferred(host)
+
+
+## Larga: na linha da barra de ferramentas; estreita: logo abaixo dela.
+func _place(host: Control) -> void:
+	offset_top = TOP if host.size.x >= NARROW else 52.0
+
+
 ## Mostra o estado do relógio (não guarda tempo próprio).
 func show_clock(clock) -> void:
 	var t: int = clock.shown()
 	_date.text = Calendar.format(t)
 	_date.modulate = Color(0.6, 0.85, 1.0) if clock.viewing else Color.WHITE
 	if clock.viewing:
-		_state.text = "  CONSULTA"
+		_state.text = "CONSULTA"
 	else:
-		_state.text = "  " + ("▶ em execução" if clock.running else "⏸ pausado")
+		_state.text = "▶ em execução" if clock.running else "⏸ pausado"
 	_present.visible = clock.viewing
 	_present.text = "O presente continua em %s" % Calendar.format(clock.now)
-	_play.text = "Pausar" if clock.running else "Continuar"
+	_play.tooltip_text = "Pausar" if clock.running else "Continuar"
 	_play.icon = preload("res://assets/ui/pause.png") if clock.running else preload("res://assets/ui/play.png")
 	_play.disabled = clock.viewing  # em consulta a reprodução fica parada; "Voltar ao presente" encerra
 	for b in _advance_buttons:

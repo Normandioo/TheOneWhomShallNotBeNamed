@@ -98,7 +98,7 @@ func _layer_index(menu: String) -> int:
 
 func _press(bar: Node, text: String) -> void:
 	for b in bar.find_children("*", "Button", true, false):
-		if b.text == text and not b.disabled:
+		if (b.text == text or b.tooltip_text == text) and not b.disabled:  # o play é só ícone: a dica diz Continuar/Pausar
 			b.pressed.emit()
 			return
 	fail("botão não encontrado ou desativado: " + text)

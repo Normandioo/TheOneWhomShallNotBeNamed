@@ -41,6 +41,7 @@ var _pending := false      # o tempo andou e a ficha ainda não foi relida
 var _last_rebuild_ms := 0
 var _sheet_hash := 0       # o que a ficha aberta mostra: só é refeita se isto mudar
 var _search_key := 0       # o que a lista de busca mostra
+var _outline_key := 0      # o que a árvore do Índice mostra
 var _map_key := -1         # o que o globo desenha
 var _defs := {}            # id do calendário -> definição (as definições não mudam depois de criadas)
 
@@ -195,6 +196,26 @@ func refresh_search() -> void:
 	if key != _search_key:
 		_search_key = key
 		search.show_results(results, _current)
+	_refresh_hierarchy()
+
+
+## A árvore do Índice: todos os cadastros por tipo; província e município ficam sob o cadastro de nível acima (TerritoryParent).
+func _refresh_hierarchy() -> void:
+	var rows := []
+	for kind in UiKit.all_kinds():
+		var found = registry.Search("", kind, "", 0, shown_t)
+		if found == null:
+			continue
+		for e in found:
+			var parent := 0
+			if kind == "provincia" or kind == "municipio":
+				var p = registry.TerritoryParent(int(e.id))
+				parent = int(p) if p != null else 0
+			rows.append({"id": int(e.id), "kind": kind, "name": String(e.name), "parent": parent})
+	var key: int = [rows, _current].hash()
+	if key != _outline_key:
+		_outline_key = key
+		search.show_hierarchy(rows, _current)
 
 
 ## O relógio do mundo mostra a data t (presente ou consulta). Atualiza na hora as datas escritas na ficha; a ficha em si

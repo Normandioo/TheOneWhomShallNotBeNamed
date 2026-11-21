@@ -383,6 +383,24 @@ func has_preview() -> bool:
 	return _plan != null
 
 
+## Confirma já o que ainda não foi aplicado: a prévia na tela ou o traço aberto que está sendo calculado em segundo plano (Terminar ou
+## trocar de ferramenta no meio do cálculo). Neste caso o plano é refeito na hora: o cálculo em segundo plano é de uma cópia do mapa, e
+## o resultado dele é descartado porque a versão do mapa muda ao aplicar.
+func finish_pending() -> void:
+	if applying and not _points.is_empty():
+		applying = false
+		_job_points = PackedVector3Array()
+		var result := _make_plan(_points)
+		if result.has("plan"):
+			_plan = result.plan
+			apply_preview()
+		else:
+			_points = _saved.duplicate()
+			_refresh(String(result.message))
+	elif _plan != null:
+		apply_preview()
+
+
 func _drop_preview() -> void:
 	if _plan == null:
 		return

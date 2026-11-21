@@ -3,6 +3,7 @@ extends Node
 ## do nível, ou ignorar. Manchas separadas da mesma cor são linhas separadas: a mesma cor não é assumida como a mesma entidade.
 ## Só mostra e pede: quem analisa e aplica é o DomainHub.
 
+const UiKit = preload("res://scripts/ui/ui_kit.gd")
 const LayerPanel = preload("res://scripts/ui/layer_panel.gd")  # só para o separador de milhares
 const MAX_ROWS := 300  # as maiores; o resto não é importado (fica dito na janela)
 
@@ -18,7 +19,7 @@ var _picks: Array = []  # [região, OptionButton, ids do menu]
 
 
 func _ready() -> void:
-	_files = FileDialog.new()
+	_files = UiKit.themed(FileDialog.new())
 	_files.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	_files.access = FileDialog.ACCESS_FILESYSTEM
 	_files.filters = PackedStringArray(["*.png ; Imagem PNG"])
@@ -26,7 +27,7 @@ func _ready() -> void:
 	_files.use_native_dialog = true
 	_files.file_selected.connect(file_chosen.emit)
 	add_child(_files)
-	_dialog = ConfirmationDialog.new()
+	_dialog = UiKit.themed(ConfirmationDialog.new())
 	_dialog.title = "Mapear regiões do PNG"
 	_dialog.ok_button_text = "Aplicar"
 	_dialog.cancel_button_text = "Cancelar"

@@ -301,8 +301,7 @@ func stop_painting() -> void:
 		return
 	if territory_stroking:
 		territory_end()
-	if boundary_tool.has_preview():
-		boundary_tool.apply_preview()  # Terminar com a prévia na tela confirma o traço (antes ela era descartada e o país sumia)
+	boundary_tool.finish_pending()  # Terminar confirma o traço (a prévia na tela ou o que ainda está sendo calculado)
 	boundary_tool.stop()
 	territory.SetMask(null, 0)
 	painting_territory = false
@@ -320,8 +319,7 @@ func _set_territory_mode(mode: String) -> void:
 		hub.sheet.hide()
 		boundary_tool.start(territory_owner)
 	else:
-		if boundary_tool.has_preview():
-			boundary_tool.apply_preview()  # trocar de ferramenta também confirma o traço em prévia
+		boundary_tool.finish_pending()  # trocar de ferramenta também confirma o traço
 		boundary_tool.stop()
 	painting_changed.emit(true)
 
@@ -536,7 +534,8 @@ func save() -> bool:
 
 # --- o que o DomainHub pede ------------------------------------------------------------------------------------------
 
-## O dono a abrir no clique do globo: o da camada do nível ou, onde ela não tem dono, o das de cima (o país sob a província). 0 = nenhum.
+## O dono a abrir no clique do globo: o da camada do nível ou, onde ela não tem dono, o das de cima (o país sob a província) e, por fim, o das
+## de baixo que o mapa também desenha (província ou município sem país). 0 = nenhum.
 func owner_at(dir: Vector3) -> int:
 	if territory == null:
 		return 0
@@ -544,6 +543,13 @@ func owner_at(dir: Vector3) -> int:
 		var owner: int = shown.OwnerAt(dir)
 		if owner != 0:
 			return owner
+	# Por último, as camadas de baixo da hierarquia que o mapa também desenha (a província cujo país foi apagado, por exemplo): o que se vê se clica.
+	var i := HIERARCHY.find(territory_level)
+	if i >= 0:
+		for k in range(i + 1, HIERARCHY.size()):
+			var deeper = levels.get(HIERARCHY[k])
+			if deeper != null and deeper.OwnerAt(dir) != 0:
+				return deeper.OwnerAt(dir)
 	return 0
 
 

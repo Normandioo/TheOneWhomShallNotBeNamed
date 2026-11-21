@@ -3,6 +3,7 @@ extends RefCounted
 ## antes, troca o banco e o relógio e recarrega a cena). Quem copia, confere e troca os arquivos é o Registry (RegistryWorldFile.cs).
 
 const Registry = preload("res://scripts/world/Registry.cs")
+const UiKit = preload("res://scripts/ui/ui_kit.gd")
 
 var main  # a cena principal: o hub (banco), o caminho do banco e do relógio, o HUD onde os diálogos aparecem
 
@@ -15,7 +16,7 @@ func setup(main_scene) -> void:
 func open_dialog(export: bool) -> void:
 	if not main.domains.usable or main.domains_db == ":memory:":
 		return
-	var files := FileDialog.new()
+	var files := UiKit.themed(FileDialog.new())
 	files.file_mode = FileDialog.FILE_MODE_OPEN_DIR
 	files.access = FileDialog.ACCESS_FILESYSTEM
 	files.use_native_dialog = true
@@ -33,7 +34,7 @@ func open_dialog(export: bool) -> void:
 
 func export_world(parent: String) -> void:
 	if not main.save_terrain(true):
-		_message("Não deu para exportar: alterações no relevo não foram gravadas.")
+		_message("Não deu para exportar: " + main.terrain_problem() + ".")
 		return
 	main.save_clock()
 	if main.territories != null and not main.territories.flush():
@@ -50,7 +51,7 @@ func _confirm_import(dir: String) -> void:
 	if why != "":
 		_message("Essa pasta não pode ser importada: " + why)
 		return
-	var ask := ConfirmationDialog.new()
+	var ask := UiKit.themed(ConfirmationDialog.new())
 	ask.dialog_text = "Trocar o mundo aberto pelo de\n%s?\n\nO mundo atual fica guardado ao lado do banco como .antes-importacao." % dir
 	ask.ok_button_text = "Importar"
 	ask.confirmed.connect(func() -> void: import_world(dir))
@@ -62,7 +63,7 @@ func _confirm_import(dir: String) -> void:
 ## Fecha o banco (gravando o que faltava), troca os arquivos e recarrega a cena: tudo é lido do mundo novo.
 func import_world(dir: String) -> void:
 	if not main.save_terrain(true):
-		_message("Não deu para importar: o relevo do mundo atual não foi gravado.")
+		_message("Não deu para importar: " + main.terrain_problem() + ".")
 		return
 	main.save_clock()
 	main.domains.close()
@@ -80,8 +81,13 @@ func _clock_path() -> String:
 	return ProjectSettings.globalize_path(main.save_path) if main.save_path != "" else ""
 
 
+## Um aviso numa janela (o que aconteceu com o mundo ao abrir, exportar ou importar).
+func notice(text: String) -> void:
+	_message(text)
+
+
 func _message(text: String) -> void:
-	var box := AcceptDialog.new()
+	var box := UiKit.themed(AcceptDialog.new())
 	box.dialog_text = text
 	box.confirmed.connect(box.queue_free)
 	box.canceled.connect(box.queue_free)

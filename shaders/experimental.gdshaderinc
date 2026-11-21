@@ -5,11 +5,15 @@ global uniform sampler2D satellite_optics : filter_linear, repeat_enable;
 global uniform sampler2D satellite_river_atlas : filter_nearest, repeat_disable;
 global uniform float satellite_optics_on;
 global uniform float satellite_rivers_on;
+global uniform sampler2D satellite_water_preview : filter_linear, repeat_disable;
+// xy: centro em UV. zw: largura e altura do recorte. Zero desliga a prévia.
+global uniform vec4 satellite_water_region;
 
 // Água aberta pela batimetria. Temperatura e aporte de sedimentos modulam só a faixa rasa.
 vec3 experimental_water_color(float h, float warm, float sediment, float coast) {
 	float d = max(-h, 0.0);
-	float shallows = (1.0 - smoothstep(10.0, 250.0, d)) * mix(0.19, 1.0, sqrt(coast));
+	// A profundidade controla a transição principal. A máscara costeira só modula sua intensidade.
+	float shallows = (1.0 - smoothstep(20.0, 520.0, d)) * mix(0.28, 0.52, smoothstep(0.0, 1.0, coast));
 	vec3 deep = mix(vec3(0.041, 0.122, 0.214), vec3(0.028, 0.087, 0.164), smoothstep(700.0, 7200.0, d));
 	vec3 shelf = mix(vec3(0.063, 0.196, 0.259), vec3(0.072, 0.289, 0.326), warm);
 	vec3 ocean = mix(deep, shelf, shallows);
@@ -86,13 +90,27 @@ float satellite_river(vec2 uv, float cos_lat, float pixel_km) {
 }
 
 vec3 satellite_surface(vec4 texel, vec3 n, vec2 uv, float h, out float detail_m, out float wet) {
-	float solid = smoothstep(0.31, 0.69, texel.a);
+	// Mantém a borda na mesma isolinha. A largura segue o pixel da tela,
+	// inclusive onde os texels se comprimem perto dos polos.
+	float edge_width = clamp(0.55 * fwidth(texel.a), 0.008, 0.19);
+	float solid = smoothstep(0.5 - edge_width, 0.5 + edge_width, texel.a);
 	vec4 optics = vec4(0.0, 1.0 - smoothstep(0.28, 0.70, abs(asin(clamp(n.y, -1.0, 1.0)))), h >= 0.0 ? 1.0 : 0.0, 0.35);
 	if (satellite_optics_on > 0.5) {
 		float pole = 0.5 / float(textureSize(satellite_optics, 0).y);
 		optics = texture(satellite_optics, vec2(uv.x, clamp(uv.y, pole, 1.0 - pole)));
 	}
-	vec3 ocean = pow(experimental_water_color(h, optics.g, optics.r, optics.a), vec3(2.2));
+	float water_height = h;
+	float coast_weight = optics.a;
+	if (satellite_water_region.z > 0.0) {
+		vec2 offset = uv - satellite_water_region.xy;
+		offset.x = fract(offset.x + 0.5) - 0.5;
+		vec2 local_uv = offset / satellite_water_region.zw + 0.5;
+		vec4 preview = texture(satellite_water_preview, local_uv);
+		float coverage = preview.b;
+		water_height = mix(h, -preview.r, coverage);
+		coast_weight = mix(optics.a, preview.g, coverage);
+	}
+	vec3 ocean = pow(experimental_water_color(water_height, optics.g, optics.r, coast_weight), vec3(2.2));
 	vec3 water = mix(ocean, texel.rgb, smoothstep(0.22, 0.67, optics.b));
 	vec3 pos_m = n * RADIUS;
 	float px_m = length(fwidth(pos_m));

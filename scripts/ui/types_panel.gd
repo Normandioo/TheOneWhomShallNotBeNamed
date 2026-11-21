@@ -32,7 +32,7 @@ var _codes: Array = []  # códigos dos tipos, na ordem dos menus
 
 
 func _ready() -> void:
-	_dialog = AcceptDialog.new()
+	_dialog = UiKit.themed(AcceptDialog.new())
 	_dialog.title = "Tipos, campos e vínculos"
 	_dialog.ok_button_text = "Fechar"
 	_dialog.min_size = Vector2i(520, 560)

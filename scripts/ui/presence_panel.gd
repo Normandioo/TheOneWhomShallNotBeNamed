@@ -15,13 +15,10 @@ var _box: VBoxContainer
 
 func _init() -> void:
 	add_theme_stylebox_override("panel", UiKit.panel_style())
-	set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	grow_vertical = Control.GROW_DIRECTION_BEGIN
-	position = Vector2(12, -128)  # acima da barra de tempo
 	var box := VBoxContainer.new()
 	add_child(box)
 	var fold := Button.new()
-	fold.text = "Presenças no mapa"
+	fold.text = "Sobreposições do mapa"
 	fold.toggle_mode = true
 	box.add_child(fold)
 	var scroll := ScrollContainer.new()
@@ -35,6 +32,7 @@ func _init() -> void:
 	fold.toggled.connect(func(open: bool) -> void:
 		scroll.visible = open
 		reset_size())
+	fold.button_pressed = true  # abre já com a lista: a coluna de modos só mostra ou esconde o painel todo
 	_scope = OptionButton.new()
 	_scope.add_item("Só a ficha aberta")
 	_scope.add_item("Todas as entidades")

@@ -63,14 +63,16 @@ scripts/
   ui/              painéis: mostram valores e avisam por sinais.
     map_layers.gd    o catálogo das camadas: arquivo, grupo, legenda e o texto com a confiança da calibração
     layer_panel.gd   escolha da camada e leitura do cursor (lat/lon, altitude, terra/mar)
-    tool_panel.gd    barra de ferramentas: navegar ou pincel, raio, intensidade, desfazer e refazer
+    tool_panel.gd    barra superior: modo (Navegar, Território, Relevo), desfazer e refazer; a barra de edição do relevo (edit_bar) fica embaixo
+    mode_rail.gd     coluna dos modos de mapa (um botão por grupo de camadas, com as variantes); em sincronia com o menu do layer_panel
+    sun_crest.gd     o brasão (sol de raios ondulados com o escudo na cor do cadastro): logo da barra e cabeçalho da ficha
     search_panel.gd  busca nos cadastros (nome, filtro de tipo) e o menu "Novo" (seis tipos e a sociedade)
     sheet_panel.gd   a ficha: identidade, resumo, etiquetas, nomes, conteúdo gerado dos campos, relações, calendários, duplicar e excluir
     calendar_panel.gd janela dos calendários locais: os cadastrados e o formulário de um novo (com a primeira era)
     presence_panel.gd camadas e escopo do mapa de presenças (a ficha aberta ou todas as entidades)
     territory_panel.gd a barra do modo pintar território (pincel, balde, borracha, raio, "só em terra", área, Terminar)
     draw_panel.gd    a barra do modo desenhar fronteira (pontos marcados, Desfazer, Concluir, Cancelar; Esc, Enter e Backspace)
-    time_bar.gd      barra de tempo (embaixo à esquerda) e janela do calendário: data, pausa, velocidade, avanços, consulta
+    time_bar.gd      placa da data (topo, ao centro) e janela do calendário: data, pausa, velocidade, avanços, consulta
     legend_panel.gd, ui_kit.gd
 scenes/main.tscn   Main e o Hud (os painéis); a vista 3D é criada em código pelo GlobeView
 shaders/globe.gdshader  camada de imagem ou altitude calibrada, com o relevo na iluminação
@@ -306,8 +308,8 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>                         
 - A cada quadro, uma árvore de quatro filhos a partir dos 2 blocos do nível 0 escolhe, por região visível, o nível
   em que 1 texel ≈ 1 pixel da tela. Blocos atrás do horizonte saem. Um bloco só é trocado pelos filhos quando os
   4 já chegaram: nunca abre buraco. O globo de 4K fica ~10 km abaixo, tapando frestas entre níveis.
-- Carga em threads (`WorkerThreadPool`), no máximo 4 texturas criadas por quadro, cache de 160 blocos (~213 MiB de
-  vídeo), o nível 0 nunca sai. Medido no autoteste: o nível 4 chega em ~150 ms; processo com 100–145 MiB de RAM (com o .NET; varia entre rodadas).
+- Carga em threads (`WorkerThreadPool`), no máximo 4 texturas criadas por quadro, cache de 80 blocos (~105 MiB de
+  vídeo; o efeito na janela de 1080p ainda precisa ser medido), o nível 0 nunca sai. Medido no autoteste: o nível 4 chega em ~150 ms; processo com 100–145 MiB de RAM (com o .NET; varia entre rodadas).
 - A camada do globo tem mipmaps e é lida com `textureGrad`, usando as derivadas da coordenada deslocada meia volta
   onde o u salta (longitude 180°): de longe não cintila e não há costura. Camadas de categorias seguem sem mipmap.
 - O "16K" do Gleba é o mapa de 4K ampliado 4× (sem detalhe novo). A pirâmide é a estrutura que vai receber o

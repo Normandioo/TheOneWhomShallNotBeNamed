@@ -7,8 +7,14 @@ uniform sampler2D height_map : filter_linear, repeat_enable; // altitude em metr
 uniform sampler2D river_map : filter_linear, repeat_enable; // rios do pincel Vales (0..1), mesma grade da altitude
 uniform float relief = 6.0;      // exagero do relevo na iluminação
 
+// A longitude dá a volta. Na latitude, a filtragem não pode buscar o polo oposto.
+vec2 latitude_clamped_uv(vec2 uv, int rows) {
+	float half_texel = 0.5 / float(rows);
+	return vec2(uv.x, clamp(uv.y, half_texel, 1.0 - half_texel));
+}
+
 float height(vec2 uv) {
-	return textureLod(height_map, vec2(uv.x, clamp(uv.y, 0.0, 1.0)), 0.0).r;
+	return textureLod(height_map, latitude_clamped_uv(uv, textureSize(height_map, 0).y), 0.0).r;
 }
 
 vec2 globe_uv(vec3 n) {
@@ -33,7 +39,11 @@ vec3 relief_normal(vec3 n, vec2 uv, float h, vec3 fallback, mat4 view_model) {
 }
 
 // Rios criados pelo pincel Vales, por cima de qualquer camada. A textura é linear: a linha de 1 pixel fica lisa.
+float terrain_river_at(vec2 uv) {
+	return textureLod(river_map, latitude_clamped_uv(uv, textureSize(river_map, 0).y), 0.0).r;
+}
+
 vec3 river_paint(vec2 uv, vec3 col) {
-	float r = textureLod(river_map, vec2(uv.x, clamp(uv.y, 0.0, 1.0)), 0.0).r;
+	float r = terrain_river_at(uv);
 	return mix(col, pow(vec3(0.12, 0.38, 0.72), vec3(2.2)), smoothstep(0.12, 0.35, r));
 }

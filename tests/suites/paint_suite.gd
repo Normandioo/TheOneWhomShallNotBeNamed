@@ -90,7 +90,7 @@ func _close() -> void:
 
 
 func _button(text: String) -> Button:
-	return _find_button(sheet._body, text)
+	return _find_button(sheet, text)  # as ações de território ficam na barra abaixo do cabeçalho, fora do corpo das abas
 
 
 func _find_button(node: Node, text: String) -> Button:

@@ -14,6 +14,8 @@ const PORT := Color(0.55, 0.85, 1.0)
 const NODE_TITLE := {"const": "Número", "field": "Campo", "links": "Vínculos vigentes", "population": "População", "area": "Área (km²)",
 	"distance": "Distância (km) até", "math": "Operação", "if": "Se", "result": "Resultado"}
 const LEAVES := ["const", "field", "links", "population", "area", "distance"]
+# O título de cada tipo de nó: entradas em azul, cálculos em vinho, o resultado em verde.
+const NODE_COLOR := {"input": Color("#1b3a48"), "calc": Color("#4a2e30"), "result": Color("#25402f")}
 const INPUTS := {"math": ["a", "b"], "if": ["A", "B", "então", "senão"], "result": ["valor"]}
 
 signal kind_selected(kind: String)
@@ -48,37 +50,55 @@ var _serial := 0
 
 
 func _ready() -> void:
-	_dialog = AcceptDialog.new()
+	_dialog = UiKit.themed(AcceptDialog.new())
 	_dialog.title = "Regras"
 	_dialog.ok_button_text = "Fechar"
-	_dialog.min_size = Vector2i(760, 760)
+	_dialog.min_size = Vector2i(1180, 700)
 	var box := VBoxContainer.new()
 	_dialog.add_child(box)
 	_message = Label.new()
 	_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_message.custom_minimum_size = Vector2(600, 0)
 	_message.modulate = Color(1.0, 0.85, 0.4)
 	box.add_child(_message)
+	var columns := HBoxContainer.new()  # a lista à esquerda, o editor de nós no centro, o resultado e as fixações à direita
+	columns.add_theme_constant_override("separation", 14)
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	box.add_child(columns)
 
+	# Esquerda: as regras e o que se faz com a escolhida.
+	var left := VBoxContainer.new()
+	left.custom_minimum_size = Vector2(270, 0)
+	columns.add_child(left)
+	left.add_child(_heading("Regras"))
 	_list = ItemList.new()
-	_list.custom_minimum_size = Vector2(0, 80)
-	box.add_child(_list)
-	var actions := HBoxContainer.new()
-	box.add_child(actions)
-	_button(actions, "Executar na data mostrada", func() -> void:
-		if _selected_rule() != 0:
-			run_requested.emit(_selected_rule()))
-	_button(actions, "Trocar modo", func() -> void:
-		if _selected_rule() != 0:
-			mode_requested.emit(_selected_rule(), "toggle"))
-	_button(actions, "Abrir no editor", func() -> void:
+	_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_list.max_text_lines = 3
+	_list.auto_height = false
+	left.add_child(_list)
+	var new_rule := _button(left, "＋ Nova regra", func() -> void: _new_rule())
+	new_rule.add_theme_stylebox_override("normal", UiKit.active_style())
+	_button(left, "Abrir no editor", func() -> void:
 		var i := _list.get_selected_items()
 		if not i.is_empty():
 			open_rule(_rule_ids[i[0]], _rule_names[i[0]], _rule_defs[i[0]]))
-	_button(actions, "Nova regra", func() -> void: _new_rule())
+	_button(left, "Executar na data mostrada", func() -> void:
+		if _selected_rule() != 0:
+			run_requested.emit(_selected_rule()))
+	_button(left, "Trocar modo", func() -> void:
+		if _selected_rule() != 0:
+			mode_requested.emit(_selected_rule(), "toggle"))
+	var hint := _label(left, "Uma regra calcula um campo a partir de outros campos, vínculos, população ou área. Valores fixados por você nunca são substituídos.")
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.custom_minimum_size = Vector2(250, 0)  # sem largura mínima, o texto com quebra pede altura de uma palavra por linha
+	hint.modulate = Color(1, 1, 1, 0.6)
 
-	box.add_child(HSeparator.new())
+	# Centro: o nome, o que a regra calcula, os nós e Salvar.
+	var center := VBoxContainer.new()
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	columns.add_child(center)
 	var r1 := HBoxContainer.new()
-	box.add_child(r1)
+	center.add_child(r1)
 	_name = LineEdit.new()
 	_name.placeholder_text = "Nome da regra"
 	_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -91,12 +111,11 @@ func _ready() -> void:
 	_label(r1, "calcula")
 	_target = OptionButton.new()
 	r1.add_child(_target)
-	var palette := HBoxContainer.new()
-	box.add_child(palette)
+	var palette := GridContainer.new()  # grade fixa: uma fileira que quebra pediria altura demais à janela
+	palette.columns = 4
+	center.add_child(palette)
 	for k in LEAVES + ["math", "if"]:
-		_button(palette, "＋ " + NODE_TITLE[k], func() -> void: add_node(k))
-	_label(palette, "  Ligue as saídas (direita) às entradas (esquerda); Delete apaga o nó.")
-
+		_button(palette, "＋ " + NODE_TITLE[k], func() -> void: add_node(k)).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_graph = GraphEdit.new()
 	_graph.custom_minimum_size = Vector2(0, 330)
 	_graph.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -104,25 +123,29 @@ func _ready() -> void:
 	_graph.connection_request.connect(_on_connect)
 	_graph.disconnection_request.connect(func(from: StringName, fp: int, to: StringName, tp: int) -> void: _graph.disconnect_node(from, fp, to, tp))
 	_graph.delete_nodes_request.connect(_on_delete)
-	box.add_child(_graph)
-	_button(box, "Salvar regra", _save)
+	center.add_child(_graph)
+	var tip := _label(center, "Ligue as saídas (direita) às entradas (esquerda); Delete apaga o nó.")
+	tip.modulate = Color(1, 1, 1, 0.6)
+	_button(center, "Salvar regra", _save)
 
-	box.add_child(HSeparator.new())
+	# Direita: o resultado da última execução e a fixação de um valor.
+	var right := VBoxContainer.new()
+	right.custom_minimum_size = Vector2(300, 0)
+	columns.add_child(right)
+	right.add_child(_heading("Resultado da execução"))
 	_results = ItemList.new()
-	_results.custom_minimum_size = Vector2(0, 90)
-	box.add_child(_results)
-	var pin := HBoxContainer.new()
-	box.add_child(pin)
+	_results.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right.add_child(_results)
+	right.add_child(_heading("Fixar um valor"))
 	_pin_value = SpinBox.new()
 	_pin_value.min_value = -1e12
 	_pin_value.max_value = 1e12
 	_pin_value.step = 0.01
-	pin.add_child(_pin_value)
+	right.add_child(_pin_value)
 	_pin_reason = LineEdit.new()
 	_pin_reason.placeholder_text = "Motivo da fixação"
-	_pin_reason.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	pin.add_child(_pin_reason)
-	_button(pin, "Fixar a partir da data mostrada", func() -> void:
+	right.add_child(_pin_reason)
+	_button(right, "Fixar a partir da data mostrada", func() -> void:
 		var i := _results.get_selected_items()
 		if i.is_empty() or _last_field == "":
 			show_message("Escolha uma entidade no resultado.")
@@ -130,6 +153,15 @@ func _ready() -> void:
 		pin_requested.emit(int(_result_rows[i[0]].entity_id), _last_field, _pin_value.value, _pin_reason.text))
 	add_child(_dialog)
 	_clear_graph()
+
+
+## O título de uma coluna: Cinzel em destaque.
+func _heading(text: String) -> Label:
+	var l := Label.new()
+	l.text = text
+	UiKit.style_heading(l)
+	l.add_theme_font_size_override("font_size", 17)
+	return l
 
 
 func open_dialog() -> void:
@@ -220,6 +252,9 @@ func add_node(kind: String, at := Vector2.ZERO) -> GraphNode:
 	n.name = "%s_%d" % [kind, _serial]
 	n.title = NODE_TITLE[kind]
 	n.set_meta("kind", kind)
+	var tone: Color = NODE_COLOR["result"] if kind == "result" else (NODE_COLOR["calc"] if kind in ["math", "if"] else NODE_COLOR["input"])
+	n.add_theme_stylebox_override("titlebar", UiKit.node_title_style(tone))
+	n.add_theme_stylebox_override("titlebar_selected", UiKit.node_title_style(tone, true))
 	n.position_offset = at if at != Vector2.ZERO else _graph.scroll_offset / _graph.zoom + Vector2(40 + (_serial % 5) * 30, 40 + (_serial % 5) * 30)
 	var head: Control
 	match kind:
@@ -426,14 +461,16 @@ func _save() -> void:
 		save_requested.emit(_editing, _name.text, JSON.stringify(def))
 
 
-func _label(row: Control, text: String) -> void:
+func _label(row: Control, text: String) -> Label:
 	var l := Label.new()
 	l.text = text
 	row.add_child(l)
+	return l
 
 
-func _button(parent: Control, text: String, on_press: Callable) -> void:
+func _button(parent: Control, text: String, on_press: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.pressed.connect(on_press)
 	parent.add_child(b)
+	return b

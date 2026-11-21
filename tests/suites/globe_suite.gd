@@ -5,10 +5,11 @@ extends "res://tests/test_suite.gd"
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const MapLayers = preload("res://scripts/ui/map_layers.gd")
 
-const CENTER := Vector2(640.0, 360.0)
+var CENTER := Vector2.ZERO  # o centro da janela (a de referência é 1920 × 1080): definido em run()
 
 
 func run() -> void:
+	CENTER = tree.root.get_visible_rect().size * 0.5
 	var cam = main.globe.camera
 	cam.look_at_dir(EvronGeo.dir(20.0, 0.0), 3.0)
 	await save("1_satelite")
@@ -82,12 +83,12 @@ func run() -> void:
 	cam.look_at_dir(EvronGeo.dir(20.0, 0.0), 3.0)
 	await frames(2)
 	await send(motion(CENTER, Vector2(1, 0)))
-	var text: String = main.layer_panel._cursor.text
+	var text: String = main.status_bar._cursor.text
 	if not text.contains("Lat 20,") or not text.contains("Altitude"):
 		return fail("o cursor no centro deveria mostrar lat 20° e a altitude: %s" % text)
-	await send(motion(Vector2(5, 5), Vector2(1, 0)))
-	if main.layer_panel._cursor.text != "Fora do planeta.":
-		return fail("o canto da tela está fora do planeta: %s" % main.layer_panel._cursor.text)
+	await send(motion(Vector2(tree.root.size.x - 8.0, 60.0), Vector2(1, 0)))  # fora do planeta e dos painéis (a barra de cima ocupa o canto de cima)
+	if main.status_bar._cursor.text != "Fora do planeta.":
+		return fail("o canto da tela está fora do planeta: %s" % main.status_bar._cursor.text)
 	ok("cursor: lat/lon e altitude sob o mouse")
 
 	# De perto: a câmera chega a poucos km do chão sem atravessar o planeta.

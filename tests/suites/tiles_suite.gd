@@ -19,8 +19,11 @@ func run() -> void:
 	# De longe: o planeta inteiro cabe na tela com os níveis grossos.
 	cam.look_at_dir(EvronGeo.dir(20.0, 0.0), 3.0)
 	await _settle()
-	if tiles.max_drawn_level() > 2:
-		return fail("de longe não deveria passar do nível 2, está no %d" % tiles.max_drawn_level())
+	# O nível desce quando 1 texel passa de DETAIL pixels na tela: na janela de referência (1080p) o planeta inteiro chega ao nível 3;
+	# numa janela de 720p, ao 2.
+	var far_limit := 3 if tree.root.get_visible_rect().size.y > 720.0 else 2
+	if tiles.max_drawn_level() > far_limit:
+		return fail("de longe não deveria passar do nível %d, está no %d" % [far_limit, tiles.max_drawn_level()])
 	await save("6_blocos_longe")
 	ok("de longe: nível %d, %d blocos na tela" % [tiles.max_drawn_level(), tiles.drawn.size()])
 
@@ -89,6 +92,14 @@ func _satellite() -> void:
 		return
 	if not await _check_river_repairs():
 		return
+	# A rotação de irmãos no cache causava flashes neste enquadramento polar.
+	cam.look_at_dir(EvronGeo.dir(84.0, 179.7), 1.45)
+	await _settle()
+	var polar_tiles: Array[String] = tiles.drawn.duplicate()
+	for frame in 12:
+		await frames(1)
+		if tiles.drawn != polar_tiles or not tiles._loading.is_empty() or tiles.loaded_count() > TileLayer.MAX_CACHE:
+			return fail("os blocos perto do polo devem estabilizar sem exceder o cache")
 	cam.look_at_dir(EvronGeo.dir(73, 179.5), 1.46)
 	await _settle()
 	await save("satelite-exp-polar")

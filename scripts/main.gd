@@ -25,8 +25,10 @@ const GlobeView = preload("res://scripts/view/globe_view.gd")
 const MapLayers = preload("res://scripts/ui/map_layers.gd")
 const LayerPanel = preload("res://scripts/ui/layer_panel.gd")
 const LegendPanel = preload("res://scripts/ui/legend_panel.gd")
+const ModeRail = preload("res://scripts/ui/mode_rail.gd")
 const SearchPanel = preload("res://scripts/ui/search_panel.gd")
 const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
+const StatusBar = preload("res://scripts/ui/status_bar.gd")
 const CalendarPanel = preload("res://scripts/ui/calendar_panel.gd")
 const PresencePanel = preload("res://scripts/ui/presence_panel.gd")
 const DrawPanel = preload("res://scripts/ui/draw_panel.gd")
@@ -59,6 +61,10 @@ var brush: TerrainBrush
 var material := GlobeMaterial.new()
 var globe: GlobeView
 var layer_panel: LayerPanel
+var mode_rail: ModeRail
+var status_bar: StatusBar
+var _dock := {}  # os painéis que o _layout() posiciona: search, sheet, presence
+var _help: AcceptDialog
 var legend: LegendPanel
 var domains: DomainHub                # as fichas (busca, ficha, calendários) e o contexto dos outros controladores
 var territories: TerritoryEditor      # pintar território, camadas, paleta e seleção do mapa
@@ -116,40 +122,31 @@ func _ready() -> void:
 	add_child(globe)
 	move_child(globe, 0)  # por baixo dos painéis
 	layer_panel = LayerPanel.new()
+	mode_rail = ModeRail.new()
+	hud.add_child(mode_rail)
+	status_bar = StatusBar.new()
+	hud.add_child(status_bar)
 	legend = LegendPanel.new()
 	tool_panel = ToolPanel.new(brush.radius_km, brush.strength, brush.roughness)
 	time_bar = TimeBar.new()
-	for panel in [layer_panel, legend, tool_panel, time_bar]:
+	for panel in [layer_panel, legend, tool_panel, time_bar, tool_panel.edit_bar]:
 		hud.add_child(panel)
 	var search := SearchPanel.new()
 	var sheet := SheetPanel.new()
 	hud.add_child(search)
 	hud.add_child(sheet)
-	search.hide()
-	legend.hide()
-	tool_panel.bind_panel(layer_panel, "Mapa", "map")
-	tool_panel.bind_panel(search, "Cadastros", "records")
-	tool_panel.bind_panel(legend, "Legenda", "legend")
-	search.visibility_changed.connect(func() -> void:
-		if search.visible:
-			legend.hide())
-	legend.visibility_changed.connect(func() -> void:
-		if legend.visible:
-			search.hide())
-	var align_panels := func() -> void:
-		var top := tool_panel.position.y + tool_panel.size.y + 10.0
-		layer_panel.position.y = top
-		layer_panel.reset_size.call_deferred()
-		search.position.y = top
-		sheet.offset_top = top
-		var right_gap := search.size.x + 24.0 if search.visible else 12.0
-		sheet.position.x = hud.size.x - right_gap - sheet.size.x
-		legend.position.y = hud.size.y - legend.size.y - (74.0 if hud.size.x < 1200.0 else 12.0)
-	tool_panel.resized.connect(align_panels)
-	hud.resized.connect(align_panels)
-	sheet.resized.connect(align_panels)
-	search.visibility_changed.connect(align_panels)
-	align_panels.call_deferred()
+	_dock = {"search": search, "sheet": sheet}
+	tool_panel.search_requested.connect(search.focus_query)
+	tool_panel.help_requested.connect(_show_help)
+	tool_panel.config_requested.connect(_open_config)
+	search.summary_changed.connect(tool_panel.show_counts)
+	hud.resized.connect(_layout)
+	search.visibility_changed.connect(_layout)
+	sheet.visibility_changed.connect(_layout)
+	legend.resized.connect(_layout)
+	layer_panel.resized.connect(_layout)
+	search.visible = get_viewport().get_visible_rect().size.x >= 1600.0  # em janela estreita o Índice começa recolhido (tecla O)
+	_layout.call_deferred()
 	var calendar_panel := CalendarPanel.new()
 	hud.add_child(calendar_panel)  # por último: abre por cima dos outros painéis
 	domains = DomainHub.new()
@@ -161,11 +158,12 @@ func _ready() -> void:
 	terrain.RiversDirty = false
 	var presence_panel := PresencePanel.new()
 	hud.add_child(presence_panel)
-	var align_presence := func() -> void:
-		presence_panel.position.y = time_bar.position.y - presence_panel.size.y - 10.0
-	presence_panel.resized.connect(align_presence)
-	time_bar.item_rect_changed.connect(align_presence)
-	align_presence.call_deferred()
+	_dock["presence"] = presence_panel
+	presence_panel.hide()  # abre pelo botão Sobreposições da coluna de modos
+	mode_rail.overlays_toggled.connect(func(open: bool) -> void:
+		presence_panel.visible = open
+		_layout())
+	presence_panel.resized.connect(_layout)
 	hud.move_child(presence_panel, 0)  # por baixo da ficha e da janela de calendários
 	domains.bind_map(globe.places, presence_panel, globe.focus)
 	layer_panel.political_visibility_changed.connect(presence_panel.set_political_visible)
@@ -177,6 +175,10 @@ func _ready() -> void:
 	place_drawing.setup(domains, draw_panel)
 	var territory_panel := TerritoryPanel.new()
 	hud.add_child(territory_panel)
+	_dock["territory"] = territory_panel
+	for bar in [territory_panel, tool_panel.edit_bar]:
+		bar.resized.connect(_layout)
+		bar.visibility_changed.connect(_layout)
 	territories = TerritoryEditor.new()
 	territories.palette_changed.connect(material.set_political_palette)
 	territories.selection_changed.connect(material.set_political_selected)
@@ -185,7 +187,8 @@ func _ready() -> void:
 	material.set_political(territory.OwnersImage())
 	territories.territory_level_shown.connect(func(level: String, _layer) -> void:
 		material.set_political(territories.political_image())
-		layer_panel.show_level(level))
+		layer_panel.show_level(level)
+		mode_rail.show_level(level))
 	layer_panel.level_selected.connect(territories.show_level)
 	territories.boundary_tool.preview_changed.connect(func(img) -> void:
 		material.set_political(img if img != null else territories.political_image()))
@@ -199,8 +202,11 @@ func _ready() -> void:
 	hud.add_child(rules_panel)
 	rules.setup(domains, rules_panel)
 	world_files.setup(self)
-	layer_panel.export_requested.connect(func() -> void: world_files.open_dialog(true))
-	layer_panel.import_requested.connect(func() -> void: world_files.open_dialog(false))
+	if domains.usable and not _terrain_loaded:
+		world_files.notice.call_deferred("O relevo gravado neste mundo não pôde ser lido (veja o log). O mapa abriu com o relevo original e as "
+			+ "edições de relevo desta sessão não serão gravadas; a exportação e a importação do mundo continuam funcionando.")
+	tool_panel.export_requested.connect(func() -> void: world_files.open_dialog(true))
+	tool_panel.import_requested.connect(func() -> void: world_files.open_dialog(false))
 	if save_path != "":
 		WorldStore.load_into(clock, save_path)  # sem salvamento válido, abre o cenário técnico, pausado
 	demo.attach(clock)
@@ -226,8 +232,15 @@ func _ready() -> void:
 	clock.event_fired.connect(func(e: Dictionary) -> void:
 		time_bar.show_message("Marco: %s (%s)" % [e["name"], Calendar.format(e["at"])]))
 	_on_clock_changed()
-	layer_panel.layer_selected.connect(set_layer)
+	mode_rail.layer_selected.connect(set_layer)
+	mode_rail.level_selected.connect(func(level: String) -> void:  # os modos de mundo são o mapa político num nível
+		for i in MapLayers.LAYERS.size():
+			if MapLayers.LAYERS[i]["kind"] == "political":
+				set_layer(i)
+				break
+		territories.show_level(level))
 	tool_panel.tool_selected.connect(set_tool)
+	tool_panel.territory_requested.connect(_start_territory)
 	tool_panel.radius_changed.connect(func(km: float) -> void: brush.radius_km = km)
 	tool_panel.strength_changed.connect(func(v: float) -> void: brush.strength = v)
 	tool_panel.roughness_changed.connect(func(v: float) -> void: brush.roughness = v)
@@ -250,7 +263,7 @@ func _process(delta: float) -> void:
 	domains.tick()
 	globe.update(delta)
 	territories.boundary_tool.update_zoom(globe.camera_altitude_km())
-	layer_panel.show_camera_altitude(globe.camera_altitude_km())
+	status_bar.show_camera_altitude(globe.camera_altitude_km())
 	_since_upload += delta
 	if terrain.Dirty and (not brush.active or _since_upload >= HEIGHT_UPLOAD_SECONDS):
 		material.refresh_height(terrain.HeightImage())
@@ -274,6 +287,7 @@ func _process(delta: float) -> void:
 		save_clock()
 		if not brush.active:
 			save_terrain()
+			tool_panel.show_saved(true)
 
 
 func _notification(what: int) -> void:
@@ -296,7 +310,30 @@ func _input(e: InputEvent) -> void:
 
 
 func _unhandled_input(e: InputEvent) -> void:
+	if e is InputEventKey and e.pressed and not e.echo and not e.ctrl_pressed and not e.alt_pressed and not e.meta_pressed:
+		var typing := get_viewport().gui_get_focus_owner()
+		if not (typing is LineEdit or typing is TextEdit or typing is SpinBox):
+			match e.keycode:
+				KEY_V:
+					set_tool(ToolPanel.NAVIGATE)
+					return
+				KEY_T:
+					_start_territory()
+					return
+				KEY_R:
+					set_tool(0)
+					return
+				KEY_O:
+					_dock["search"].visible = not _dock["search"].visible
+					return
+				KEY_F1:
+					_show_help()
+					return
 	if e is InputEventKey and e.pressed and not e.echo and e.ctrl_pressed:
+		if e.keycode == KEY_F and domains.usable:  # busca global: abre o Índice na aba Busca
+			domains.search.focus_query()
+			get_viewport().set_input_as_handled()
+			return
 		if e.keycode == KEY_Z and not e.shift_pressed:
 			undo()
 			return
@@ -335,12 +372,89 @@ func _unhandled_input(e: InputEvent) -> void:
 	globe.handle_input(e)
 
 
+# --- Disposição do HUD -----------------------------------------------------------------------------------------
+
+## Põe os painéis no lugar do desenho: barra de cima (48), coluna de modos (52) e o Índice acoplados à esquerda, a ficha à direita
+## (as duas na altura toda, entre a barra de cima e a de estado), a legenda embaixo ao lado do Índice e o ponto fixado em cima do globo.
+func _layout() -> void:
+	if _dock.is_empty() or tool_panel == null:
+		return
+	var width := hud.size.x
+	var top := float(ToolPanel.HEIGHT)
+	var bottom := hud.size.y - StatusBar.HEIGHT
+	mode_rail.position = Vector2(0, top)
+	mode_rail.size = Vector2(ModeRail.WIDTH, bottom - top)
+	var left := float(ModeRail.WIDTH)
+	var index: Control = _dock["search"]
+	if index.visible:
+		index.position = Vector2(left, top)
+		index.size = Vector2(SearchPanel.WIDTH, bottom - top)
+		left += SearchPanel.WIDTH
+	var free_right: float = width - SheetPanel.WIDTH if _dock["sheet"].visible else width
+	var lift := 0.0  # a barra de edição de baixo (relevo ou território) fica no meio do espaço livre; a legenda sobe acima dela
+	for bar in [_dock.get("territory"), tool_panel.edit_bar]:
+		if bar != null and bar.visible:
+			bar.size = bar.get_combined_minimum_size()
+			bar.position = Vector2(clampf((left + free_right) / 2.0 - bar.size.x / 2.0, left + 8.0, maxf(left + 8.0, free_right - bar.size.x - 8.0)),
+				bottom - bar.size.y - 12.0)
+			lift = bar.size.y + 12.0
+	var overlays: Control = _dock.get("presence")
+	legend.position = Vector2(left + 12.0, bottom - legend.size.y - 12.0 - lift)
+	if overlays != null and overlays.visible:
+		overlays.position = Vector2(left + 12.0, legend.position.y - overlays.size.y - 10.0)
+	layer_panel.position = Vector2(left + 12.0, top + 12.0)  # o ponto fixado, em cima do globo
+	var sheet: Control = _dock["sheet"]
+	if sheet.visible:
+		sheet.position = Vector2(width - SheetPanel.WIDTH, top)
+
+
+## A engrenagem da barra de cima: abre as mesmas janelas que o Índice abria (tipos, regras e calendários).
+func _open_config(which: String) -> void:
+	var index: Control = _dock["search"]
+	match which:
+		"tipos":
+			index.types_requested.emit()
+		"regras":
+			index.rules_requested.emit()
+		"calendarios":
+			index.calendars_requested.emit()
+
+
+## O modo Território: pinta o cadastro aberto na ficha (T ou o botão da barra de cima).
+func _start_territory() -> void:
+	territories.start_painting(domains.current())
+	if not territories.painting_territory:  # nada aberto na ficha, ou um tipo sem área pintável
+		tool_panel.show_territory_editing(false)
+		time_bar.show_message("Abra um país ou uma província na ficha para pintar o território dele.")
+
+
+## F1: os atalhos que existem.
+func _show_help() -> void:
+	if _help == null:
+		_help = UiKit.themed(AcceptDialog.new())
+		_help.title = "Atalhos"
+		_help.dialog_text = "V  Navegar
+T  Território: pintar o cadastro aberto na ficha
+R  Relevo
+O  Recolher ou abrir o Índice
+" 			+ "Ctrl+F  Buscar
+Ctrl+Z / Ctrl+Y  Desfazer e refazer
+Esc  Concluir o modo de edição
+F1  Esta ajuda"
+		add_child(_help)
+	_help.popup_centered()
+
+
 # --- Casos de uso ---------------------------------------------------------------------------------------------
 
 func set_layer(index: int) -> void:
 	layer = index
 	var selected: Dictionary = MapLayers.LAYERS[index]
 	material.show_layer(selected)
+	# Nos mapas que não são o político, a sobreposição "Fronteira política" mostra os países: se o nível ficou numa área independente
+	# (religião, cultura…), muitas vezes vazia, os países sumiriam. Volta para os países, a não ser que se esteja pintando.
+	if selected["kind"] != "political" and territories != null and not territories.painting_territory 			and not territories.territory_level in TerritoryEditor.HIERARCHY:
+		territories.show_level("pais")
 	var tiles: String = selected.get("tiles", "")
 	if selected["kind"] == "natural" and (material.layer_file != selected["file"] or
 			not FileAccess.file_exists(EvronMaps.directory() + "tiles/" + tiles + "/manifest.json")):
@@ -348,7 +462,7 @@ func set_layer(index: int) -> void:
 	globe.set_tiles(tiles, material.height_texture, material.river_texture)
 	legend.show_layer(MapLayers.LAYERS[index])
 	_refresh_stale()
-	layer_panel.show_layer(index)
+	mode_rail.show_layer(index)
 
 
 func _show_political(on: bool) -> void:
@@ -382,12 +496,23 @@ func redo() -> void:
 	commands.redo()
 
 
+## Grava as edições de relevo. Se o relevo gravado não pôde ser lido ao abrir, nada é gravado por cima dele (as edições novas ficam só
+## na memória); sem edições novas isso não é um problema, e exportar ou importar o mundo continua valendo.
 func save_terrain(finish_stroke := false) -> bool:
 	if domains == null or not domains.usable:
 		return false
 	if finish_stroke and brush.active:
 		brush.end()
-	return _terrain_loaded and domains.registry.SaveTerrain(terrain)
+	if not _terrain_loaded:
+		return not terrain.HasEdits
+	return domains.registry.SaveTerrain(terrain)
+
+
+## Por que o relevo não pôde ser gravado (para as mensagens de exportar e importar).
+func terrain_problem() -> String:
+	if not _terrain_loaded:
+		return "o relevo gravado neste mundo não pôde ser lido ao abrir; as edições de relevo desta sessão não podem ser gravadas"
+	return "as alterações no relevo não foram gravadas"
 
 
 func save_clock() -> void:
@@ -459,7 +584,7 @@ func _season_line(n: Vector3) -> String:
 # --- Reações ---------------------------------------------------------------------------------------------------
 
 func _on_hover(n: Vector3) -> void:
-	layer_panel.show_cursor(describe(n))
+	status_bar.show_cursor(describe(n))
 	if territories.painting_territory and not territories.territory_mode in ["fronteira", "conta-gotas"]:
 		_show_brush(n, territories.territory_radius)  # o anel do pincel de território
 	if tool != ToolPanel.NAVIGATE:
@@ -481,6 +606,7 @@ func _on_painting_changed(on: bool) -> void:
 
 
 func _on_history_changed() -> void:
+	tool_panel.show_saved(false)
 	_refresh_stale()
 	tool_panel.show_history(commands.can_undo(), commands.can_redo(), commands.undo_name(), commands.redo_name())
 

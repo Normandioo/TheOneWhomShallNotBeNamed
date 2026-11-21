@@ -1,9 +1,10 @@
 extends PanelContainer
-## A barra do modo "pintar território": de que país, a ferramenta (pincel, balde ou borracha), o raio, "só em terra", as fronteiras naturais
+## A barra do modo "pintar território", embaixo ao centro: de que país, a ferramenta (pincel, balde ou borracha), o raio, "só em terra", as fronteiras naturais
 ## (crescer pela terra sem dono, assentar no relevo), a área já pintada e Terminar.
 ## Só mostra e pede: avisa por sinal; quem pinta é o DomainHub. Esc termina. Ctrl+Z e Ctrl+Y desfazem e refazem (a pilha é a mesma do terreno).
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
+const UiIcons = preload("res://scripts/ui/ui_icons.gd")
 const LayerPanel = preload("res://scripts/ui/layer_panel.gd")  # só para o separador de milhares
 
 signal mode_changed(mode: String)   # pincel | balde | borracha
@@ -22,6 +23,7 @@ signal merge_requested(from_id: int)  # unir: o território inteiro de outro cad
 signal import_requested  # importar um PNG para a camada do nível que está sendo pintado
 signal fidelity_changed(index: int)  # modo de fidelidade do traço (TerritoryBoundaryTool.FIDELITY)
 
+const ICONS := {"pincel": "territory", "balde": "bucket", "borracha": "eraser", "conta-gotas": "eyedropper", "fronteira": "border"}
 const MODES := [["pincel", "Pincel"], ["balde", "Balde"], ["borracha", "Borracha"], ["conta-gotas", "Conta-gotas"], ["fronteira", "Fronteira"]]
 const TIPS := {
 	"pincel": "Arraste no globo para pintar. Pintar sobre outro país toma o território dele.",
@@ -42,7 +44,8 @@ var _radius_label: Label
 var _reach_label: Label
 var _message: Label
 var _buttons: Dictionary = {}
-var _brush_controls: VBoxContainer
+var _brush_controls: HBoxContainer
+var _more_controls: HBoxContainer
 var _boundary_controls: VBoxContainer
 var _paths: OptionButton
 var _boundary_status: Label
@@ -56,45 +59,53 @@ var _side_button: Button
 func _init() -> void:
 	visible = false
 	add_theme_stylebox_override("panel", UiKit.panel_style())
-	custom_minimum_size = Vector2(300, 0)
 	var box := VBoxContainer.new()
 	add_child(box)
 	_title = Label.new()
 	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	_title.add_theme_font_size_override("font_size", 16)
-	_title.modulate = Color(1.0, 0.92, 0.35)
+	_title.add_theme_font_size_override("font_size", 15)
+	UiKit.style_heading(_title)
 	box.add_child(_title)
-	var tools := HBoxContainer.new()
-	box.add_child(tools)
+
+	# A linha de ferramentas: pincel, balde, borracha, conta-gotas e fronteira (ícone e nome), o raio, "só em terra", a área, "Mais" e Concluir.
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	box.add_child(row)
 	var group := ButtonGroup.new()
 	for m in MODES:
 		var b := Button.new()
 		b.text = m[1]
+		b.icon = UiIcons.get_icon(ICONS[m[0]], 20)
+		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+		b.custom_minimum_size = Vector2(76, 52)
+		b.tooltip_text = TIPS.get(m[0], "Desenha uma fronteira à mão, aberta ou como contorno fechado.")
 		b.toggle_mode = true
 		b.button_group = group
 		b.button_pressed = m[0] == mode
 		b.pressed.connect(func() -> void:
 			set_mode(m[0])
 			mode_changed.emit(mode))
-		tools.add_child(b)
+		row.add_child(b)
 		_buttons[m[0]] = b
-	_brush_controls = VBoxContainer.new()
-	box.add_child(_brush_controls)
-	var row := HBoxContainer.new()
-	_brush_controls.add_child(row)
+	row.add_child(VSeparator.new())
+	_brush_controls = HBoxContainer.new()  # só nas ferramentas de pintar (a fronteira não tem raio)
+	_brush_controls.add_theme_constant_override("separation", 10)
+	row.add_child(_brush_controls)
 	_radius_label = Label.new()
-	row.add_child(_radius_label)
+	_brush_controls.add_child(_radius_label)
 	var slider := HSlider.new()
 	slider.min_value = 20.0
 	slider.max_value = 2500.0
 	slider.step = 10.0
 	slider.value = radius_km
-	slider.custom_minimum_size = Vector2(160, 0)
+	slider.custom_minimum_size = Vector2(150, 0)
+	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	slider.value_changed.connect(func(v: float) -> void:
 		radius_km = v
 		_show_radius()
 		radius_changed.emit(v))
-	row.add_child(slider)
+	_brush_controls.add_child(slider)
 	var land := CheckBox.new()
 	land.text = "Só em terra"
 	land.tooltip_text = "Pinta só onde a altitude é de terra: a costa do país segue a costa do mapa."
@@ -103,14 +114,38 @@ func _init() -> void:
 		land_only = on
 		land_only_changed.emit(on))
 	_brush_controls.add_child(land)
-	_tip = Label.new()
-	_tip.autowrap_mode = TextServer.AUTOWRAP_WORD
-	_tip.custom_minimum_size = Vector2(280, 0)
-	_tip.modulate = Color(1, 1, 1, 0.75)
-	_tip.text = TIPS[mode]
-	_brush_controls.add_child(_tip)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(spacer)
 	_area = Label.new()
-	_brush_controls.add_child(_area)
+	row.add_child(_area)
+	var more := Button.new()
+	more.text = "Mais"
+	more.icon = UiIcons.get_icon("chevron_down", 14)
+	more.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	more.toggle_mode = true
+	more.tooltip_text = "Unir, importar PNG e as fronteiras naturais"
+	row.add_child(more)
+	var done := Button.new()
+	done.text = "Concluir"
+	done.tooltip_text = "Sai do modo Território (Esc)"
+	done.pressed.connect(func() -> void: finish_requested.emit())
+	row.add_child(done)
+
+	_tip = Label.new()
+	_tip.add_theme_font_size_override("font_size", 13)
+	_tip.modulate = Color(1, 1, 1, 0.7)
+	_tip.text = TIPS[mode]
+	box.add_child(_tip)
+	_more_controls = HBoxContainer.new()  # o que sai da linha principal: unir, importar e as fronteiras naturais
+	_more_controls.add_theme_constant_override("separation", 14)
+	_more_controls.hide()
+	box.add_child(_more_controls)
+	more.toggled.connect(func(open: bool) -> void:
+		_more_controls.visible = open
+		_position_panel.call_deferred())
+	var join := VBoxContainer.new()
+	_more_controls.add_child(join)
 	var merge_row := HBoxContainer.new()
 	_merge_menu = OptionButton.new()
 	_merge_menu.fit_to_longest_item = false
@@ -123,18 +158,18 @@ func _init() -> void:
 		if _merge_menu.selected >= 0 and _merge_menu.selected < _merge_ids.size():
 			merge_requested.emit(_merge_ids[_merge_menu.selected]))
 	merge_row.add_child(merge)
-	_brush_controls.add_child(merge_row)
+	join.add_child(merge_row)
 	var import_png := Button.new()
 	import_png.text = "Importar PNG…"
 	import_png.tooltip_text = "Lê um mapa em PNG (equiretangular): cada mancha de cor vira uma região que você liga a um cadastro deste nível."
 	import_png.pressed.connect(func() -> void: import_requested.emit())
-	_brush_controls.add_child(import_png)
-	_natural(_brush_controls)
+	join.add_child(import_png)
+	var natural := VBoxContainer.new()
+	_more_controls.add_child(natural)
+	_natural(natural)
+	_message.get_parent().remove_child(_message)  # a mensagem das fronteiras naturais fica à vista, fora do "Mais"
+	box.add_child(_message)
 	_build_boundary_controls(box)
-	var done := Button.new()
-	done.text = "Terminar"
-	done.pressed.connect(func() -> void: finish_requested.emit())
-	box.add_child(done)
 	_show_radius()
 	_update_controls()
 
@@ -210,7 +245,8 @@ func set_mode(next_mode: String) -> void:
 func _update_controls() -> void:
 	_boundary_controls.visible = mode == "fronteira"
 	_brush_controls.visible = mode != "fronteira"
-	if _brush_controls.visible:
+	_tip.visible = mode != "fronteira"
+	if _tip.visible:
 		_tip.text = TIPS[mode]
 	_position_panel.call_deferred()
 
@@ -218,9 +254,7 @@ func _update_controls() -> void:
 func _position_panel() -> void:
 	if not is_inside_tree() or not visible:
 		return
-	size = get_combined_minimum_size()
-	var room := get_viewport_rect().size - size - Vector2(12, 12)
-	position = Vector2(maxf(0.0, room.x), maxf(0.0, room.y - 138.0))
+	size = get_combined_minimum_size()  # quem põe no lugar é o Main (_layout): embaixo, no meio do espaço livre
 
 
 ## Abre a barra para o país, com a área que ele já tem.
@@ -258,9 +292,9 @@ func hide_panel() -> void:
 
 ## Fronteiras naturais (docs/mapa-politico.md, etapa 1): o alcance e os três botões.
 func _natural(box: VBoxContainer) -> void:
-	box.add_child(HSeparator.new())
 	var title := Label.new()
 	title.text = "Fronteiras naturais"
+	UiKit.style_heading(title)
 	box.add_child(title)
 	var row := HBoxContainer.new()
 	box.add_child(row)

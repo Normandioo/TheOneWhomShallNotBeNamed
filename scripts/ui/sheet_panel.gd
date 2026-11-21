@@ -4,7 +4,9 @@ extends PanelContainer
 ## o usuário edita; o DomainHub grava no Registry e devolve o que for preciso mostrar.
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
+const UiIcons = preload("res://scripts/ui/ui_icons.gd")
 const LayerPanel = preload("res://scripts/ui/layer_panel.gd")  # só para o separador de milhares
+const SunCrest = preload("res://scripts/ui/sun_crest.gd")
 
 signal name_changed(entity_id: int, text: String)  # correção de grafia do nome atual (não é mudança histórica)
 signal summary_changed(entity_id: int, text: String)
@@ -37,7 +39,7 @@ signal place_created(name: String, kind: String, radius_km: float, role: String)
 signal estimate_added(place_id: int, low: String, high: String, level: String, certainty: String)
 signal estimate_removed(estimate_id: int)
 
-const WIDTH := 440
+const WIDTH := 420
 const FOREVER := 9223372036854775807
 const STATES := ["known", "unknown", "na"]
 const STATE_LABELS := ["Valor", "Desconhecido", "Não se aplica"]
@@ -49,6 +51,12 @@ const ROLES := [
 ]
 
 var _title: Label
+var _banner: PanelContainer
+var _crest: Control
+var _name_label: Label
+var _subtitle: Label
+var _actions: HBoxContainer      # Pintar território e a subdivisão, logo abaixo do cabeçalho (só para quem tem território)
+var _actions_wrap: Control
 var _boundary_brush: Button
 var _scroll: ScrollContainer
 var _body: VBoxContainer
@@ -80,29 +88,52 @@ var _date_labels := {}     # id do uso -> Label com a data local
 
 func _init() -> void:
 	visible = false
-	add_theme_stylebox_override("panel", UiKit.panel_style())
-	anchor_left = 1.0
+	add_theme_stylebox_override("panel", UiKit.dock_style(SIDE_LEFT, 0, 0))
+	anchor_left = 1.0  # acoplada à direita, da barra de cima à de estado
 	anchor_right = 1.0
 	anchor_top = 0.0
 	anchor_bottom = 1.0
-	offset_left = -(WIDTH + 320 + 24)  # à esquerda do painel de busca
-	offset_right = -(320 + 24)
-	offset_top = 104     # alinha a ficha com o painel de cadastros
-	offset_bottom = -128  # acima da barra de tempo (embaixo, à esquerda)
+	grow_horizontal = Control.GROW_DIRECTION_BEGIN  # se o conteúdo não coube, cresce para a esquerda, nunca para fora da tela
+	offset_left = -WIDTH
+	offset_right = 0
+	clip_contents = true
+	offset_top = 48
+	offset_bottom = -30
 	var root := VBoxContainer.new()
 	add_child(root)
+	_banner = PanelContainer.new()
+	_banner.add_theme_stylebox_override("panel", UiKit.banner_style(Color("#6e86d8")))
+	root.add_child(_banner)
+	var banner_row := HBoxContainer.new()
+	banner_row.add_theme_constant_override("separation", 12)
+	_banner.add_child(banner_row)
+	_crest = SunCrest.new()
+	banner_row.add_child(_crest)
+	var banner_text := VBoxContainer.new()
+	banner_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	banner_row.add_child(banner_text)
 	var head := HBoxContainer.new()
-	root.add_child(head)
+	banner_text.add_child(head)
 	_title = Label.new()
-	_title.add_theme_font_size_override("font_size", 18)
-	UiKit.style_heading(_title)
+	_title.clip_text = true  # o painel tem largura fixa: o título recorta em vez de alargá-lo
+	_title.add_theme_color_override("font_color", Color("#c8b5b0"))
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
+	_name_label = Label.new()
+	_name_label.add_theme_font_size_override("font_size", 24)
+	UiKit.style_heading(_name_label)
+	_name_label.add_theme_color_override("font_color", Color("#f4ebd3"))
+	_name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	banner_text.add_child(_name_label)
+	_subtitle = Label.new()
+	_subtitle.add_theme_color_override("font_color", Color("#c8b5b0"))
+	banner_text.add_child(_subtitle)
 	_boundary_brush = Button.new()
 	_boundary_brush.text = "Pincel de fronteira"
 	_boundary_brush.visible = false
 	_boundary_brush.pressed.connect(func() -> void: territory_boundary_requested.emit())
-	head.add_child(_boundary_brush)
+	_boundary_brush.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	banner_text.add_child(_boundary_brush)  # sob o nome: na linha do título faltava espaço nos 420 px
 	var close := Button.new()
 	close.text = "✕"
 	close.flat = true
@@ -110,17 +141,34 @@ func _init() -> void:
 		visible = false
 		closed.emit())
 	head.add_child(close)
+	_actions = HBoxContainer.new()
+	_actions.add_theme_constant_override("separation", 6)
+	_actions_wrap = _margin(_actions, 14, 12, 4)
+	_actions_wrap.hide()
+	root.add_child(_actions_wrap)
 	_tab_bar = HBoxContainer.new()
-	root.add_child(_tab_bar)
+	root.add_child(_margin(_tab_bar, 6, 8, 0))
 	root.add_child(HSeparator.new())
 	_scroll = ScrollContainer.new()
 	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	root.add_child(_scroll)
+	root.add_child(_margin(_scroll, 14, 0, 12, true))
 	_confirm = ConfirmationDialog.new()
 	_confirm.title = "Excluir cadastro"
 	_confirm.confirmed.connect(func() -> void: delete_confirmed.emit())
 	add_child(_confirm)
+
+
+## O conteúdo recuado nas laterais (o painel é acoplado e o cabeçalho vai de ponta a ponta).
+func _margin(child: Control, side: int, top: int, bottom: int, fill := false) -> MarginContainer:
+	var m := MarginContainer.new()
+	m.add_theme_constant_override("margin_left", side)
+	m.add_theme_constant_override("margin_right", side)
+	m.add_theme_constant_override("margin_top", top)
+	m.add_theme_constant_override("margin_bottom", bottom)
+	m.size_flags_vertical = Control.SIZE_EXPAND_FILL if fill else Control.SIZE_SHRINK_BEGIN
+	m.add_child(child)
+	return m
 
 
 func current_id() -> int:
@@ -142,6 +190,7 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	visible = true
 	_title.text = "Ficha · " + UiKit.kind_label(sheet.kind)
 	_boundary_brush.visible = geo.get("territory", {}).get("ok", false)
+	_show_banner(sheet, geo.get("territory", {}))
 	if _body != null:
 		_scroll.remove_child(_body)
 		_body.queue_free()
@@ -175,10 +224,25 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	_select_tab(keep if _pages.has(keep) else "Geral")
 
 
+## O cabeçalho: o brasão e o fundo na cor do cadastro (a do território, se tiver), o nome e "tipo · área".
+func _show_banner(sheet: Dictionary, territory: Dictionary) -> void:
+	var rgb := Color("#6e86d8")
+	if territory.has("color"):
+		var c := int(territory.color)
+		rgb = Color8((c >> 16) & 255, (c >> 8) & 255, c & 255)
+	_crest.color = rgb
+	_banner.add_theme_stylebox_override("panel", UiKit.banner_style(rgb))
+	_name_label.text = String(sheet.name)
+	var area := float(territory.get("area_km2", 0.0))
+	_subtitle.text = UiKit.kind_label(sheet.kind) + ("  ·  ≈ %s km²" % LayerPanel._thousands(roundi(area)) if area > 0.0 else "")
+
+
 func _add_tab(label: String) -> void:
 	var button := Button.new()
 	button.text = label
 	button.toggle_mode = true
+	button.clip_text = true  # cinco abas cabem nos 420 px do painel
+	button.add_theme_font_size_override("font_size", 12)
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.pressed.connect(_select_tab.bind(label))
 	_tab_bar.add_child(button)
@@ -543,6 +607,10 @@ func _build_links() -> void:
 ## Só para países e províncias: a camada do nível (o território pintado, a cor, pintar e apagar).
 func _build_territory() -> void:
 	_territory_msg = null
+	for b in _actions.get_children():
+		_actions.remove_child(b)
+		b.queue_free()
+	_actions_wrap.hide()
 	if not _geo.has("territory"):
 		return
 	var info: Dictionary = _geo.territory
@@ -565,26 +633,30 @@ func _build_territory() -> void:
 	color_row.add_child(picker)
 	var row := HBoxContainer.new()
 	box.add_child(row)
-	var paint := Button.new()
+	var paint := Button.new()  # a ação principal vai para a barra de ações, abaixo do cabeçalho
 	paint.text = "Pintar território"
+	paint.icon = UiIcons.get_icon("territory", 16)
 	paint.disabled = not info.ok
 	paint.tooltip_text = "Pinta no globo com o pincel; pintar sobre outro do mesmo nível toma o território dele" if info.ok else "Este cadastro tem um id acima de 65535: a camada política não comporta"
 	paint.pressed.connect(func() -> void: territory_paint_requested.emit())
-	row.add_child(paint)
+	paint.add_theme_stylebox_override("normal", UiKit.active_style())
+	paint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_actions.add_child(paint)
+	_actions_wrap.show()
 	var clear := Button.new()
 	clear.text = "Apagar território"
 	clear.disabled = info.area_km2 <= 0.0
 	clear.tooltip_text = "Apaga todo o território pintado deste cadastro (Ctrl+Z desfaz)"
 	clear.pressed.connect(func() -> void: territory_clear_requested.emit())
 	row.add_child(clear)
-	var child_label: String = {"pais": "Nova província", "provincia": "Novo município"}.get(_sheet.kind, "")
+	var child_label: String = {"pais": "＋ Província", "provincia": "＋ Município"}.get(_sheet.kind, "")
 	if child_label != "":
 		var sub := Button.new()
 		sub.text = child_label
 		sub.tooltip_text = "Cria, liga a este cadastro e já abre o pincel: a pintura fica dentro do território dele."
 		sub.disabled = not info.ok or info.area_km2 <= 0.0
 		sub.pressed.connect(func() -> void: subdivision_requested.emit())
-		row.add_child(sub)
+		_actions.add_child(sub)
 	_territory_msg = _note("")
 	box.add_child(_territory_msg)
 
@@ -662,7 +734,7 @@ func _build_places() -> void:
 	radius.suffix = "km"
 	radius.tooltip_text = "Raio da área aproximada; 0 = um ponto"
 	new_row.add_child(radius)
-	var new_row2 := HBoxContainer.new()
+	var new_row2 := HFlowContainer.new()  # quebra a linha quando não cabe nos 420 px
 	box.add_child(new_row2)
 	var kind_keys: Array = UiKit.PLACE_KIND_LABEL.keys()
 	var kind := _option(kind_keys, func(k): return UiKit.PLACE_KIND_LABEL[k])
@@ -677,7 +749,7 @@ func _build_places() -> void:
 			place_created.emit(name_edit.text.strip_edges(), kind_keys[kind.selected], radius.value, role_keys[role.selected]))
 	new_row2.add_child(_create_place_btn)
 	box.add_child(_note("Ou desenhe uma fronteira à mão no globo (clicando ponto a ponto):"))
-	var draw_row := HBoxContainer.new()
+	var draw_row := HFlowContainer.new()
 	box.add_child(draw_row)
 	var border_name := LineEdit.new()
 	border_name.placeholder_text = "nome da região"

@@ -123,6 +123,33 @@ func run() -> void:
 		return fail("a linha aberta pela terra livre amplia o país: " + terr.territory_panel._boundary_status.text)
 	if main.territory.OwnerAt(_d(0, 62)) == fresh:
 		return fail("só o bolsão entre a linha e o país, não o resto do mundo")
+	# Terminar e trocar de ferramenta logo depois de soltar, com o plano ainda sendo calculado em segundo plano: o traço não se perde.
+	for finish in ["terminar", "trocar_ferramenta"]:
+		var lat_sign := 1.0 if finish == "terminar" else -1.0
+		var area_before: float = main.territory.AreaKm2(fresh)
+		terr.start_painting(fresh, "fronteira")
+		tool.land_only = false
+		var arm := [[_d(7.0 * lat_sign, 43), Vector2(0, 0)], [_d(14.0 * lat_sign, 43), Vector2(0, 80)],
+				[_d(14.0 * lat_sign, 49), Vector2(80, 80)], [_d(7.0 * lat_sign, 49), Vector2(80, 0)]]
+		tool.press(arm[0][0], arm[0][1], 3000.0)
+		for k in range(1, arm.size()):
+			tool.drag(arm[k][0], arm[k][1])
+		tool.release()
+		if not tool.applying:
+			return fail("depois de soltar uma linha aberta o plano é calculado em segundo plano (%s)" % finish)
+		if finish == "terminar":
+			terr.stop_painting()
+		else:
+			terr._set_territory_mode("pincel")
+			terr.stop_painting()
+		if main.territory.AreaKm2(fresh) <= area_before or main.territory.OwnerAt(_d(11.0 * lat_sign, 46)) != fresh:
+			return fail("%s durante o cálculo aplica o traço em vez de descartá-lo" % finish)
+		main.undo()
+		if main.territory.AreaKm2(fresh) != area_before:
+			return fail("Ctrl+Z desfaz o traço aplicado por %s" % finish)
+		main.redo()
+	ok("Terminar e trocar de ferramenta durante o cálculo em segundo plano aplicam o traço (e Ctrl+Z desfaz)")
+	terr.start_painting(fresh)
 	terr.stop_painting()
 	ok("país novo: contorno fechado em terra vazia (prévia ao parar o mouse, aplica ao soltar, Terminar mantém); linha aberta amplia por terra livre")
 

@@ -17,6 +17,7 @@ const ROOT := "res://data/evron/tiles/"
 const MAX_CACHE := 80             # ~1,3 MiB por bloco com mipmaps: ~105 MiB no máximo
 const UPLOADS_PER_FRAME := 4      # texturas criadas por quadro (cada uma custa alguns ms)
 const DETAIL := 1.0               # desce de nível quando 1 texel passa de DETAIL pixels na tela
+const DETAIL_RELEASE := DETAIL * 0.8
 const SEGMENTS := [64, 48, 32]    # divisões do pedaço de esfera por nível (o resto usa o último): a corda dos
                                   # blocos grandes afundaria quilômetros e o globo de baixo apareceria por cima
 
@@ -29,6 +30,7 @@ var drawn: Array[String] = []     # blocos na tela no último quadro (para os te
 var gutter := 0
 var ext := "jpg"                  # extensão dos blocos (manifest "format"): "natural" usa png, para ter alfa
 var _tiles := {}                  # chave "z/y/x" -> {"node": MeshInstance3D, "used": int}
+var _expanded := {}               # ramos subdivididos no quadro anterior
 var _loading := {}                # chave -> id da tarefa
 var _ready_images: Array = []     # [chave, Image] vindos das threads
 var _mutex := Mutex.new()
@@ -69,8 +71,10 @@ func close() -> void:
 	_loading.clear()
 	_ready_images.clear()
 	for t in _tiles.values():
+		t["node"].hide()
 		t["node"].queue_free()
 	_tiles.clear()
+	_expanded.clear()
 	drawn.clear()
 	name_id = ""
 
@@ -87,15 +91,19 @@ func update(cam: Camera3D) -> void:
 	_upload_ready()
 	var focal := cam.get_viewport().get_visible_rect().size.y / (2.0 * tan(deg_to_rad(cam.fov) / 2.0))
 	var want := {}
+	var expanded := {}
+	# A reserva inclui pais e irmãos necessários para manter cada divisão da pirâmide.
+	var reserved := {_key(0, 0, 0): true, _key(0, 0, 1): true}
 	for x in 2:
-		_select(0, 0, x, cam.global_position, focal, want)
+		_select(0, 0, x, cam.global_position, focal, want, expanded, reserved)
 	drawn.clear()
 	for key in _tiles:
 		var on: bool = want.has(key)
 		_tiles[key]["node"].visible = on
 		if on:
 			drawn.append(key)
-	_evict(want)
+	_expanded = expanded
+	_evict(reserved)
 
 
 ## Memória de GPU aproximada dos blocos carregados, em MiB (RGBA8 + mipmaps).
@@ -117,7 +125,7 @@ func max_drawn_level() -> int:
 
 # --- Escolha dos blocos ---------------------------------------------------------------------------------------
 
-func _select(z: int, y: int, x: int, cam_pos: Vector3, focal: float, want: Dictionary) -> void:
+func _select(z: int, y: int, x: int, cam_pos: Vector3, focal: float, want: Dictionary, expanded: Dictionary, reserved: Dictionary) -> void:
 	var key := _key(z, y, x)
 	var b := _bounds(z, y, x)
 	var center := EvronGeo.dir((b.y + b.w) / 2.0, (b.x + b.z) / 2.0)
@@ -128,18 +136,23 @@ func _select(z: int, y: int, x: int, cam_pos: Vector3, focal: float, want: Dicti
 	if acos(clampf(center.dot(cam_pos / dist), -1.0, 1.0)) > horizon + half:
 		return
 	_tiles[key]["used"] = _frame
-	if z + 1 < levels and _texel_px(b, center, half, cam_pos, focal) > DETAIL:
+	var threshold := DETAIL_RELEASE if _expanded.has(key) else DETAIL
+	if z + 1 < levels and reserved.size() + 4 <= MAX_CACHE and _texel_px(b, center, half, cam_pos, focal) > threshold:
 		var children := [_key(z + 1, 2 * y, 2 * x), _key(z + 1, 2 * y, 2 * x + 1),
 			_key(z + 1, 2 * y + 1, 2 * x), _key(z + 1, 2 * y + 1, 2 * x + 1)]
 		var all_in := true
 		for c in children:
+			reserved[c] = true
 			if not _tiles.has(c):
 				all_in = false
 				_request(c)
 		if all_in:
+			expanded[key] = true
+			for c in children:
+				_tiles[c]["used"] = _frame
 			for dy in 2:
 				for dx in 2:
-					_select(z + 1, 2 * y + dy, 2 * x + dx, cam_pos, focal, want)
+					_select(z + 1, 2 * y + dy, 2 * x + dx, cam_pos, focal, want, expanded, reserved)
 			return
 	want[key] = true
 
@@ -223,12 +236,12 @@ func _add_tile(key: String, img: Image) -> void:
 
 
 ## Tira do cache os blocos usados há mais tempo, sem mexer no nível 0 nem no que está na tela.
-func _evict(want: Dictionary) -> void:
+func _evict(reserved: Dictionary) -> void:
 	if _tiles.size() <= MAX_CACHE:
 		return
 	var old: Array = []
 	for key in _tiles:
-		if not want.has(key) and not key.begins_with("0/"):
+		if not reserved.has(key):
 			old.append([_tiles[key]["used"], key])
 	old.sort()
 	for i in mini(_tiles.size() - MAX_CACHE, old.size()):
