@@ -4,7 +4,7 @@ using Godot;
 namespace Evron;
 
 /// Uma edição do terreno como DADO: os pixels mexidos com a altura antes e depois (e o mesmo para os rios).
-/// Vai para a CommandStack (Undo/Redo/Bytes) e, quando houver persistência, pode ser gravada como está (só arrays).
+/// Vai para a CommandStack (Undo/Redo/Bytes).
 /// 12 bytes por pixel de altura e 6 por pixel de rio (os dois Dictionary do GDScript gastavam bem mais).
 public partial class TerrainEdit : RefCounted
 {
@@ -45,7 +45,6 @@ public partial class TerrainEdit : RefCounted
         for (int i = 0; i < _idx.Length; i++)
             t.SetH(_idx[i], heights[i]);
         for (int i = 0; i < _ridx.Length; i++)
-            t.R[_ridx[i]] = rivers[i];
-        t.RiversDirty |= _ridx.Length > 0;
+            t.SetRiverByte(_ridx[i], rivers[i]);
     }
 }

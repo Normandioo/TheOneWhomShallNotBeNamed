@@ -68,7 +68,9 @@ public partial class Territory
     /// A prévia de um plano (como PreviewImage) já composta sobre as camadas de baixo.
     public Image PreviewImageOver(TerritoryBoundaryPlan plan, Godot.Collections.Array below)
     {
-        var top = PreviewImage(plan).GetData();
+        var preview = PreviewImage(plan);
+        if (below.Count == 0) return preview;
+        var top = preview.GetData();
         var bytes = new byte[top.Length];
         Compose(top, below.Select(v => v.As<Territory>()).ToArray(), bytes, 0, top.Length);
         return Image.CreateFromData(Size.X, Size.Y, false, Image.Format.Rg8, bytes);
@@ -117,11 +119,32 @@ public partial class Territory
         int OwnerBefore(int p) => restored != null && restored[p] ? 0 : Get(p);
 
         var edges = RasterizeBoundary(SmoothBoundary(controls));
-        var labels = new int[length];
+        if (edges.Count == 0) return RefuseBoundary("O traço não fechou uma área.");
+        int w = Size.X;
+        int origin = (int)(edges.First() >> 32) % w;
+        int minX = 0, maxX = 0, minY = Size.Y - 1, maxY = 0;
+        foreach (long edge in edges)
+        foreach (int p in new[] { (int)(edge >> 32), (int)edge })
+        {
+            int x = (p % w - origin + w + w / 2) % w - w / 2;
+            minX = Math.Min(minX, x);
+            maxX = Math.Max(maxX, x);
+            minY = Math.Min(minY, p / w);
+            maxY = Math.Max(maxY, p / w);
+        }
+        // Uma borda livre circunda o traço. Contornos que podem envolver um polo usam a grade inteira.
+        bool full = maxX - minX >= w / 2 - 2 || minY == 0 || maxY == Size.Y - 1;
+        int left = full ? 0 : (origin + minX - 1 + w) % w;
+        int top = full ? 0 : minY - 1;
+        int width = full ? w : maxX - minX + 3;
+        int height = full ? Size.Y : maxY - minY + 3;
+        int Global(int p) => (p / width + top) * w + (left + p % width) % w;
+        var labels = new int[width * height];
+        var rowAreas = Enumerable.Range(top, height).Select(y => RowCellKm2(y, w, Size.Y)).ToArray();
         var sizes = new List<double> { 0 };
         var stack = new Stack<int>();
         var terrain = _terrain!;
-        for (int start = 0; start < length; start++)
+        for (int start = 0; start < labels.Length; start++)
         {
             if (labels[start] != 0) continue;
             int label = sizes.Count;
@@ -131,11 +154,16 @@ public partial class Territory
             while (stack.Count > 0)
             {
                 int p = stack.Pop();
-                area += RowCellKm2(p / Size.X, Size.X, Size.Y);
+                int px = p % width, py = p / width;
+                int global = Global(p);
+                area += rowAreas[py];
                 foreach (var (x, y) in BoundaryNeighbors)
                 {
-                    int q = terrain.Neighbor(p, x, y);
-                    if (q < 0 || labels[q] != 0 || edges.Contains(BoundaryEdge(p, q))) continue;
+                    int nx = px + x, ny = py + y;
+                    if (full) nx = (nx + width) % width;
+                    if ((uint)nx >= width || (uint)ny >= height) continue;
+                    int q = ny * width + nx;
+                    if (labels[q] != 0 || edges.Contains(BoundaryEdge(global, Global(q)))) continue;
                     labels[q] = label;
                     stack.Push(q);
                 }
@@ -143,13 +171,18 @@ public partial class Territory
             sizes.Add(area);
         }
         if (sizes.Count <= 2) return RefuseBoundary("O traço não fechou uma área. Termine perto de onde começou.");
-        int outside = sizes.IndexOf(sizes.Max());
+        int outside = full ? sizes.IndexOf(sizes.Max()) : labels[0];
         var region = new List<int>();
-        for (int p = 0; p < length; p++)
-            if (labels[p] != outside && OwnerBefore(p) == 0 && Allowed(p) && (!landOnly || terrain.H[p] >= 0f)) region.Add(p);
+        for (int i = 0; i < labels.Length; i++)
+        {
+            if (labels[i] == outside) continue;
+            int p = Global(i);
+            if (OwnerBefore(p) == 0 && Allowed(p) && (!landOnly || terrain.H[p] >= 0f)) region.Add(p);
+        }
         if (region.Count == 0) return RefuseBoundary("Dentro do contorno não há terra sem dono (nem dentro do limite permitido).");
 
         var pixels = region.ToArray();
+        Array.Sort(pixels);
         var plan = new TerritoryBoundaryPlan
         {
             Map = this,

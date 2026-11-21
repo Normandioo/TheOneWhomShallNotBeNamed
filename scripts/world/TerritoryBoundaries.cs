@@ -4,13 +4,18 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Threading.Tasks;
 using Godot;
 
 namespace Evron;
 
 internal sealed record TerritoryBoundary(int Id, int Source, int Target, Vector3[] Points, int[] Pixels)
 {
-    public long Bytes => Points.Length * 12L + Pixels.Length * 4L;
+    // Pares célula/dono recortados em cada nível abaixo desta fronteira.
+    public Dictionary<int, ushort>[] Subdivisions { get; } = { new(), new() };
+
+    public long Bytes => Points.Length * 12L + Pixels.Length * 4L +
+        Subdivisions.Sum(level => level.Count * 24L);
 }
 
 public partial class Territory
@@ -18,11 +23,76 @@ public partial class Territory
     private sealed record CutPart(List<int> Pixels, bool MeetsTarget, int PreviousPixels, double Area);
 
     private const int MaxBoundaryPoints = 256;
-    private const int BoundaryFormat = 1;
+    private const int BoundaryFormat = 2;
     private static readonly (int X, int Y)[] BoundaryNeighbors = { (-1, 0), (1, 0), (0, -1), (0, 1) };
     private Dictionary<int, TerritoryBoundary> _boundaries = new();
     private byte[]? _packedBoundaries;
     private int _nextBoundary = 1;
+    private Task<Godot.Collections.Dictionary>? _openBoundaryJob;
+    private float[]? _boundaryHeights;
+    private Territory? _jobMask;
+    private long _jobMaskVersion;
+    private int _jobMaskOwner;
+    private long _jobVersion;
+
+    /// A thread de trabalho só lê cópias dos buffers que o editor pode alterar.
+    public bool BeginOpenBoundary(int target, Vector3[] controls, int id, bool landOnly)
+    {
+        if (_openBoundaryJob is { IsCompleted: false } || _stroke != null) return false;
+        var snapshot = new Territory
+        {
+            Size = Size,
+            B = (byte[])B.Clone(),
+            _terrain = _terrain,
+            _maskOwner = _maskOwner,
+            _nextBoundary = _nextBoundary,
+            _boundaryHeights = landOnly ? (float[])_terrain!.H.Clone() : null,
+        };
+        if (_boundaries.TryGetValue(id, out var previous)) snapshot._boundaries[id] = previous;
+        _jobMask = _maskLayer;
+        _jobMaskVersion = _maskLayer?.Version ?? 0;
+        _jobMaskOwner = _maskOwner;
+        _jobVersion = Version;
+        if (_maskLayer != null)
+            snapshot._maskLayer = new Territory { B = (byte[])_maskLayer.B.Clone() };
+        var points = controls.ToArray();
+        _openBoundaryJob = Task.Run(() =>
+        {
+            try
+            {
+                var result = snapshot.PlanBoundaryClaimOn(target, points, id, landOnly);
+                if (result.TryGetValue("plan", out var value)) value.As<TerritoryBoundaryPlan>().Map = null;
+                return result;
+            }
+            finally
+            {
+                snapshot._maskLayer?.Dispose();
+                snapshot.Dispose();
+            }
+        });
+        return true;
+    }
+
+    /// Vazio enquanto o plano está em cálculo.
+    public Godot.Collections.Dictionary PollOpenBoundary()
+    {
+        if (_openBoundaryJob is not { IsCompleted: true } job) return new();
+        _openBoundaryJob = null;
+        bool maskChanged = _maskLayer != _jobMask || _maskOwner != _jobMaskOwner ||
+            (_maskLayer?.Version ?? 0) != _jobMaskVersion;
+        _jobMask = null;
+        if (job.IsFaulted || job.IsCanceled) return RefuseBoundary("Não consegui calcular a fronteira.");
+        if (Version != _jobVersion || maskChanged)
+            return RefuseBoundary("O mapa mudou durante o cálculo. Desenhe novamente.");
+        var result = job.Result;
+        if (result.TryGetValue("plan", out var value))
+        {
+            var plan = value.As<TerritoryBoundaryPlan>();
+            plan.Map = this;
+            plan.Version = Version;
+        }
+        return result;
+    }
 
     public Godot.Collections.Array<Godot.Collections.Dictionary> BoundariesFor(int owner)
     {
@@ -91,6 +161,12 @@ public partial class Territory
 
         int OwnerBefore(int p) => restored != null && restored[p] ? previous!.Source : Get(p);
         var edges = RasterizeBoundary(SmoothBoundary(controls));
+        var onBoundary = new BitArray(length);
+        foreach (long edge in edges)
+        {
+            onBoundary[(int)(edge >> 32)] = true;
+            onBoundary[(int)edge] = true;
+        }
         var labels = new int[length];
         var parts = new List<CutPart>();
         var cuts = new Dictionary<int, (HashSet<int> Parts, int Crossings)>();
@@ -109,6 +185,7 @@ public partial class Territory
             for (int i = 0; i < pixels.Count; i++)
             {
                 int p = pixels[i];
+                bool crosses = onBoundary[p];
                 area += rowArea[p / Size.X];
                 if (restored != null && restored[p]) previousPixels++;
                 foreach (var (x, y) in BoundaryNeighbors)
@@ -117,7 +194,7 @@ public partial class Territory
                     if (q < 0 || labels[q] == label) continue;
                     int neighbor = OwnerBefore(q);
                     if (neighbor == target) meetsTarget = true;
-                    if (neighbor != owner || labels[q] != 0 || edges.Contains(BoundaryEdge(p, q))) continue;
+                    if (neighbor != owner || labels[q] != 0 || (crosses && edges.Contains(BoundaryEdge(p, q)))) continue;
                     labels[q] = label;
                     pixels.Add(q);
                 }
@@ -152,9 +229,10 @@ public partial class Territory
         if (candidates.Length == 0) return RefuseBoundary("O pedaço separado precisa encostar no país selecionado.");
 
         // Mais de um lado encosta no selecionado: nada é escolhido às escondidas; o plano leva todos e quem decide é o usuário (Choose).
-        // Em terra livre o bolsão leva só o que pode: terra (landOnly) e dentro da máscara (a província dentro do país).
+        // A máscara vale também quando a área vem de outro território.
+        var heights = _boundaryHeights ?? terrain.H;
         var choices = candidates
-            .Select(c => c.Pixels.Where(p => source != 0 || ((!landOnly || terrain.H[p] >= 0f) && Allowed(p))).ToArray())
+            .Select(c => c.Pixels.Where(p => Allowed(p) && (source != 0 || !landOnly || heights[p] >= 0f)).ToArray())
             .Where(px => px.Length > 0)
             .Select(px => { Array.Sort(px); return px; }).ToArray();
         if (choices.Length == 0) return RefuseBoundary("O pedaço separado não tem terra que possa ser tomada.");
@@ -180,12 +258,29 @@ public partial class Territory
     }
 
     /// A área (km²) que o plano passa para o selecionado.
-    public double PlanAreaKm2(TerritoryBoundaryPlan plan) => plan.Next.Pixels.Sum(p => RowCellKm2(p / Size.X, Size.X, Size.Y));
+    public double PlanAreaKm2(TerritoryBoundaryPlan plan)
+    {
+        int row = -1;
+        double area = 0, cell = 0;
+        foreach (int pixel in plan.Next.Pixels)
+        {
+            int y = pixel / Size.X;
+            if (y != row)
+            {
+                row = y;
+                cell = RowCellKm2(row, Size.X, Size.Y);
+            }
+            area += cell;
+        }
+        return area;
+    }
 
     public TerritoryEdit? ApplyBoundary(TerritoryBoundaryPlan plan)
     {
         if (plan.Map != this || plan.Version != Version || _stroke != null) return null;
-        var next = plan.Next;
+        var planned = plan.Next;
+        var next = new TerritoryBoundary(planned.Id, planned.Source, planned.Target, planned.Points, planned.Pixels);
+        if (_maskLayer != null && next.Pixels.Any(p => !Allowed(p))) return null;
         var pixels = new List<int>();
         var before = new List<ushort>();
         // Mescla duas listas ordenadas para escrever cada célula no máximo uma vez.
@@ -204,6 +299,13 @@ public partial class Territory
             pixels.Add(pixel);
             before.Add((ushort)current);
             Put(pixel, owner);
+        }
+        if (plan.Previous is { } previous)
+        {
+            for (int depth = 0; depth < next.Subdivisions.Length; depth++)
+                foreach (var (pixel, owner) in previous.Subdivisions[depth])
+                    if (Array.BinarySearch(next.Pixels, pixel) >= 0)
+                        next.Subdivisions[depth].Add(pixel, owner);
         }
         SetBoundary(next.Id, next);
         Touch();
@@ -307,6 +409,15 @@ public partial class Territory
                     writer.Write7BitEncodedInt(p - previous);
                     previous = p;
                 }
+                foreach (var level in path.Subdivisions)
+                {
+                    writer.Write(level.Count);
+                    foreach (var (pixel, owner) in level)
+                    {
+                        writer.Write7BitEncodedInt(pixel);
+                        writer.Write(owner);
+                    }
+                }
             }
         }
         return _packedBoundaries = bytes.ToArray();
@@ -321,7 +432,8 @@ public partial class Territory
         }
         using var stream = new DeflateStream(new MemoryStream(bytes), CompressionMode.Decompress);
         using var reader = new BinaryReader(stream);
-        if (reader.ReadInt32() != BoundaryFormat) throw new InvalidDataException("Formato de fronteiras incompatível.");
+        int format = reader.ReadInt32();
+        if (format != 1 && format != BoundaryFormat) throw new InvalidDataException("Formato de fronteiras incompatível.");
         int count = reader.ReadInt32();
         if (count < 0 || count > Size.X * Size.Y) throw new InvalidDataException("Número de fronteiras inválido.");
         var paths = new Dictionary<int, TerritoryBoundary>();
@@ -348,7 +460,24 @@ public partial class Territory
                 if (gap <= 0 || gap >= length - previous) throw new InvalidDataException("Célula de fronteira inválida.");
                 pixels[p] = previous += gap;
             }
-            if (!paths.TryAdd(id, new TerritoryBoundary(id, source, target, points, pixels)))
+            var path = new TerritoryBoundary(id, source, target, points, pixels);
+            if (format >= 2)
+            {
+                foreach (var level in path.Subdivisions)
+                {
+                    int removedCount = reader.ReadInt32();
+                    if (removedCount < 0 || removedCount > pixelsCount)
+                        throw new InvalidDataException("Número de células de subdivisão inválido.");
+                    for (int j = 0; j < removedCount; j++)
+                    {
+                        int pixel = reader.Read7BitEncodedInt();
+                        ushort owner = reader.ReadUInt16();
+                        if (!ValidOwner(owner) || Array.BinarySearch(pixels, pixel) < 0 || !level.TryAdd(pixel, owner))
+                            throw new InvalidDataException("Célula de subdivisão inválida.");
+                    }
+                }
+            }
+            if (!paths.TryAdd(id, path))
                 throw new InvalidDataException("Identificador de fronteira duplicado.");
             lastId = Math.Max(lastId, id);
         }

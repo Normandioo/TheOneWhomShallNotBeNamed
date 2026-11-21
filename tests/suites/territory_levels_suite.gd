@@ -101,8 +101,20 @@ func run() -> void:
 	ok("avisos: fora do país (%.0f km²), sem país, lacuna (%.0f km²)" % [out.area_km2, gap.area_km2])
 
 	# Critério 7: gravar e reabrir conserva as duas camadas, cada uma no seu nível.
+	if not reg.SaveTerritoryLevels({"pais": countries, "provincia": provinces}):
+		return fail("o banco deveria gravar as camadas juntas")
+	var change = _paint(countries, 0, 60, 300, b)
+	if reg.SaveTerritoryLevels({"pais": countries, "nivel_invalido": provinces}):
+		return fail("um erro na segunda camada deve cancelar a transação inteira")
+	var after_failure = _layer(terrain)
+	if not reg.LoadTerritoryLevel("pais", after_failure) or after_failure.Pack() != countries_before:
+		return fail("a primeira camada não deveria mudar após a falha da segunda")
+	if not reg.SaveTerritoryLevels({"pais": countries, "provincia": provinces}):
+		return fail("as células da transação revertida devem continuar prontas para gravação")
+	if not reg.LoadTerritoryLevel("pais", after_failure) or after_failure.Pack() != countries.Pack():
+		return fail("tentar novamente deve gravar as células que estavam pendentes")
+	change.Undo()
 	reg.SaveTerritoryLevel("pais", countries)
-	reg.SaveTerritoryLevel("provincia", provinces)
 	reg.Close()
 	reg.Open(path)
 	var c2 = _layer(terrain)

@@ -14,7 +14,7 @@ const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 const TILE_SHADER = preload("res://shaders/globe_tile.gdshader")
 
 const ROOT := "res://data/evron/tiles/"
-const MAX_CACHE := 160            # ~1,3 MiB de GPU por bloco de 512 px com mipmaps: ~210 MiB no máximo
+const MAX_CACHE := 80             # ~1,3 MiB por bloco com mipmaps: ~105 MiB no máximo
 const UPLOADS_PER_FRAME := 4      # texturas criadas por quadro (cada uma custa alguns ms)
 const DETAIL := 1.0               # desce de nível quando 1 texel passa de DETAIL pixels na tela
 const SEGMENTS := [64, 48, 32]    # divisões do pedaço de esfera por nível (o resto usa o último): a corda dos

@@ -97,6 +97,8 @@ func _satellite() -> void:
 	main.set_layer(0)
 	if tiles.name_id != "" or tiles.loaded_count() != 0:
 		return fail("trocar de camada deveria soltar os blocos do satélite")
+	if main.material._satellite_optics != null or main.material._satellite_river_atlas != null:
+		return fail("a camada inativa não deve manter o atlas de rios nem a máscara de águas")
 	ok("satélite 8K: água, rios, aproximação por blocos PNG e retorno ao mapa base")
 
 

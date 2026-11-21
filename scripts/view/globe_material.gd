@@ -1,6 +1,5 @@
 ## O material do globo (globe.gdshader). É o único lugar que escreve nos uniforms: o resto pede por aqui.
-## Mantém na memória só a camada que está na tela (cada PNG de 4096x2048 ocupa ~24 MB na RAM e outro tanto na GPU;
-## a cor natural, 8192x4096 RGBA com mipmaps, ~170 MB, mais os rios: 128 MB + 32 MB, carregados uma vez).
+## Mantém na memória apenas as texturas da camada ativa. Os mosaicos fornecem o detalhe de perto.
 
 const GLOBE_SHADER = preload("res://shaders/globe.gdshader")
 const EvronMaps = preload("res://scripts/data/evron_maps.gd")
@@ -8,6 +7,7 @@ const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 var _satellite_loaded := false
 var _satellite_optics: ImageTexture
 var _satellite_river_atlas: ImageTexture
+const EMPTY_MAP_TEXTURE = preload("res://shaders/political_default.tres")
 
 var material: ShaderMaterial
 var river_texture: ImageTexture
@@ -138,18 +138,34 @@ func show_layer(layer: Dictionary) -> void:
 		file = layer["fallback"]
 	var experimental := file == "natural_satellite.png"
 	material.set_shader_parameter("experimental", experimental)
-	if experimental:
-		_load_satellite()
-	if file == "" or file == layer_file:
+	if not experimental and _satellite_loaded:
+		_unload_satellite()
+	if layer["kind"] != "natural" or experimental:
+		if material.get_shader_parameter("rivers_on"):
+			material.set_shader_parameter("rivers_on", false)
+			material.set_shader_parameter("river_offset", null)
+			material.set_shader_parameter("river_width", null)
+	if file == "":
+		material.set_shader_parameter("layer_linear", null)
+		material.set_shader_parameter("layer_nearest", null)
+		layer_file = ""
+		return
+	if file == layer_file:
 		return
 	var img := EvronMaps.load_layer(file)
 	if img == null:
 		push_error("camada não encontrada: " + file)
 		return
-	img.generate_mipmaps()  # de longe a camada não cintila (o shader escolhe o nível sem costura em 180°)
 	if layer["kind"] == "natural":
-		if not experimental:
+		var pyramid: String = layer.get("tiles", "")
+		if img.get_width() > 4096 and pyramid != "" and FileAccess.file_exists(
+				EvronMaps.directory() + "tiles/" + pyramid + "/manifest.json"):
+			img.resize(4096, 2048, Image.INTERPOLATE_BILINEAR)
+		if experimental:
+			_load_satellite()
+		else:
 			_load_rivers()
+	img.generate_mipmaps()  # de longe a camada não cintila (o shader escolhe o nível sem costura em 180°)
 	var tex := ImageTexture.create_from_image(img)
 	material.set_shader_parameter("layer_linear", tex)
 	material.set_shader_parameter("layer_nearest", tex)
@@ -186,3 +202,13 @@ func _load_satellite() -> void:
 		_satellite_river_atlas = ImageTexture.create_from_image(rivers)
 		RenderingServer.global_shader_parameter_set("satellite_river_atlas", _satellite_river_atlas)
 		RenderingServer.global_shader_parameter_set("satellite_rivers_on", 1.0)
+
+
+func _unload_satellite() -> void:
+	RenderingServer.global_shader_parameter_set("satellite_optics_on", 0.0)
+	RenderingServer.global_shader_parameter_set("satellite_rivers_on", 0.0)
+	RenderingServer.global_shader_parameter_set("satellite_optics", EMPTY_MAP_TEXTURE)
+	RenderingServer.global_shader_parameter_set("satellite_river_atlas", EMPTY_MAP_TEXTURE)
+	_satellite_optics = null
+	_satellite_river_atlas = null
+	_satellite_loaded = false

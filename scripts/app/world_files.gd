@@ -32,11 +32,15 @@ func open_dialog(export: bool) -> void:
 
 
 func export_world(parent: String) -> void:
+	if not main.save_terrain(true):
+		_message("Não deu para exportar: alterações no relevo não foram gravadas.")
+		return
 	main.save_clock()
-	if main.territories != null:
-		main.territories.flush()
+	if main.territories != null and not main.territories.flush():
+		_message("Não deu para exportar: alterações territoriais não foram gravadas.")
+		return
 	var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace("T", "-")
-	var dir := parent.path_join("Evron-%s.world" % stamp.left(13))
+	var dir := parent.path_join("Evron-%s.world" % (stamp + "-" + str(Time.get_ticks_usec())))
 	var why: String = main.domains.registry.ExportWorld(dir, _clock_path())
 	_message("Mundo exportado para:\n" + dir if why == "" else "Não deu para exportar: " + why)
 
@@ -57,11 +61,17 @@ func _confirm_import(dir: String) -> void:
 
 ## Fecha o banco (gravando o que faltava), troca os arquivos e recarrega a cena: tudo é lido do mundo novo.
 func import_world(dir: String) -> void:
+	if not main.save_terrain(true):
+		_message("Não deu para importar: o relevo do mundo atual não foi gravado.")
+		return
 	main.save_clock()
 	main.domains.close()
 	var why: String = Registry.new().ImportWorld(dir, ProjectSettings.globalize_path(main.domains_db), _clock_path())
 	if why != "":
 		push_error(why)
+		var scene_tree := main.get_tree() as SceneTree
+		scene_tree.scene_changed.connect(func() -> void:
+			scene_tree.current_scene.world_files._message("Não deu para importar: " + why), CONNECT_ONE_SHOT)
 	main.save_path = ""  # a cena que sai não regrava o relógio por cima do importado
 	main.get_tree().reload_current_scene()
 

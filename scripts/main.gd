@@ -49,6 +49,7 @@ const AUTOSAVE_SECONDS := 30.0  # reais; o relógio também é salvo a cada coma
 @onready var hud: Control = $Hud
 
 ## Banco dos cadastros de domínio (país, cultura, etnia...). Os testes com cena usam ":memory:" para não tocar no do usuário.
+var _terrain_loaded := false
 var domains_db := "user://evron_world.db"
 
 var terrain: Terrain
@@ -110,8 +111,6 @@ func _ready() -> void:
 	if flow != null:
 		territory.SetRiverFlow(flow)  # os rios grandes do Gleba seguram as fronteiras naturais
 	_flow = flow
-	material.set_height(terrain.HeightImage())
-	material.set_rivers(terrain.RiversImage())
 	globe = GlobeView.new()
 	globe.setup(material.material)
 	add_child(globe)
@@ -155,6 +154,11 @@ func _ready() -> void:
 	hud.add_child(calendar_panel)  # por último: abre por cima dos outros painéis
 	domains = DomainHub.new()
 	domains.setup(domains_db, search, sheet, calendar_panel)
+	_terrain_loaded = domains.usable and domains.registry.LoadTerrain(terrain)
+	material.set_height(terrain.HeightImage())
+	material.set_rivers(terrain.RiversImage())
+	terrain.Dirty = false
+	terrain.RiversDirty = false
 	var presence_panel := PresencePanel.new()
 	hud.add_child(presence_panel)
 	var align_presence := func() -> void:
@@ -237,6 +241,7 @@ func _ready() -> void:
 
 func _exit_tree() -> void:
 	if domains != null:
+		save_terrain(true)
 		domains.close()
 
 
@@ -267,11 +272,14 @@ func _process(delta: float) -> void:
 	_since_save += delta
 	if _since_save >= AUTOSAVE_SECONDS:
 		save_clock()
+		if not brush.active:
+			save_terrain()
 
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		save_clock()
+		save_terrain(true)
 	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT and domains != null:
 		territories.boundary_tool.cancel()
 		territories.territory_end()
@@ -372,6 +380,14 @@ func undo() -> void:
 func redo() -> void:
 	territories.territory_end()
 	commands.redo()
+
+
+func save_terrain(finish_stroke := false) -> bool:
+	if domains == null or not domains.usable:
+		return false
+	if finish_stroke and brush.active:
+		brush.end()
+	return _terrain_loaded and domains.registry.SaveTerrain(terrain)
 
 
 func save_clock() -> void:

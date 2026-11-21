@@ -6,12 +6,12 @@ const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 
 
 func run() -> void:
-	var base := out_dir.path_join("world_file_suite")
+	var base := out_dir.path_join("world_file_suite_" + str(Time.get_ticks_usec()))
 	var world := base.path_join("Teste.world")
 	var src := base.path_join("origem.db")
 	var dst := base.path_join("destino.db")
 	var clock := base.path_join("relogio.json")
-	DirAccess.make_dir_recursive_absolute(world)
+	DirAccess.make_dir_recursive_absolute(base)
 	for f in [src, dst, dst + ".antes-importacao", clock, world.path_join("world.sqlite"), world.path_join("manifest.json"), world.path_join("clock.json")]:
 		DirAccess.remove_absolute(f)
 	var f := FileAccess.open(clock, FileAccess.WRITE)
@@ -19,7 +19,7 @@ func run() -> void:
 	f.close()
 
 	var terrain = load("res://scripts/world/Terrain.cs").new()
-	terrain.Setup(Image.create(256, 128, false, Image.FORMAT_RF))
+	terrain.Setup(Image.create(258, 129, false, Image.FORMAT_RF))
 	var layer = load("res://scripts/world/Territory.cs").new()
 	layer.Setup(terrain)
 	var reg = load("res://scripts/world/Registry.cs").new()
@@ -43,10 +43,19 @@ func run() -> void:
 		return fail("desfazer a união volta o território")
 	ok("unir territórios e desfazer")
 
+	# O último pixel verifica também um bloco parcial na borda da grade.
+	var edited_pixel: int = terrain.Size.x * terrain.Size.y - 1
+	terrain.SetH(edited_pixel, 123.5)
+	terrain.SetRiver(edited_pixel, 0.5)
+	if not reg.SaveTerrain(terrain):
+		return fail("salvar relevo e rios no banco da origem")
 	reg.SaveTerritory(layer)
 	var why: String = reg.ExportWorld(world, clock)
 	if why != "" or not FileAccess.file_exists(world.path_join("manifest.json")) or FileAccess.file_exists(world.path_join("world.sqlite.tmp")):
 		return fail("exportar cria a pasta com banco, relógio e manifesto: " + why)
+	var first_manifest := FileAccess.get_file_as_bytes(world.path_join("manifest.json"))
+	if reg.ExportWorld(world, "") == "" or FileAccess.get_file_as_bytes(world.path_join("manifest.json")) != first_manifest:
+		return fail("uma segunda exportação no mesmo caminho deve preservar a primeira")
 	reg.Close()
 	if reg.CheckWorld(world) != "":
 		return fail("a pasta exportada confere: " + reg.CheckWorld(world))
@@ -72,6 +81,9 @@ func run() -> void:
 	other.Close()
 	var dst_clock := base.path_join("relogio_destino.json")
 	DirAccess.remove_absolute(dst_clock)
+	var old_db := FileAccess.get_file_as_bytes(dst)
+	if other.ImportWorld(world, dst, base) == "" or FileAccess.get_file_as_bytes(dst) != old_db:
+		return fail("falha ao preparar o relógio não pode substituir o banco")
 	if other.ImportWorld(world, dst, dst_clock) != "" or not FileAccess.file_exists(dst + ".antes-importacao"):
 		return fail("importar troca o banco e guarda o anterior")
 	if FileAccess.get_file_as_string(dst_clock) != "{\"t\": 42}":
@@ -81,5 +93,22 @@ func run() -> void:
 	back.Setup(terrain)
 	if other.Name(a) != "Aren" or not other.LoadTerritory(back) or back.Pack() != layer.Pack():
 		return fail("o mundo importado tem os cadastros e o território")
+	var recovered = load("res://scripts/world/Terrain.cs").new()
+	recovered.Setup(Image.create(terrain.Size.x, terrain.Size.y, false, Image.FORMAT_RF))
+	if not other.LoadTerrain(recovered) or recovered.GetH(edited_pixel) != 123.5 or recovered.GetRiver(edited_pixel) != terrain.GetRiver(edited_pixel) or recovered.GetH(0) != 0.0:
+		return fail("o mundo importado deve restaurar a altitude e os rios editados")
+	var no_clock := base.path_join("sem-relogio.world")
+	if other.ExportWorld(no_clock, "") != "":
+		return fail("exportar um mundo sem relógio deve funcionar")
 	other.Close()
+	var unexpected := no_clock.path_join("clock.json")
+	var unlisted := FileAccess.open(unexpected, FileAccess.WRITE)
+	unlisted.store_string("{}")
+	unlisted.close()
+	if other.CheckWorld(no_clock) == "" or other.ImportWorld(no_clock, dst, dst_clock) == "":
+		return fail("um relógio fora do manifesto deve ser recusado")
+	DirAccess.remove_absolute(unexpected)
+	DirAccess.copy_absolute(dst_clock, dst_clock + ".bak")
+	if other.ImportWorld(no_clock, dst, dst_clock) != "" or FileAccess.file_exists(dst_clock) or FileAccess.file_exists(dst_clock + ".bak"):
+		return fail("importar sem relógio não pode herdar o relógio ou o fallback do mundo anterior")
 	ok("importar: cadastros, território e relógio iguais; o mundo anterior fica como .antes-importacao")

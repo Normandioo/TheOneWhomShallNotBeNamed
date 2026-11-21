@@ -16,6 +16,10 @@ public partial class Terrain : RefCounted
 
     internal float[] H = Array.Empty<float>();
     internal byte[] R = Array.Empty<byte>();
+    private const int EditTileSize = 64;
+    internal readonly HashSet<int> EditedTiles = new();
+    private int EditTilesAcross => (Size.X + EditTileSize - 1) / EditTileSize;
+
     private Image? _heightImg;
     private Image? _riverImg;
     private int _rowTop = int.MaxValue;  // faixa de linhas mexidas desde o último HeightImage()
@@ -34,6 +38,10 @@ public partial class Terrain : RefCounted
         if (height.GetFormat() != Image.Format.Rf)
             throw new ArgumentException($"altitude deveria ser FORMAT_RF, veio {height.GetFormat()}");
         Size = height.GetSize();
+        EditedTiles.Clear();
+        _rowTop = int.MaxValue;
+        _rowBottom = -1;
+        Dirty = RiversDirty = false;
         H = new float[Size.X * Size.Y];
         Buffer.BlockCopy(height.GetData(), 0, H, 0, H.Length * sizeof(float));
         R = new byte[H.Length];
@@ -70,10 +78,57 @@ public partial class Terrain : RefCounted
     public void SetH(int idx, float meters)
     {
         H[idx] = meters;
-        int y = idx / Size.X;
-        _rowTop = Math.Min(_rowTop, y);
-        _rowBottom = Math.Max(_rowBottom, y);
+        MarkEditedTile(idx);
+        MarkHeightRows(idx / Size.X, idx / Size.X);
+    }
+
+    private void MarkHeightRows(int top, int bottom)
+    {
+        _rowTop = Math.Min(_rowTop, top);
+        _rowBottom = Math.Max(_rowBottom, bottom);
         Dirty = true;
+    }
+
+    private void MarkEditedTile(int index) =>
+        EditedTiles.Add(index / Size.X / EditTileSize * EditTilesAcross + index % Size.X / EditTileSize);
+
+    private Rect2I EditTileRect(int tile)
+    {
+        int x = tile % EditTilesAcross * EditTileSize, y = tile / EditTilesAcross * EditTileSize;
+        return new Rect2I(x, y, Math.Min(EditTileSize, Size.X - x), Math.Min(EditTileSize, Size.Y - y));
+    }
+
+    internal bool ValidEditedTile(int tile, byte[] data) =>
+        tile >= 0 && tile / EditTilesAcross <= (Size.Y - 1) / EditTileSize &&
+        data.Length == EditTileRect(tile).Size.X * EditTileRect(tile).Size.Y * (sizeof(float) + 1);
+
+    // Cada linha contém as altitudes float32 seguidas da intensidade dos rios editados.
+    internal byte[] PackEditedTile(int tile)
+    {
+        var rect = EditTileRect(tile);
+        int width = rect.Size.X, stride = width * (sizeof(float) + 1);
+        var data = new byte[rect.Size.Y * stride];
+        for (int y = 0; y < rect.Size.Y; y++)
+        {
+            int cell = (rect.Position.Y + y) * Size.X + rect.Position.X;
+            Buffer.BlockCopy(H, cell * sizeof(float), data, y * stride, width * sizeof(float));
+            Buffer.BlockCopy(R, cell, data, y * stride + width * sizeof(float), width);
+        }
+        return data;
+    }
+
+    internal void RestoreEditedTile(int tile, byte[] data)
+    {
+        var rect = EditTileRect(tile);
+        int width = rect.Size.X, stride = width * (sizeof(float) + 1);
+        for (int y = 0; y < rect.Size.Y; y++)
+        {
+            int cell = (rect.Position.Y + y) * Size.X + rect.Position.X;
+            Buffer.BlockCopy(data, y * stride, H, cell * sizeof(float), width * sizeof(float));
+            Buffer.BlockCopy(data, y * stride + width * sizeof(float), R, cell, width);
+        }
+        MarkHeightRows(rect.Position.Y, rect.End.Y - 1);
+        RiversDirty = true;
     }
 
     public float HeightAt(Vector3 n) => H[PixelOf(n)];
@@ -213,7 +268,14 @@ public partial class Terrain : RefCounted
 
     public void SetRiver(int idx, float value)
     {
-        R[idx] = (byte)Math.Round(Math.Clamp(value, 0f, 1f) * 255f);
+        SetRiverByte(idx, (byte)Math.Round(Math.Clamp(value, 0f, 1f) * 255f));
+    }
+
+    internal void SetRiverByte(int idx, byte value)
+    {
+        if (R[idx] == value) return;
+        R[idx] = value;
+        MarkEditedTile(idx);
         RiversDirty = true;
     }
 

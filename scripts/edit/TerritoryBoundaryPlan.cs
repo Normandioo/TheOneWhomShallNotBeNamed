@@ -7,7 +7,7 @@ namespace Evron;
 public partial class TerritoryBoundaryPlan : RefCounted
 {
     internal Territory? Map;
-    internal long Version;
+    public long Version { get; internal set; }
     internal TerritoryBoundary? Previous;
     internal TerritoryBoundary Next = new(0, 0, 0, Array.Empty<Vector3>(), Array.Empty<int>());
     internal int[][] Choices = Array.Empty<int[]>();  // os pedaços separados que encostam no selecionado

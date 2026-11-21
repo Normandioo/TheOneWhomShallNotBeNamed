@@ -21,6 +21,10 @@ var _territory
 var _registry
 var _panel
 var _commands
+var record_edit: Callable
+var _draft_dirty := false
+var _job_points := PackedVector3Array()
+var applying := false
 var _owner := 0
 var _id := 0
 var _paths: Array = []
@@ -82,6 +86,8 @@ func stop() -> void:
 	if _owner == 0:
 		return
 	_drop_preview()
+	_job_points.clear()
+	applying = false
 	_owner = 0
 	_capturing = false
 	_handle = -1
@@ -92,6 +98,8 @@ func stop() -> void:
 
 func select_path(id: int) -> void:
 	_drop_preview()
+	_job_points.clear()
+	applying = false
 	_id = id
 	_saved = PackedVector3Array()
 	for path in _paths:
@@ -107,7 +115,7 @@ func select_path(id: int) -> void:
 
 
 func press(dir: Vector3, screen: Vector2, altitude_km: float) -> void:
-	if dir == Vector3.ZERO or dragging:
+	if dir == Vector3.ZERO or dragging or applying:
 		return
 	_drop_preview()
 	_last_side = {}
@@ -164,7 +172,7 @@ func drag(dir: Vector3, screen: Vector2) -> void:
 			_points = reduced
 		_points.append(dir)
 		_last_screen = screen
-		_refresh()
+		_draft_dirty = true
 	elif _handle >= 0 and not dir.is_equal_approx(_points[_handle]):
 		var next := _handle if _inserting else _handle + 1
 		if (_handle > 0 and dir.is_equal_approx(_points[_handle - 1])) or \
@@ -175,7 +183,7 @@ func drag(dir: Vector3, screen: Vector2) -> void:
 			_inserting = false
 		else:
 			_points.set(_handle, dir)
-		_refresh()
+		_draft_dirty = true
 
 
 func release() -> void:
@@ -191,6 +199,11 @@ func release() -> void:
 	_handle = -1
 	_inserting = false
 	if _points.size() >= 2 and _points != _saved:
+		if not _is_loop() and (_plan == null or _preview_points != _points or _plan.Version != _territory.Version):
+			_drop_preview()
+			applying = true
+			_panel.show_boundary_state("Calculando fronteira…")
+			return
 		# Solta = aplica. Reaproveita a prévia se ela é deste mesmo traço e o mapa não mudou; senão planeja agora.
 		if _plan == null or _preview_points != _points or _plan.Version != _territory.Version:
 			var result := _make_plan(_points)
@@ -207,7 +220,7 @@ func release() -> void:
 
 
 func cancel() -> void:
-	if dragging:
+	if dragging or applying:
 		select_path(_id)
 
 
@@ -232,6 +245,10 @@ func _is_loop() -> bool:
 func _make_plan(points: PackedVector3Array) -> Dictionary:
 	var loop := _is_loop()
 	var result: Dictionary = _territory.PlanLoopClaim(_owner, points, _id, land_only) if loop else _territory.PlanBoundaryClaimOn(_owner, points, _id, land_only)
+	return _validate_plan(result)
+
+
+func _validate_plan(result: Dictionary) -> Dictionary:
 	var plan = result.get("plan")
 	if plan != null and plan.SourceOwner != 0 and (_registry.Name(plan.SourceOwner).is_empty() or _registry.Kind(plan.SourceOwner) != _registry.Kind(_owner)):
 		return {"message": "O território cortado precisa pertencer a um cadastro do mesmo nível (país com país, província com província)."}
@@ -250,10 +267,44 @@ func _current_points() -> PackedVector3Array:
 
 ## A cada quadro (Main): com o botão apertado e o mouse parado por PAUSE_MS, mostra a prévia do traço como está.
 func tick() -> void:
+	if _draft_dirty:
+		_draft_dirty = false
+		if dragging:
+			_show_path()
+	if not _job_points.is_empty():
+		var result: Dictionary = _territory.PollOpenBoundary()
+		if not result.is_empty():
+			var points := _job_points
+			_job_points = PackedVector3Array()
+			if applying and points == _points:
+				applying = false
+				result = _validate_plan(result)
+				if result.has("plan"):
+					_plan = result.plan
+					apply_preview()
+				else:
+					_points = _saved.duplicate()
+					_refresh(String(result.message))
+				return
+			if dragging and not _is_loop() and points == _current_points():
+				_preview_points = points
+				result = _validate_plan(result)
+				if result.has("plan"):
+					_plan = result.plan
+					_show_preview()
+				else:
+					_drop_preview()
+					_panel.show_boundary_state(String(result.message))
+	if applying:
+		_start_open_plan(_points)
+		return
 	if not dragging or Time.get_ticks_msec() - _moved_ms < PAUSE_MS:
 		return
 	var pts := _current_points()
 	if pts.size() < 2 or pts == _preview_points or pts == _saved:
+		return
+	if not _is_loop():
+		_start_open_plan(pts)
 		return
 	_preview_points = pts
 	var result := _make_plan(pts)
@@ -263,6 +314,11 @@ func tick() -> void:
 	else:
 		_drop_preview()
 		_panel.show_boundary_state(String(result.message))
+
+
+func _start_open_plan(points: PackedVector3Array) -> void:
+	if _job_points.is_empty() and _territory.BeginOpenBoundary(_owner, points, _id, land_only):
+		_job_points = points.duplicate()
 
 
 ## Mostra no mapa o lado escolhido e diz o que vai acontecer.
@@ -304,13 +360,17 @@ func apply_preview() -> void:
 	var neighbor: String = _registry.Name(plan.SourceOwner) if plan.SourceOwner != 0 else "a terra sem dono"
 	var applied_id := _id
 	var points := _points.duplicate()
-	_drop_preview()
+	_plan = null
 	var edit = _territory.ApplyBoundary(plan)
 	if edit == null:
+		preview_changed.emit(null)
 		_points = _saved.duplicate()
 		_refresh("O mapa mudou durante o traço. Desenhe novamente.")
 		return
-	_commands.push("Redesenhar fronteira", edit)
+	if record_edit.is_valid():
+		record_edit.call("Redesenhar fronteira", edit)
+	else:
+		_commands.push("Redesenhar fronteira", edit)
 	_last_side = {}
 	if plan.ChoiceCount > 1:
 		_last_side = {"points": points, "id": applied_id, "choice": plan.Choice, "count": plan.ChoiceCount, "version": _territory.Version}

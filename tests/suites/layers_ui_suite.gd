@@ -116,6 +116,9 @@ func run() -> void:
 	for k in range(1, bulge.size()):
 		tool.drag(bulge[k][0], bulge[k][1])
 	tool.release()
+	var deadline := Time.get_ticks_msec() + 10000
+	while tool.applying and Time.get_ticks_msec() < deadline:
+		await frames(1)
 	if main.territory.OwnerAt(_d(0, 55)) != fresh or main.territory.AreaKm2(fresh) <= before_km2:
 		return fail("a linha aberta pela terra livre amplia o país: " + terr.territory_panel._boundary_status.text)
 	if main.territory.OwnerAt(_d(0, 62)) == fresh:

@@ -53,6 +53,13 @@ func run() -> void:
 	if layer.PlanBoundaryClaim(2, short_line, 0).has("plan") or layer.PlanBoundaryClaim(4, _line(terrain, 125), 0).has("plan"):
 		return fail("a linha incompleta e uma divisão sem contato com o país selecionado devem ser recusadas")
 	var controls := _line(terrain, 145)
+	var parent := Territory.new()
+	parent.Setup(terrain)
+	_rectangle(parent, terrain, Rect2i(80, 38, 20, 65), 7)
+	layer.SetMask(parent, 7)
+	if layer.PlanBoundaryClaimOn(2, controls, 0, true).has("plan"):
+		return fail("uma província não pode anexar pixels fora do país pai")
+	layer.SetMask(null, 0)
 	var curve := layer.SmoothBoundary(controls)
 	if curve.size() <= controls.size() or curve[0] != controls[0] or curve[-1] != controls[-1]:
 		return fail("a suavização deve manter as pontas e os controles originais")
@@ -122,6 +129,7 @@ func run() -> void:
 	registry.Close()
 	DirAccess.remove_absolute(db_path)
 	ok("salvamento conjunto e leitura dos mundos anteriores")
+	_subdivisions_after_reload(terrain, db_path)
 
 	stack.undo()
 	stack.undo()
@@ -154,6 +162,65 @@ func run() -> void:
 	ok("divisão atravessa o antimeridiano")
 
 
+
+func _subdivisions_after_reload(terrain: Terrain, db_path: String) -> void:
+	var registry := Registry.new()
+	registry.Open(db_path)
+	var source: int = registry.Create("pais", "Origem")
+	var target: int = registry.Create("pais", "Destino")
+	var province: int = registry.Create("provincia", "Província original")
+	var town: int = registry.Create("municipio", "Município original")
+	var later_province: int = registry.Create("provincia", "Província posterior")
+	registry.Link(province, source, "provincia_de")
+	registry.Link(town, province, "municipio_de")
+	registry.Link(later_province, target, "provincia_de")
+
+	var countries := Territory.new()
+	var provinces := Territory.new()
+	var towns := Territory.new()
+	for map in [countries, provinces, towns]:
+		map.Setup(terrain)
+	_rectangle(countries, terrain, Rect2i(80, 56, 20, 47), target)
+	_rectangle(countries, terrain, Rect2i(100, 56, 60, 47), source)
+	_rectangle(provinces, terrain, Rect2i(100, 56, 60, 47), province)
+	_rectangle(towns, terrain, Rect2i(100, 56, 60, 47), town)
+	var returned := _at(terrain, 138, 80)
+	var retained := _at(terrain, 110, 80)
+	var plan = countries.PlanBoundaryClaim(target, _line(terrain, 145), 0).plan
+	var take = countries.ApplyBoundary(plan)
+	take.TrimSubdivisions(provinces, registry).TrimSubdivisions(towns, registry)
+	if provinces.OwnerAt(returned) != 0 or towns.OwnerAt(returned) != 0:
+		return fail("a conquista deve recortar a província e o município")
+	_paint(provinces, retained, 15.0, later_province)
+	if not registry.SaveTerritoryLevels({"pais": countries, "provincia": provinces, "municipio": towns}):
+		return fail("o salvamento deve gravar as três camadas da conquista")
+	registry.Close()
+	registry.Open(db_path)
+	var layers := {"pais": countries, "provincia": provinces, "municipio": towns}
+	for level in layers:
+		var map: Territory = layers[level]
+		map.Setup(terrain)
+		if not registry.LoadTerritoryLevel(level, map):
+			return fail("reabrir deve recuperar a camada " + level)
+
+	var shift = countries.PlanBoundaryClaim(target, _line(terrain, 126), plan.PathId).plan
+	var give_back = countries.ApplyBoundary(shift)
+	give_back.TrimSubdivisions(provinces, registry).TrimSubdivisions(towns, registry)
+	if countries.OwnerAt(returned) != source or provinces.OwnerAt(returned) != province or towns.OwnerAt(returned) != town:
+		return fail("remodelar depois de reabrir deve recuperar a província e o município na faixa devolvida")
+	if provinces.OwnerAt(retained) != later_province or towns.OwnerAt(retained) != 0:
+		return fail("a parte retida deve preservar a pintura posterior e seguir sem o município original")
+	give_back.Undo()
+	if countries.OwnerAt(returned) != target or provinces.OwnerAt(returned) != 0 or towns.OwnerAt(returned) != 0:
+		return fail("desfazer a remodelagem deve recortar novamente as subdivisões")
+	give_back.Redo()
+	if countries.OwnerAt(returned) != source or provinces.OwnerAt(returned) != province or towns.OwnerAt(returned) != town:
+		return fail("refazer a remodelagem deve restaurar as subdivisões novamente")
+	registry.Close()
+	DirAccess.remove_absolute(db_path)
+	ok("remodelagem após reabrir restaura província e município e preserva a pintura na faixa retida")
+
+
 func _screen(lat: float, lon: float) -> Vector2:
 	return main.globe.camera.cam.unproject_position(Geo.dir(lat, lon) * main.globe.RADIUS)
 
@@ -173,6 +240,9 @@ func _draw_cut(lon: float) -> void:
 	if DisplayServer.get_name() != "headless" and lon == 4.0:
 		await save("evron-fronteira-traco")
 	await send(button(MOUSE_BUTTON_LEFT, false, previous))
+	var deadline := Time.get_ticks_msec() + 10000
+	while main.territories.boundary_tool.applying and Time.get_ticks_msec() < deadline:
+		await frames(1)
 
 
 func _editor() -> void:
@@ -184,6 +254,10 @@ func _editor() -> void:
 	_paint(main.territory, Geo.dir(0, 4), 1230, neighbor)
 	_paint(main.territory, Geo.dir(-1, -10), 690, selected)
 	_paint(main.territory, Geo.dir(15, 4), 650, third)
+	var province: int = hub.registry.Create("provincia", "Província de Dravia")
+	hub.registry.Link(province, neighbor, "provincia_de")
+	var provinces = main.territories.layer("provincia")
+	_paint(provinces, Geo.dir(0, 7), 350, province)
 	main.territories.refresh_palette()
 	main.globe.focus(Geo.dir(0, 0), 2.6)
 	await frames(40)
@@ -208,10 +282,16 @@ func _editor() -> void:
 	await _draw_cut(8.0)
 	if main.territory.OwnerAt(Geo.dir(0, 6)) != selected or main.territory.OwnerAt(Geo.dir(13, 8)) != third or main.territory.BoundariesFor(selected).size() != 2:
 		return fail("um segundo gesto deve ampliar a região sem exigir nova seleção: " + panel._boundary_status.text)
+	if provinces.OwnerAt(Geo.dir(0, 6)) != 0 or provinces.OwnerAt(Geo.dir(0, 9)) != province:
+		return fail("a conquista deve recortar apenas o lado cedido da província")
 	main.undo()
 	if main.territory.OwnerAt(Geo.dir(0, 6)) != neighbor or main.territory.OwnerAt(Geo.dir(0, -1)) != selected:
 		return fail("desfazer deve reverter somente o último gesto")
+	if provinces.OwnerAt(Geo.dir(0, 6)) != province:
+		return fail("desfazer deve recuperar também o trecho da província")
 	main.redo()
 	if main.territory.OwnerAt(Geo.dir(0, 6)) != selected:
 		return fail("refazer deve restaurar o último gesto")
+	if provinces.OwnerAt(Geo.dir(0, 6)) != 0:
+		return fail("refazer deve recortar também o trecho da província")
 	ok("editor: clique no país, pincel no menu e dois ganhos sucessivos, cada um aplicado ao soltar o mouse")

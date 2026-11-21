@@ -63,6 +63,7 @@ func setup(domain_hub, t, stack, panel, more := {}, factory := Callable()) -> vo
 	for level in HIERARCHY:
 		layer(level)  # províncias e municípios aparecem no mapa desde o começo (com a cor do país)
 	boundary_tool.setup(territory, registry, hub.map, panel, commands)
+	boundary_tool.record_edit = _record_edit
 	panel.mode_changed.connect(_set_territory_mode)
 	panel.radius_changed.connect(func(km: float) -> void: territory_radius = km)
 	panel.land_only_changed.connect(func(on: bool) -> void:
@@ -121,7 +122,7 @@ func _on_import_apply(indices: PackedInt32Array, owners: PackedInt32Array) -> vo
 	if edit == null:
 		territory_panel.set_message("A importação não mudou nada.")
 		return
-	commands.push("Importar PNG (%d pontos)" % edit.Count, edit)
+	_record_edit("Importar PNG (%d pontos)" % edit.Count, edit)
 	territory_panel.set_area(territory.AreaKm2(territory_owner))
 	territory_panel.set_message("")
 	_show_warnings()
@@ -183,7 +184,7 @@ func territory_merge(from_id: int) -> void:
 	if edit == null:
 		territory_panel.set_message("%s não tem território para unir." % registry.Name(from_id))
 		return
-	commands.push("Unir %s a %s (%d pontos)" % [registry.Name(from_id), registry.Name(territory_owner), edit.Count], edit)
+	_record_edit("Unir %s a %s (%d pontos)" % [registry.Name(from_id), registry.Name(territory_owner), edit.Count], edit)
 	territory_panel.set_area(territory.AreaKm2(territory_owner))
 	territory_panel.set_message("")
 	_refresh_merge_choices()
@@ -335,7 +336,7 @@ func territory_begin(n: Vector3) -> void:
 	if territory_mode == "balde":
 		var edit = territory.Fill(n, territory_owner, territory_land_only)
 		if edit != null:
-			commands.push("Balde (%d pontos)" % edit.Count, edit)
+			_record_edit("Balde (%d pontos)" % edit.Count, edit)
 			territory_panel.set_area(territory.AreaKm2(territory_owner))
 		return
 	territory.Begin()
@@ -356,7 +357,7 @@ func territory_end() -> void:
 	territory_stroking = false
 	var edit = territory.End()
 	if edit != null:
-		commands.push("%s território (%d pontos)" % ["Apagar" if territory_mode == "borracha" else "Pintar", edit.Count], edit)
+		_record_edit("%s território (%d pontos)" % ["Apagar" if territory_mode == "borracha" else "Pintar", edit.Count], edit)
 		territory_panel.set_area(territory.AreaKm2(territory_owner))
 
 
@@ -397,7 +398,7 @@ func _natural_done(edit, name: String, nothing: String) -> void:
 	if edit == null:
 		territory_panel.set_message(nothing)
 		return
-	commands.push("%s (%d pontos)" % [name, edit.Count], edit)
+	_record_edit("%s (%d pontos)" % [name, edit.Count], edit)
 	territory_panel.set_area(territory.AreaKm2(territory_owner))
 	territory_panel.set_message("")
 
@@ -425,8 +426,22 @@ func _on_territory_clear() -> void:
 		return
 	var edit = cleared.ClearOwner(id)
 	if edit != null:
-		commands.push("Apagar território (%d pontos)" % edit.Count, edit)
+		_record_edit("Apagar território (%d pontos)" % edit.Count, edit, registry.Kind(id))
 	hub.refresh_sheet()
+
+
+func _record_edit(title: String, edit, level := "") -> void:
+	var i := HIERARCHY.find(territory_level if level.is_empty() else level)
+	if i >= 0:
+		var parent_edit = edit
+		for k in range(i + 1, HIERARCHY.size()):
+			var child = levels.get(HIERARCHY[k])
+			if child == null:
+				break
+			parent_edit = parent_edit.TrimSubdivisions(child, registry)
+			if parent_edit == null:
+				break
+	commands.push(title, edit)
 
 
 func _on_commands_changed() -> void:
@@ -502,15 +517,21 @@ func save_if_due() -> void:
 		save()
 
 
-func save() -> void:
+func save() -> bool:
 	if not hub.usable:
-		return
+		return false
+	var pending := {}
 	for level in levels:
-		if levels[level].Version != _territory_saved[level] and registry.SaveTerritoryLevel(level, levels[level]) != null:
-			_territory_saved[level] = levels[level].Version
-		else:
-			_territory_changed_ms = Time.get_ticks_msec()
-
+		if levels[level].Version != _territory_saved[level]:
+			pending[level] = levels[level]
+	if pending.is_empty():
+		return true
+	if not registry.SaveTerritoryLevels(pending):
+		_territory_changed_ms = Time.get_ticks_msec()
+		return false
+	for level in pending:
+		_territory_saved[level] = pending[level].Version
+	return true
 
 
 # --- o que o DomainHub pede ------------------------------------------------------------------------------------------
@@ -568,6 +589,6 @@ func on_open(id: int) -> void:
 
 
 ## Grava agora o que ainda espera a gravação adiada (ao fechar e antes de exportar o mundo).
-func flush() -> void:
+func flush() -> bool:
 	territory_end()
-	save()
+	return save()

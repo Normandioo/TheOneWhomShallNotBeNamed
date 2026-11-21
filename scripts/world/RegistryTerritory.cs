@@ -91,34 +91,61 @@ public partial class Registry
     /// Grava a camada de um nível ("pais", "provincia" ou "municipio"); as dos outros níveis não mudam. Só os tiles mexidos desde a
     /// última gravação neste banco são regravados (uma camada que não veio deste banco é gravada inteira e substitui a anterior).
     /// Devolve os bytes escritos nos tiles.
-    public long SaveTerritoryLevel(string level, Territory t)
+    public long SaveTerritoryLevel(string level, Territory t) => SaveTerritories(new[] { (level, t) });
+
+    /// Confirma todos os níveis alterados em uma só transação.
+    public bool SaveTerritoryLevels(Dictionary layers)
     {
-        string key = $"{_openKey}:{CheckLevel(level)}";
-        bool full = t.SyncedKey != key;
+        try
+        {
+            SaveTerritories(layers.Select(pair => (pair.Key.AsString(), pair.Value.As<Territory>())).ToArray());
+            return true;
+        }
+        catch (Exception e)
+        {
+            GD.PushError("Não consegui gravar os territórios: " + e.Message);
+            return false;
+        }
+    }
+
+    private long SaveTerritories((string Level, Territory Map)[] layers)
+    {
         long written = _db.Tx(() =>
         {
             long bytes = 0;
-            _db.Run("insert into territory_layer(level, w, h, data, boundaries, saved_at) values (@4, @0, @1, @2, @3, unixepoch()) " +
-                    "on conflict(level) do update set w = @0, h = @1, data = @2, boundaries = @3, saved_at = unixepoch()",
-                    t.Size.X, t.Size.Y, System.Array.Empty<byte>(), t.PackBoundaries(), level);
-            if (full) _db.Run("delete from territory_tile where level = @0", level);
-            foreach (var (tx, ty) in t.Tiles(onlyDirty: !full))
-            {
-                var data = t.PackTile(tx, ty);
-                if (data == null)
-                {
-                    if (!full) _db.Run("delete from territory_tile where level = @0 and tx = @1 and ty = @2", level, tx, ty);
-                    continue;
-                }
-                _db.Run("insert into territory_tile(level, tx, ty, data) values (@0, @1, @2, @3) " +
-                        "on conflict(level, tx, ty) do update set data = @3", level, tx, ty, data);
-                bytes += data.Length;
-            }
+            foreach (var (level, map) in layers)
+                bytes += WriteTerritoryLevel(CheckLevel(level), map);
             return bytes;
         });
-        t.ClearDirtyTiles();
-        t.SyncedKey = key;
+        foreach (var (level, map) in layers)
+        {
+            map.ClearDirtyTiles();
+            map.SyncedKey = $"{_openKey}:{level}";
+        }
         return written;
+    }
+
+    private long WriteTerritoryLevel(string level, Territory t)
+    {
+        bool full = t.SyncedKey != $"{_openKey}:{level}";
+        long bytes = 0;
+        _db.Run("insert into territory_layer(level, w, h, data, boundaries, saved_at) values (@4, @0, @1, @2, @3, unixepoch()) " +
+                "on conflict(level) do update set w = @0, h = @1, data = @2, boundaries = @3, saved_at = unixepoch()",
+                t.Size.X, t.Size.Y, System.Array.Empty<byte>(), t.PackBoundaries(), level);
+        if (full) _db.Run("delete from territory_tile where level = @0", level);
+        foreach (var (tx, ty) in t.Tiles(onlyDirty: !full))
+        {
+            var data = t.PackTile(tx, ty);
+            if (data == null)
+            {
+                if (!full) _db.Run("delete from territory_tile where level = @0 and tx = @1 and ty = @2", level, tx, ty);
+                continue;
+            }
+            _db.Run("insert into territory_tile(level, tx, ty, data) values (@0, @1, @2, @3) " +
+                    "on conflict(level, tx, ty) do update set data = @3", level, tx, ty, data);
+            bytes += data.Length;
+        }
+        return bytes;
     }
 
     public bool LoadTerritoryLevel(string level, Territory t)

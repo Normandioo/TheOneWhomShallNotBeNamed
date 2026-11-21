@@ -20,8 +20,9 @@ func run() -> void:
 		if MapLayers.LAYERS[i]["kind"] == "natural":
 			main.set_layer(i)
 	var tex: Texture2D = main.material.material.get_shader_parameter("layer_linear")
-	if main.material.layer_file != "natural.png" or tex.get_width() != 8192 or not tex.get_image().has_mipmaps():
-		return fail("a cor natural deveria estar em 8192 px com mipmaps: %s %d" % [main.material.layer_file, tex.get_width()])
+	var base_width := 4096 if main.globe.tiles.name_id == "natural" else 8192
+	if main.material.layer_file != "natural.png" or tex.get_width() != base_width or not tex.get_image().has_mipmaps():
+		return fail("a cor natural deveria estar em %d px com mipmaps: %s %d" % [base_width, main.material.layer_file, tex.get_width()])
 	cam.look_at_dir(EvronGeo.dir(20.0, 0.0), 3.0)
 	await save("1_natural")
 	cam.look_at_dir(EvronGeo.dir(-24.0, -118.0), 1.35)
