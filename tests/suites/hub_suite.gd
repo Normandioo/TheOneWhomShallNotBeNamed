@@ -124,7 +124,7 @@ func run() -> void:
 
 	# Nome: a correção chega ao registro e à busca; nome vazio é desfeito.
 	hub.open(pais)
-	var name_edit: LineEdit = sheet._body.get_child(0)
+	var name_edit: LineEdit = sheet._pages["Geral"].get_child(0)
 	name_edit.text = "Reino de Arên"
 	name_edit.text_submitted.emit("Reino de Arên")
 	if reg.Name(pais) != "Reino de Arên" or not search._list.get_item_text(search._ids.find(pais)).begins_with("Reino de Arên"):
@@ -134,6 +134,12 @@ func run() -> void:
 	if name_edit.text != "Reino de Arên" or reg.Name(pais) != "Reino de Arên":
 		return fail("nome vazio não pode ser aceito")
 	ok("corrigir o nome atualiza o registro e a busca; nome vazio é desfeito")
+	sheet._tab_buttons["Mapa"].pressed.emit()
+	hub.open(pais)
+	if sheet._active_tab != "Mapa" or not sheet._pages["Mapa"].visible or sheet._pages["Geral"].visible:
+		return fail("atualizar a mesma ficha deve preservar a aba e mostrar só o conteúdo dela")
+	sheet._tab_buttons["Geral"].pressed.emit()
+	ok("abas separam o conteúdo e a ficha mantém a aba ativa ao atualizar")
 
 	# Nomes alternativos e etiquetas.
 	sheet.alias_added.emit("gentilico", "arenês")

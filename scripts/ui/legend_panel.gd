@@ -17,22 +17,26 @@ func _init() -> void:
 	grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	grow_vertical = Control.GROW_DIRECTION_BEGIN
 	position = Vector2(-12, -12)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.custom_minimum_size = Vector2(WIDTH, 230)
+	add_child(scroll)
 	var box := VBoxContainer.new()
-	add_child(box)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(box)
 	_title = Label.new()
+	UiKit.style_heading(_title)
 	_title.add_theme_font_size_override("font_size", 16)
 	box.add_child(_title)
 	_body = VBoxContainer.new()
 	box.add_child(_body)
 	_text = Label.new()
 	_text.autowrap_mode = TextServer.AUTOWRAP_WORD
-	_text.custom_minimum_size = Vector2(WIDTH, 0)
 	_text.modulate = Color(1, 1, 1, 0.7)
 	box.add_child(_text)
 	_stale = Label.new()
 	_stale.text = "Terreno editado: esta camada é do mapa original e não acompanha o relevo novo."
 	_stale.autowrap_mode = TextServer.AUTOWRAP_WORD
-	_stale.custom_minimum_size = Vector2(WIDTH, 0)
 	_stale.add_theme_color_override("font_color", Color(1.0, 0.75, 0.3))
 	_stale.visible = false
 	box.add_child(_stale)

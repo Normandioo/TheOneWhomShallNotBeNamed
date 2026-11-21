@@ -20,16 +20,26 @@ func _init() -> void:
 	position = Vector2(12, -128)  # acima da barra de tempo
 	var box := VBoxContainer.new()
 	add_child(box)
-	var title := Label.new()
-	title.text = "Presenças no mapa"
-	title.add_theme_font_size_override("font_size", 15)
-	box.add_child(title)
+	var fold := Button.new()
+	fold.text = "Presenças no mapa"
+	fold.toggle_mode = true
+	box.add_child(fold)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.custom_minimum_size = Vector2(222, 164)
+	scroll.hide()
+	box.add_child(scroll)
+	_box = VBoxContainer.new()
+	_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_box)
+	fold.toggled.connect(func(open: bool) -> void:
+		scroll.visible = open
+		reset_size())
 	_scope = OptionButton.new()
 	_scope.add_item("Só a ficha aberta")
 	_scope.add_item("Todas as entidades")
 	_scope.item_selected.connect(func(_i: int) -> void: changed.emit())
-	box.add_child(_scope)
-	_box = box
+	_box.add_child(_scope)
 	refresh_layers()
 
 

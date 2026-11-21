@@ -41,6 +41,7 @@ const TypesController = preload("res://scripts/app/types_controller.gd")
 const WorldFiles = preload("res://scripts/app/world_files.gd")
 const ToolPanel = preload("res://scripts/ui/tool_panel.gd")
 const TimeBar = preload("res://scripts/ui/time_bar.gd")
+const UiKit = preload("res://scripts/ui/ui_kit.gd")
 
 const HEIGHT_UPLOAD_SECONDS := 0.1  # durante a pincelada a altitude vai para a GPU no máximo 10x por segundo
 const AUTOSAVE_SECONDS := 30.0  # reais; o relógio também é salvo a cada comando e ao fechar
@@ -94,6 +95,7 @@ func _new_layer() -> Territory:
 
 
 func _ready() -> void:
+	hud.theme = UiKit.map_theme()
 	if not EvronMaps.available():
 		push_error("Mapas não encontrados em data/evron/. Rode: python tools/import_maps.py <caminho>/mapas.zip")
 	terrain = Terrain.new()
@@ -124,12 +126,42 @@ func _ready() -> void:
 	var sheet := SheetPanel.new()
 	hud.add_child(search)
 	hud.add_child(sheet)
+	search.hide()
+	legend.hide()
+	tool_panel.bind_panel(layer_panel, "Mapa", "map")
+	tool_panel.bind_panel(search, "Cadastros", "records")
+	tool_panel.bind_panel(legend, "Legenda", "legend")
+	search.visibility_changed.connect(func() -> void:
+		if search.visible:
+			legend.hide())
+	legend.visibility_changed.connect(func() -> void:
+		if legend.visible:
+			search.hide())
+	var align_panels := func() -> void:
+		var top := tool_panel.position.y + tool_panel.size.y + 10.0
+		layer_panel.position.y = top
+		layer_panel.reset_size.call_deferred()
+		search.position.y = top
+		sheet.offset_top = top
+		var right_gap := search.size.x + 24.0 if search.visible else 12.0
+		sheet.position.x = hud.size.x - right_gap - sheet.size.x
+		legend.position.y = hud.size.y - legend.size.y - (74.0 if hud.size.x < 1200.0 else 12.0)
+	tool_panel.resized.connect(align_panels)
+	hud.resized.connect(align_panels)
+	sheet.resized.connect(align_panels)
+	search.visibility_changed.connect(align_panels)
+	align_panels.call_deferred()
 	var calendar_panel := CalendarPanel.new()
 	hud.add_child(calendar_panel)  # por último: abre por cima dos outros painéis
 	domains = DomainHub.new()
 	domains.setup(domains_db, search, sheet, calendar_panel)
 	var presence_panel := PresencePanel.new()
 	hud.add_child(presence_panel)
+	var align_presence := func() -> void:
+		presence_panel.position.y = time_bar.position.y - presence_panel.size.y - 10.0
+	presence_panel.resized.connect(align_presence)
+	time_bar.item_rect_changed.connect(align_presence)
+	align_presence.call_deferred()
 	hud.move_child(presence_panel, 0)  # por baixo da ficha e da janela de calendários
 	domains.bind_map(globe.places, presence_panel, globe.focus)
 	layer_panel.political_visibility_changed.connect(presence_panel.set_political_visible)
@@ -428,7 +460,7 @@ func _show_brush(n: Vector3, km := -1.0) -> void:
 ## Entrou ou saiu do modo pintar território: a barra de ferramentas volta a Navegar e o anel do pincel some.
 func _on_painting_changed(on: bool) -> void:
 	tool = ToolPanel.NAVIGATE
-	tool_panel.show_tool(ToolPanel.NAVIGATE)
+	tool_panel.show_territory_editing(on)
 	_show_brush(Vector3.ZERO)
 
 

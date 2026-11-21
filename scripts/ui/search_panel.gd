@@ -26,7 +26,7 @@ func _init() -> void:
 	add_theme_stylebox_override("panel", UiKit.panel_style())
 	set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	position = Vector2(-12, 12)
+	position = Vector2(-12, 104)
 	custom_minimum_size = Vector2(WIDTH, 0)
 	var box := VBoxContainer.new()
 	add_child(box)
@@ -35,6 +35,7 @@ func _init() -> void:
 	box.add_child(head)
 	var title := Label.new()
 	title.text = "Cadastros"
+	UiKit.style_heading(title)
 	title.add_theme_font_size_override("font_size", 18)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
@@ -44,21 +45,23 @@ func _init() -> void:
 	_new_pop.id_pressed.connect(_on_new)
 	new_menu.tooltip_text = "Cria com o texto da busca como nome (pode ser provisório)."
 	head.add_child(new_menu)
+	var actions := HBoxContainer.new()
+	box.add_child(actions)
 	var cal_btn := Button.new()
 	cal_btn.text = "Calendários…"
 	cal_btn.tooltip_text = "Criar e ver calendários locais"
 	cal_btn.pressed.connect(func() -> void: calendars_requested.emit())
-	head.add_child(cal_btn)
+	actions.add_child(cal_btn)
 	var types_btn := Button.new()
 	types_btn.text = "Tipos…"
 	types_btn.tooltip_text = "Criar tipos de entidade, campos e vínculos"
 	types_btn.pressed.connect(func() -> void: types_requested.emit())
-	head.add_child(types_btn)
+	actions.add_child(types_btn)
 	var rules_btn := Button.new()
 	rules_btn.text = "Regras…"
 	rules_btn.tooltip_text = "Regras que calculam campos, executadas numa data do mundo"
 	rules_btn.pressed.connect(func() -> void: rules_requested.emit())
-	head.add_child(rules_btn)
+	actions.add_child(rules_btn)
 
 	_query = LineEdit.new()
 	_query.placeholder_text = "Buscar por nome"

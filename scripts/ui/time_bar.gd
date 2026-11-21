@@ -48,19 +48,27 @@ func _init() -> void:
 	var top := HBoxContainer.new()
 	box.add_child(top)
 	_date = Label.new()
+	UiKit.style_heading(_date)
 	_date.add_theme_font_size_override("font_size", 18)
 	top.add_child(_date)
 	_state = Label.new()
 	top.add_child(_state)
 	_play = _button(top, "Continuar", func() -> void: play_toggled.emit())
+	_play.icon = preload("res://assets/ui/play.png")
 	_speed = OptionButton.new()
 	for s in SPEEDS:
 		_speed.add_item(s[0])
 	_speed.item_selected.connect(func(i: int) -> void: speed_selected.emit(SPEEDS[i][1]))
 	top.add_child(_speed)
-	_button(top, "Calendário", func() -> void: _window.visible = not _window.visible)
+	_button(top, "Calendário", func() -> void: _window.visible = not _window.visible).icon = preload("res://assets/ui/clock.png")
 
+	var advance := Button.new()
+	advance.text = "Avançar…"
+	top.add_child(advance)
 	var adv := HBoxContainer.new()
+	advance.toggled.connect(func(open: bool) -> void: adv.visible = open)
+	advance.toggle_mode = true
+	adv.hide()
 	box.add_child(adv)
 	for a in ADVANCES:
 		var b := _button(adv, a[0], _on_advance.bind(a[1], a[2]))
@@ -71,6 +79,7 @@ func _init() -> void:
 	box.add_child(_present)
 	_message = Label.new()
 	_message.modulate = Color(1, 0.8, 0.5)
+	_message.hide()
 	box.add_child(_message)
 
 
@@ -86,6 +95,7 @@ func show_clock(clock) -> void:
 	_present.visible = clock.viewing
 	_present.text = "O presente continua em %s" % Calendar.format(clock.now)
 	_play.text = "Pausar" if clock.running else "Continuar"
+	_play.icon = preload("res://assets/ui/pause.png") if clock.running else preload("res://assets/ui/play.png")
 	_play.disabled = clock.viewing  # em consulta a reprodução fica parada; "Voltar ao presente" encerra
 	for b in _advance_buttons:
 		b.disabled = clock.viewing
@@ -102,6 +112,8 @@ func show_clock(clock) -> void:
 
 func show_message(text: String) -> void:
 	_message.text = text
+	_message.visible = not text.is_empty()
+	reset_size.call_deferred()
 
 
 func _on_advance(kind: String, n: int) -> void:

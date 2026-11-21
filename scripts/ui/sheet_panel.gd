@@ -52,6 +52,12 @@ var _title: Label
 var _boundary_brush: Button
 var _scroll: ScrollContainer
 var _body: VBoxContainer
+var _page: VBoxContainer
+var _tab_bar: HBoxContainer
+var _pages := {}
+var _tab_buttons := {}
+var _tab_scroll := {}
+var _active_tab := ""
 var _confirm: ConfirmationDialog
 var _sheet := {}
 var _fields := {}          # código -> {row, state, editor, type, last_state, last_value}
@@ -81,7 +87,7 @@ func _init() -> void:
 	anchor_bottom = 1.0
 	offset_left = -(WIDTH + 320 + 24)  # à esquerda do painel de busca
 	offset_right = -(320 + 24)
-	offset_top = 80      # abaixo da barra de ferramentas (topo, no centro)
+	offset_top = 104     # alinha a ficha com o painel de cadastros
 	offset_bottom = -128  # acima da barra de tempo (embaixo, à esquerda)
 	var root := VBoxContainer.new()
 	add_child(root)
@@ -89,6 +95,7 @@ func _init() -> void:
 	root.add_child(head)
 	_title = Label.new()
 	_title.add_theme_font_size_override("font_size", 18)
+	UiKit.style_heading(_title)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
 	_boundary_brush = Button.new()
@@ -103,6 +110,9 @@ func _init() -> void:
 		visible = false
 		closed.emit())
 	head.add_child(close)
+	_tab_bar = HBoxContainer.new()
+	root.add_child(_tab_bar)
+	root.add_child(HSeparator.new())
 	_scroll = ScrollContainer.new()
 	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -119,7 +129,12 @@ func current_id() -> int:
 
 ## Mostra a ficha (o Dictionary de Registry.Sheet) e os tipos de vínculo que ela pode criar (Registry.LinkTypesFor).
 func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}) -> void:
-	var keep := _scroll.scroll_vertical if int(sheet.id) == current_id() else 0
+	var keep := "Geral"
+	if int(sheet.id) == current_id():
+		keep = _active_tab
+		_tab_scroll[keep] = _scroll.scroll_vertical
+	else:
+		_tab_scroll.clear()
 	_sheet = sheet
 	_types = link_types
 	_calendars = calendars
@@ -130,20 +145,60 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	if _body != null:
 		_scroll.remove_child(_body)
 		_body.queue_free()
+	for button in _tab_bar.get_children():
+		_tab_bar.remove_child(button)
+		button.queue_free()
+	_tab_buttons.clear()
+	_pages.clear()
+	_active_tab = ""
 	_fields.clear()
 	_body = VBoxContainer.new()
 	_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll.add_child(_body)
+	_add_tab("Geral")
 	_build_identity()
 	_build_names()
 	_build_content()
+	_build_footer()
+	_add_tab("Relações")
 	_build_links()
+	if not _geo.is_empty():
+		_add_tab("Mapa")
 	_build_territory()
 	_build_places()
+	if not _geo.is_empty():
+		_add_tab("População")
 	_build_population()
+	if not _calendars.is_empty():
+		_add_tab("Calendários")
 	_build_calendars()
-	_build_footer()
-	_scroll.set_deferred("scroll_vertical", keep)
+	_select_tab(keep if _pages.has(keep) else "Geral")
+
+
+func _add_tab(label: String) -> void:
+	var button := Button.new()
+	button.text = label
+	button.toggle_mode = true
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.pressed.connect(_select_tab.bind(label))
+	_tab_bar.add_child(button)
+	_tab_buttons[label] = button
+	_page = VBoxContainer.new()
+	_body.add_child(_page)
+	_pages[label] = _page
+
+
+func _select_tab(label: String) -> void:
+	if label == _active_tab:
+		_tab_buttons[label].set_pressed_no_signal(true)
+		return
+	if not _active_tab.is_empty():
+		_tab_scroll[_active_tab] = _scroll.scroll_vertical
+	_active_tab = label
+	for key in _pages:
+		_pages[key].visible = key == label
+		_tab_buttons[key].set_pressed_no_signal(key == label)
+	_scroll.set_deferred("scroll_vertical", _tab_scroll.get(label, 0))
 
 
 ## Atualiza só as datas (universal e locais) quando o relógio anda, sem refazer a ficha. texts: id do uso -> texto.
@@ -240,7 +295,7 @@ func _build_identity() -> void:
 			name_changed.emit(eid, t)
 	name_edit.text_submitted.connect(func(_t: String) -> void: commit.call())
 	name_edit.focus_exited.connect(commit)
-	_body.add_child(name_edit)
+	_page.add_child(name_edit)
 
 	_label("Resumo")
 	var summary := TextEdit.new()
@@ -253,10 +308,10 @@ func _build_identity() -> void:
 		if summary.text != last_summary[0]:
 			last_summary[0] = summary.text
 			summary_changed.emit(eid, summary.text))
-	_body.add_child(summary)
+	_page.add_child(summary)
 
 	var tags := HFlowContainer.new()
-	_body.add_child(tags)
+	_page.add_child(tags)
 	for t in _sheet.tags:
 		var b := Button.new()
 		b.text = "%s ✕" % t
@@ -818,9 +873,9 @@ func _build_calendars() -> void:
 
 
 func _build_footer() -> void:
-	_body.add_child(HSeparator.new())
+	_page.add_child(HSeparator.new())
 	var row := HBoxContainer.new()
-	_body.add_child(row)
+	_page.add_child(row)
 	var with_links := CheckBox.new()
 	with_links.text = "com vínculos"
 	row.add_child(with_links)
@@ -840,13 +895,13 @@ func _build_footer() -> void:
 # --- peças -----------------------------------------------------------------------------------------------------------
 
 func _section(title: String) -> VBoxContainer:
-	_body.add_child(HSeparator.new())
+	_page.add_child(HSeparator.new())
 	var l := Label.new()
 	l.text = title
 	l.add_theme_font_size_override("font_size", 16)
-	_body.add_child(l)
+	_page.add_child(l)
 	var box := VBoxContainer.new()
-	_body.add_child(box)
+	_page.add_child(box)
 	return box
 
 
@@ -854,7 +909,7 @@ func _label(text: String) -> void:
 	var l := Label.new()
 	l.text = text
 	l.modulate = Color(1, 1, 1, 0.7)
-	_body.add_child(l)
+	_page.add_child(l)
 
 
 func _note(text: String) -> Label:

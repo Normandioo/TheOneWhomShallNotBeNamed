@@ -23,13 +23,14 @@ var _item_layer := {}  # índice do item no menu -> índice em MapLayers.LAYERS 
 
 
 func _init() -> void:
-	position = Vector2(12, 12)
-	custom_minimum_size = Vector2(260, 0)
+	position = Vector2(12, 104)
+	custom_minimum_size = Vector2(350, 0)
 	add_theme_stylebox_override("panel", UiKit.panel_style())
 	var box := VBoxContainer.new()
 	add_child(box)
 	var title := Label.new()
-	title.text = "Evron"
+	title.text = "Camadas do mapa"
+	UiKit.style_heading(title)
 	title.add_theme_font_size_override("font_size", 20)
 	box.add_child(title)
 
@@ -94,11 +95,16 @@ func show_political(on: bool) -> void:
 
 
 func show_cursor(text: String) -> void:
+	if text == _cursor.text:
+		return
 	_cursor.text = text
+	queue_sort()
+	reset_size.call_deferred()
 
 
 func show_selection(text: String) -> void:
 	_selection.text = text
+	reset_size.call_deferred()
 
 
 func show_camera_altitude(km: float) -> void:
