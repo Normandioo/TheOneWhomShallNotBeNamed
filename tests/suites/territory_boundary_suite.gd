@@ -184,15 +184,15 @@ func _editor() -> void:
 	_paint(main.territory, Geo.dir(0, 4), 1230, neighbor)
 	_paint(main.territory, Geo.dir(-1, -10), 690, selected)
 	_paint(main.territory, Geo.dir(15, 4), 650, third)
-	hub.refresh_palette()
+	main.territories.refresh_palette()
 	main.globe.focus(Geo.dir(0, 0), 2.6)
 	await frames(40)
 	await _click(_screen(-1, -10))
 	if hub.current() != selected or not hub.sheet._boundary_brush.is_visible_in_tree():
 		return fail("clicar no país deve selecioná-lo e revelar o pincel de fronteira na ficha")
 	await _click(hub.sheet._boundary_brush.get_global_rect().get_center())
-	var panel = hub.territory_panel
-	if hub.territory_mode != "fronteira" or hub.territory_owner != selected or hub.sheet.visible:
+	var panel = main.territories.territory_panel
+	if main.territories.territory_mode != "fronteira" or main.territories.territory_owner != selected or hub.sheet.visible:
 		return fail("o pincel deve ativar o país clicado e liberar o mapa para desenhar")
 	if not tree.root.get_visible_rect().encloses(panel.get_global_rect()):
 		return fail("a barra de fronteiras deve caber na janela")

@@ -10,7 +10,7 @@ const Calendar = preload("res://scripts/world/calendar.gd")
 const PresencePanel = preload("res://scripts/ui/presence_panel.gd")
 const PlaceLayer = preload("res://scripts/view/place_layer.gd")
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
-const DomainHub = preload("res://scripts/world/domain_hub.gd")
+const DomainHub = preload("res://scripts/app/domain_hub.gd")
 
 var hub: DomainHub
 var search: SearchPanel

@@ -1,7 +1,26 @@
 extends SceneTree
 ## Roda UMA suíte (para iterar rápido): godot --path . -s tests/run_suite.gd -- tests/suites/x_suite.gd <pasta_das_capturas>
+## A suíte falha se chamar fail() ou se houver um erro de SCRIPT durante ela (um erro de script interrompe a função em silêncio e,
+## sem isto, a suíte terminava "verde" sem ter rodado o resto). Os ERROR esperados das recusas do C# são de outro tipo e não contam.
+
+
+## Conta os erros de script (ERROR_TYPE_SCRIPT) registrados enquanto a suíte roda.
+class ScriptErrors extends Logger:
+	var count := 0
+
+	func _log_error(_function: String, _file: String, _line: int, _code: String, _rationale: String, _editor_notify: bool,
+			error_type: int, _script_backtraces: Array[ScriptBacktrace]) -> void:
+		if error_type == ERROR_TYPE_SCRIPT:
+			count += 1
+
+	func _log_message(_message: String, _error: bool) -> void:
+		pass
+
+
 func _initialize() -> void:
 	_run.call_deferred()
+
+
 func _run() -> void:
 	var args := OS.get_cmdline_user_args()
 	var script := load("res://" + args[0]) as GDScript
@@ -9,6 +28,8 @@ func _run() -> void:
 		push_error("não consegui carregar a suíte " + args[0])  # sem isto o executor ficaria parado para sempre
 		quit(1)
 		return
+	var errors := ScriptErrors.new()
+	OS.add_logger(errors)
 	var out: String = args[1] if args.size() > 1 else OS.get_user_data_dir()
 	var main: Node = null
 	if args.size() > 2 and args[2] == "scene":
@@ -19,4 +40,7 @@ func _run() -> void:
 	var suite = script.new()
 	suite.setup(self, main, out)
 	await suite.run()
-	quit(1 if suite.failed else 0)
+	OS.remove_logger(errors)
+	if errors.count > 0:
+		printerr("FALHOU: %d erro(s) de script durante a suíte (ela pode ter parado no meio)" % errors.count)
+	quit(1 if suite.failed or errors.count > 0 else 0)

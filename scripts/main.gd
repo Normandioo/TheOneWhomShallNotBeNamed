@@ -33,7 +33,12 @@ const DrawPanel = preload("res://scripts/ui/draw_panel.gd")
 const TerritoryPanel = preload("res://scripts/ui/territory_panel.gd")
 const Territory = preload("res://scripts/world/Territory.cs")
 const TerrainEdit = preload("res://scripts/edit/TerrainEdit.cs")
-const DomainHub = preload("res://scripts/world/domain_hub.gd")
+const DomainHub = preload("res://scripts/app/domain_hub.gd")
+const TerritoryEditor = preload("res://scripts/app/territory_editor.gd")
+const PlaceDrawing = preload("res://scripts/app/place_drawing.gd")
+const RulesController = preload("res://scripts/app/rules_controller.gd")
+const TypesController = preload("res://scripts/app/types_controller.gd")
+const WorldFiles = preload("res://scripts/app/world_files.gd")
 const ToolPanel = preload("res://scripts/ui/tool_panel.gd")
 const TimeBar = preload("res://scripts/ui/time_bar.gd")
 
@@ -53,7 +58,12 @@ var material := GlobeMaterial.new()
 var globe: GlobeView
 var layer_panel: LayerPanel
 var legend: LegendPanel
-var domains: DomainHub
+var domains: DomainHub                # as fichas (busca, ficha, calendários) e o contexto dos outros controladores
+var territories: TerritoryEditor      # pintar território, camadas, paleta e seleção do mapa
+var place_drawing: PlaceDrawing       # desenhar o contorno de um lugar
+var rules := RulesController.new()
+var types := TypesController.new()
+var world_files := WorldFiles.new()
 var tool_panel: ToolPanel
 var clock := WorldClock.new()
 var demo := DemoModule.new()
@@ -127,31 +137,34 @@ func _ready() -> void:
 	_show_political("politica" in presence_panel.layers())
 	var draw_panel := DrawPanel.new()
 	hud.add_child(draw_panel)
-	domains.bind_draw(draw_panel)
+	place_drawing = PlaceDrawing.new()
+	place_drawing.setup(domains, draw_panel)
 	var territory_panel := TerritoryPanel.new()
 	hud.add_child(territory_panel)
-	domains.palette_changed.connect(material.set_political_palette)
-	domains.selection_changed.connect(material.set_political_selected)
-	domains.painting_changed.connect(_on_painting_changed)
-	domains.bind_territory(territory, commands, territory_panel, {}, _new_layer)  # lê a camada dos países e manda a paleta; as outras sob demanda
+	territories = TerritoryEditor.new()
+	territories.palette_changed.connect(material.set_political_palette)
+	territories.selection_changed.connect(material.set_political_selected)
+	territories.painting_changed.connect(_on_painting_changed)
+	territories.setup(domains, territory, commands, territory_panel, {}, _new_layer)  # lê a camada dos países e manda a paleta; as outras sob demanda
 	material.set_political(territory.OwnersImage())
-	domains.territory_level_shown.connect(func(level: String, _layer) -> void:
-		material.set_political(domains.political_image())
+	territories.territory_level_shown.connect(func(level: String, _layer) -> void:
+		material.set_political(territories.political_image())
 		layer_panel.show_level(level))
-	layer_panel.level_selected.connect(domains.show_level)
-	layer_panel.export_requested.connect(func() -> void: _world_dialog(true))
-	layer_panel.import_requested.connect(func() -> void: _world_dialog(false))
-	var types_panel := preload("res://scripts/ui/types_panel.gd").new()
-	hud.add_child(types_panel)
-	domains.bind_types(types_panel)
-	var rules_panel := preload("res://scripts/ui/rules_panel.gd").new()
-	hud.add_child(rules_panel)
-	domains.bind_rules(rules_panel)
+	layer_panel.level_selected.connect(territories.show_level)
+	territories.boundary_tool.preview_changed.connect(func(img) -> void:
+		material.set_political(img if img != null else territories.political_image()))
 	var import_panel := preload("res://scripts/ui/import_panel.gd").new()
 	hud.add_child(import_panel)
-	domains.bind_import(import_panel)
-	domains.boundary_tool.preview_changed.connect(func(img) -> void:
-		material.set_political(img if img != null else domains.political_image()))
+	territories.bind_import(import_panel)
+	var types_panel := preload("res://scripts/ui/types_panel.gd").new()
+	hud.add_child(types_panel)
+	types.setup(domains, types_panel)
+	var rules_panel := preload("res://scripts/ui/rules_panel.gd").new()
+	hud.add_child(rules_panel)
+	rules.setup(domains, rules_panel)
+	world_files.setup(self)
+	layer_panel.export_requested.connect(func() -> void: world_files.open_dialog(true))
+	layer_panel.import_requested.connect(func() -> void: world_files.open_dialog(false))
 	if save_path != "":
 		WorldStore.load_into(clock, save_path)  # sem salvamento válido, abre o cenário técnico, pausado
 	demo.attach(clock)
@@ -199,7 +212,7 @@ func _process(delta: float) -> void:
 	clock.tick(delta)
 	domains.tick()
 	globe.update(delta)
-	domains.boundary_tool.update_zoom(globe.camera_altitude_km())
+	territories.boundary_tool.update_zoom(globe.camera_altitude_km())
 	layer_panel.show_camera_altitude(globe.camera_altitude_km())
 	_since_upload += delta
 	if terrain.Dirty and (not brush.active or _since_upload >= HEIGHT_UPLOAD_SECONDS):
@@ -210,10 +223,10 @@ func _process(delta: float) -> void:
 	if _coast_stale and not brush.active and MapLayers.LAYERS[layer]["kind"] == "political":
 		material.set_coast(terrain.CoastImage())  # só com o mapa político na tela e fora da pincelada
 		_coast_stale = false
-	domains.boundary_tool.tick()  # prévia do traço de fronteira quando o mouse para
+	territories.boundary_tool.tick()  # prévia do traço de fronteira quando o mouse para
 	# Só as camadas mostradas (a do nível e as de cima) vão à GPU, compostas; durante a pincelada, no máximo 10x por segundo (16 MiB).
-	if (not domains.territory_stroking or _since_political >= 0.1) and domains.political_dirty():
-		material.refresh_political(domains.political_image())
+	if (not territories.territory_stroking or _since_political >= 0.1) and territories.political_dirty():
+		material.refresh_political(territories.political_image())
 		_since_political = 0.0
 	_since_political += delta
 	if terrain.RiversDirty and not brush.active:  # os rios só mudam ao soltar o mouse, desfazer ou refazer
@@ -228,17 +241,17 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		save_clock()
 	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT and domains != null:
-		domains.boundary_tool.cancel()
-		domains.territory_end()
+		territories.boundary_tool.cancel()
+		territories.territory_end()
 
 
 func _input(e: InputEvent) -> void:
 	# Conclui o gesto mesmo quando o botão é solto sobre um painel do HUD.
-	if domains == null or not domains.painting_territory or not (e is InputEventMouseButton) or e.pressed or e.button_index != MOUSE_BUTTON_LEFT:
+	if domains == null or not territories.painting_territory or not (e is InputEventMouseButton) or e.pressed or e.button_index != MOUSE_BUTTON_LEFT:
 		return
-	if domains.boundary_tool.dragging or domains.territory_stroking:
-		domains.boundary_tool.release()
-		domains.territory_end()
+	if territories.boundary_tool.dragging or territories.territory_stroking:
+		territories.boundary_tool.release()
+		territories.territory_end()
 		get_viewport().set_input_as_handled()
 
 
@@ -251,20 +264,20 @@ func _unhandled_input(e: InputEvent) -> void:
 			redo()
 			return
 	# No modo pintar território, o botão esquerdo pinta (a câmera só gira com o direito), como no pincel de terreno.
-	if domains.painting_territory:
+	if territories.painting_territory:
 		if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
 			if e.pressed:
 				var n := globe.pick(e.position)
-				if domains.territory_mode == "fronteira":
-					domains.boundary_tool.press(n, e.position, globe.camera_altitude_km())
+				if territories.territory_mode == "fronteira":
+					territories.boundary_tool.press(n, e.position, globe.camera_altitude_km())
 				else:
-					domains.territory_begin(n)
+					territories.territory_begin(n)
 			return
-		if e is InputEventMouseMotion and domains.boundary_tool.dragging:
-			domains.boundary_tool.drag(globe.pick(e.position), e.position)
+		if e is InputEventMouseMotion and territories.boundary_tool.dragging:
+			territories.boundary_tool.drag(globe.pick(e.position), e.position)
 			return
-		if e is InputEventMouseMotion and domains.territory_stroking:
-			domains.territory_drag(globe.pick(e.position))
+		if e is InputEventMouseMotion and territories.territory_stroking:
+			territories.territory_drag(globe.pick(e.position))
 		globe.handle_input(e)
 		return
 	# Com um pincel ativo, o botão esquerdo pinta (a câmera só gira com o direito).
@@ -305,8 +318,8 @@ func _show_political(on: bool) -> void:
 
 ## -1 = navegar; senão uma operação do pincel (TerrainBrush.Op).
 func set_tool(op: int) -> void:
-	if domains.painting_territory:  # escolher uma ferramenta da barra sai do modo pintar território
-		domains.stop_painting()
+	if territories.painting_territory:  # escolher uma ferramenta da barra sai do modo pintar território
+		territories.stop_painting()
 	if brush.active:
 		brush.end()
 	tool = op
@@ -320,81 +333,13 @@ func set_tool(op: int) -> void:
 func undo() -> void:
 	if brush.active:
 		brush.end()
-	domains.territory_end()
+	territories.territory_end()
 	commands.undo()
 
 
 func redo() -> void:
-	domains.territory_end()
+	territories.territory_end()
 	commands.redo()
-
-
-## Exportar (escolhe a pasta onde criar Evron-<data>.world) ou importar (escolhe a pasta .world) o mundo inteiro.
-func _world_dialog(export: bool) -> void:
-	if not domains.usable or domains_db == ":memory:":
-		return
-	var files := FileDialog.new()
-	files.file_mode = FileDialog.FILE_MODE_OPEN_DIR
-	files.access = FileDialog.ACCESS_FILESYSTEM
-	files.use_native_dialog = true
-	files.title = "Onde criar a pasta do mundo" if export else "Escolha a pasta .world a importar"
-	files.dir_selected.connect(func(dir: String) -> void:
-		files.queue_free()
-		if export:
-			_export_world(dir)
-		else:
-			_confirm_import(dir))
-	files.canceled.connect(files.queue_free)
-	hud.add_child(files)
-	files.popup_centered_ratio(0.6)
-
-
-func _export_world(parent: String) -> void:
-	save_clock()
-	domains.save_now()
-	var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace("T", "-")
-	var dir := parent.path_join("Evron-%s.world" % stamp.left(13))
-	var why: String = domains.registry.ExportWorld(dir, ProjectSettings.globalize_path(save_path) if save_path != "" else "")
-	_world_message("Mundo exportado para:
-" + dir if why == "" else "Não deu para exportar: " + why)
-
-
-func _confirm_import(dir: String) -> void:
-	var why: String = domains.registry.CheckWorld(dir)
-	if why != "":
-		_world_message("Essa pasta não pode ser importada: " + why)
-		return
-	var ask := ConfirmationDialog.new()
-	ask.dialog_text = "Trocar o mundo aberto pelo de
-%s?
-
-O mundo atual fica guardado ao lado do banco como .antes-importacao." % dir
-	ask.ok_button_text = "Importar"
-	ask.confirmed.connect(func() -> void: _import_world(dir))
-	ask.canceled.connect(ask.queue_free)
-	hud.add_child(ask)
-	ask.popup_centered()
-
-
-## Fecha o banco (gravando o que faltava), troca os arquivos e recarrega a cena: tudo é lido do mundo novo.
-func _import_world(dir: String) -> void:
-	save_clock()
-	domains.close()
-	var why: String = load("res://scripts/world/Registry.cs").new().ImportWorld(dir, ProjectSettings.globalize_path(domains_db),
-		ProjectSettings.globalize_path(save_path) if save_path != "" else "")
-	if why != "":
-		push_error(why)
-	save_path = ""  # a cena que sai não regrava o relógio por cima do importado
-	get_tree().reload_current_scene()
-
-
-func _world_message(text: String) -> void:
-	var box := AcceptDialog.new()
-	box.dialog_text = text
-	box.confirmed.connect(box.queue_free)
-	box.canceled.connect(box.queue_free)
-	hud.add_child(box)
-	box.popup_centered()
 
 
 func save_clock() -> void:
@@ -427,8 +372,8 @@ func _on_clock_changed() -> void:
 
 
 func select(n: Vector3) -> void:
-	if domains.drawing:  # no modo desenhar fronteira, o clique marca um ponto do contorno (cola a vértices de fronteiras vizinhas até ~2% da altura)
-		domains.draw_click(n, maxf(8.0, globe.camera_altitude_km() * 0.02))
+	if place_drawing.drawing:  # no modo desenhar fronteira, o clique marca um ponto do contorno (cola a vértices de fronteiras vizinhas até ~2% da altura)
+		place_drawing.draw_click(n, maxf(8.0, globe.camera_altitude_km() * 0.02))
 		return
 	selected_dir = n
 	domains.set_fixed_point(n)
@@ -467,8 +412,8 @@ func _season_line(n: Vector3) -> String:
 
 func _on_hover(n: Vector3) -> void:
 	layer_panel.show_cursor(describe(n))
-	if domains.painting_territory and not domains.territory_mode in ["fronteira", "conta-gotas"]:
-		_show_brush(n, domains.territory_radius)  # o anel do pincel de território
+	if territories.painting_territory and not territories.territory_mode in ["fronteira", "conta-gotas"]:
+		_show_brush(n, territories.territory_radius)  # o anel do pincel de território
 	if tool != ToolPanel.NAVIGATE:
 		_show_brush(n)
 

@@ -9,7 +9,7 @@ const UiKit = preload("res://scripts/ui/ui_kit.gd")
 ## Pela interface (cena): o designer cria tipo, campo com limite e vínculo; o menu "＋ Novo" e a ficha passam a mostrá-los.
 func _ui() -> void:
 	var hub = main.domains
-	var panel = hub.types_panel
+	var panel = main.types.types_panel
 	panel.open_dialog()
 	panel._type_name.text = "Fortaleza"
 	panel.type_requested.emit(panel._type_name.text)

@@ -28,12 +28,25 @@ scripts/
     Territory.cs     (C#) a camada política: o dono de cada pixel (ushort, grade da altitude), pincel, balde, borracha, área em km²
     TerritoryNatural.cs (C#, parte do Territory) fronteiras naturais: crescer pela terra sem dono por custo (serra, rio, mar) e assentar no relevo
                      (Terrain.cs também dá os lagos do Gleba e a costa do mapa político: CoastImage, distância em km)
-    RegistryTerritory.cs (C#, parte do Registry) a camada gravada no banco (comprimida) e a cor de cada país
-    domain_hub.gd    liga os painéis de busca, ficha e calendários ao Registry; segue o relógio (set_time/tick)
+    RegistryTerritory.cs (C#, parte do Registry) as camadas pintáveis por nível (país, província, município, religião, cultura,
+                     etnia, raça, idioma), a cor de cada cadastro e os avisos entre níveis
+    TerritoryTiles.cs / TerritoryLayers.cs / TerritoryImport.cs / TerritoryBoundaries.cs (C#, partes do Territory) gravação em
+                     tiles de 512 px, composição das camadas para a tela e máscara, importação de PNG, fronteiras vetoriais e contornos
+    RegistryTypes.cs / RegistryRules.cs / RegistryWorldFile.cs (C#, partes do Registry) tipos, campos e camadas como dados;
+                     regras declarativas e fixações; o mundo como pasta .world
     calendar.gd      o calendário universal: só conversões (365 dias, sem bissextos); tempo = segundos int64 desde a época
     world_clock.gd   o relógio oficial: presente, consulta, pausa, velocidade, eventos e o contrato dos módulos
     world_store.gd   salva e lê o relógio em JSON (user://evron_world.json), com .bak e troca atômica
     demo_module.gd   DEMONSTRATIVO: um evento e uma camada de teste que exercitam o contrato (sai com o 1º módulo real)
+  app/             os controladores: ligam os painéis ao núcleo, um por assunto, e conversam por sinais (Main é quem liga).
+    domain_hub.gd    as fichas: busca, ficha, vínculos, campos, lugares, calendários; segue o relógio (set_time/tick). É também o
+                     contexto dos outros: o banco, a ficha aberta (current, open, reload, refresh_sheet) e o mapa de presenças
+    territory_editor.gd o editor territorial (TerritoryEditor da especificação 17.5): modo pintar e suas ferramentas, camadas
+                     sob demanda, imagem composta do globo, paleta e destaque do selecionado, máscara, avisos, importar PNG, gravação
+    place_drawing.gd desenhar o contorno de um lugar ponto a ponto no globo
+    rules_controller.gd a janela de regras: montar, executar na data mostrada e fixar valores
+    types_controller.gd o designer de tipos, campos, camadas do mapa e vínculos
+    world_files.gd   exportar e importar o mundo como pasta .world
   edit/            comandos de edição: toda mudança é um comando com desfazer e refazer.
     command_stack.gd pilha de desfazer/refazer, limitada a 256 MiB; cada comando = nome + objeto com Undo/Redo/Bytes
     terrain_brush.gd pincel de terreno: modos, nomes, parâmetros e quando marcar (o que o GDScript usa)

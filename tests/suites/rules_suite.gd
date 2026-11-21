@@ -21,7 +21,7 @@ func _ui() -> void:
 	for i in 2:
 		reg.Link(castle, reg.Create(city, "Vila %d" % i), guards)
 	hub.search.rules_requested.emit()
-	var panel = hub.rules_panel
+	var panel = main.rules.rules_panel
 	panel._kind.select(panel._kinds.find(fort))
 	panel._kind.item_selected.emit(panel._kinds.find(fort))
 	panel._name.text = "Poder das fortalezas"
