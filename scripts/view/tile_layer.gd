@@ -10,6 +10,7 @@ extends Node3D
 ## O nó fica no centro do planeta, sem rotação: o referencial é o do planeta (EvronGeo).
 
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
+const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 const TILE_SHADER = preload("res://shaders/globe_tile.gdshader")
 
 const ROOT := "res://data/evron/tiles/"
@@ -39,7 +40,7 @@ var _river_tex: Texture2D
 ## Abre a pirâmide `tile_set` (pasta em data/evron/tiles/). O nível 0 é carregado na hora: cobre o planeta todo.
 func open(tile_set: String, globe_radius: float, height_tex: Texture2D, river_tex: Texture2D) -> bool:
 	close()
-	var manifest = JSON.parse_string(FileAccess.get_file_as_string(ROOT + tile_set + "/manifest.json"))
+	var manifest = JSON.parse_string(FileAccess.get_file_as_string(EvronMaps.directory() + "tiles/" + tile_set + "/manifest.json"))
 	if manifest == null:
 		push_error("pirâmide de blocos não encontrada: " + tile_set)
 		return false
@@ -181,7 +182,7 @@ func _request(key: String) -> void:
 
 func _load_image(key: String) -> Image:
 	var z := key.get_slice("/", 0)
-	var path := ProjectSettings.globalize_path("%s%s/%s/%s_%s.%s" % [ROOT, name_id, z, key.get_slice("/", 1), key.get_slice("/", 2), ext])
+	var path := ProjectSettings.globalize_path("%stiles/%s/%s/%s_%s.%s" % [EvronMaps.directory(), name_id, z, key.get_slice("/", 1), key.get_slice("/", 2), ext])
 	var img := Image.load_from_file(path)
 	if img != null:
 		img.generate_mipmaps()  # na thread: de longe o bloco não cintila

@@ -134,7 +134,7 @@ func show_layer(layer: Dictionary) -> void:
 	if layer["kind"] == "season" and not _load_season():
 		push_error("temperatura sazonal: rode python tools/import_maps.py (faltam os mapas em °C)")
 	var file: String = layer.get("file", "")
-	if layer.has("fallback") and not FileAccess.file_exists(EvronMaps.DIR + file):
+	if layer.has("fallback") and not FileAccess.file_exists(EvronMaps.directory() + file):
 		file = layer["fallback"]
 	var experimental := file == "natural_satellite.png"
 	material.set_shader_parameter("experimental", experimental)
@@ -175,7 +175,7 @@ func _load_satellite() -> void:
 	if _satellite_loaded:
 		return
 	_satellite_loaded = true
-	if FileAccess.file_exists(EvronMaps.DIR + "natural_water.png"):
+	if FileAccess.file_exists(EvronMaps.directory() + "natural_water.png"):
 		var optics := EvronMaps.load_layer("natural_water.png")
 		if optics != null:
 			_satellite_optics = ImageTexture.create_from_image(optics)

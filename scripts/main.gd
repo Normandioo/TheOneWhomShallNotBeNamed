@@ -335,7 +335,7 @@ func set_layer(index: int) -> void:
 	material.show_layer(selected)
 	var tiles: String = selected.get("tiles", "")
 	if selected["kind"] == "natural" and (material.layer_file != selected["file"] or
-			not FileAccess.file_exists(EvronMaps.DIR + "tiles/" + tiles + "/manifest.json")):
+			not FileAccess.file_exists(EvronMaps.directory() + "tiles/" + tiles + "/manifest.json")):
 		tiles = ""
 	globe.set_tiles(tiles, material.height_texture, material.river_texture)
 	legend.show_layer(MapLayers.LAYERS[index])
