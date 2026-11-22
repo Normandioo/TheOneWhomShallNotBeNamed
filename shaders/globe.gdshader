@@ -22,7 +22,6 @@ uniform sampler2D river_width : filter_linear, repeat_enable;  // largura: 0..1 
 const float RIVER_W_MIN = 0.1; // km (build_rivers.W_MIN / W_MAX)
 const float RIVER_W_MAX = 5.0;
 uniform int mode = 0;            // 0 camada de imagem, 1 altitude calibrada, 2 cor natural, 3 temperatura sazonal, 4 mapa político (GlobeMaterial.MODES)
-uniform sampler2D coast_map : filter_linear, repeat_enable;  // mapa político: R = distância com sinal até a costa em km (+ terra), G = lago (Terrain.CoastImage)
 // Temperatura sazonal: °C de janeiro e de julho, misturados pelo peso de julho (SeasonalTemperature.july_weight) e só
 // então pintados com a escala magma da legenda (misturar as cores da legenda daria valores sem sentido).
 uniform sampler2D temp_jan : filter_linear, repeat_enable;
@@ -102,23 +101,30 @@ float pol_noise(vec2 uv, vec2 freq) {
 
 // Quão perto da borda do país (ou da costa) este ponto está, por dentro: 0 = longe, 1 = colado. Três anéis de 8 direções em volta (1,5, 3,5 e 6
 // pixels do mapa, uns 15 a 60 km); conta quem é de outro país ou de ninguém. A província do mesmo país não conta.
-float political_edge(vec2 uv, int id) {
-	ivec2 size = textureSize(political_map, 0);
-	vec2 p = vec2(uv.x * float(size.x), clamp(uv.y, 0.0, 1.0) * float(size.y));
-	int top = political_top_id(id);
+float political_edge_cell(ivec2 c, ivec2 size, int top) {
 	float acc = 0.0;
-	for (int r = 0; r < 3; r++) {
-		float radius = r == 0 ? 1.5 : (r == 1 ? 3.5 : 6.0);
-		float weight = r == 0 ? 0.45 : (r == 1 ? 0.33 : 0.22);
+	for (int r = 0; r < 2; r++) {
+		float radius = r == 0 ? 2.0 : 5.0;
 		float count = 0.0;
 		for (int k = 0; k < 8; k++) {
 			float a = float(k) * 0.785398;
-			ivec2 q = ivec2(floor(p + vec2(cos(a), sin(a)) * radius));
-			count += political_top_id(political_id(q, size)) != top ? 1.0 : 0.0;
+			count += political_top_id(political_id(c + ivec2(int(round(cos(a) * radius)), int(round(sin(a) * radius))), size)) != top ? 1.0 : 0.0;
 		}
-		acc += weight * min(count / 4.0, 1.0);
+		acc += (r == 0 ? 0.55 : 0.45) * min(count / 4.0, 1.0);
 	}
-	return clamp(acc, 0.0, 1.0);
+	return acc;
+}
+
+// Calculado nos 4 pixels do mapa em volta e interpolado: sem isso a sombra da borda sai em degraus do tamanho do pixel do mapa.
+float political_edge(vec2 uv, int id) {
+	ivec2 size = textureSize(political_map, 0);
+	vec2 p = vec2(uv.x * float(size.x), clamp(uv.y, 0.0, 1.0) * float(size.y)) - 0.5;
+	ivec2 c = ivec2(floor(p));
+	vec2 f = fract(p);
+	int top = political_top_id(id);
+	float a = political_edge_cell(c, size, top), b = political_edge_cell(c + ivec2(1, 0), size, top);
+	float d = political_edge_cell(c + ivec2(0, 1), size, top), e = political_edge_cell(c + ivec2(1, 1), size, top);
+	return clamp(mix(mix(a, b, f.x), mix(d, e, f.x), f.y), 0.0, 1.0);
 }
 
 float pol_coast_dist(vec2 uv) {
@@ -159,7 +165,7 @@ vec3 political_style(vec3 n, vec2 uv, float h) {
 	float d = c.r;
 	float km_px = max(fwidth(d), 0.001);  // km por pixel de tela (o campo é uma distância)
 	float line, sub;
-	int id = political_owner(uv, 1.4, line, sub);
+	int id = political_owner(uv, 1.4, max(d, 0.0), line, sub);
 	// Terra (estilo Europa Universalis): o país (ou a terra sem dono, pergaminho claro) com manchas suaves, as montanhas mais cinzentas, a borda por
 	// dentro mais escura que o miolo e o relevo por cima. Fronteira marrom quase preta. Províncias têm a cor do país: só uma linha fina e discreta.
 	// O país selecionado fica mais claro, com um aro de luz por dentro; os outros ficam um pouco apagados.
@@ -239,7 +245,7 @@ void fragment() {
 		} else {
 		// natural.png: RGB = terra e gelo, A = superfície sólida. O resto é água: o mar pintado ao vivo pela altitude;
 		// acima do nível do mar (lagos) a cor da água vem da imagem (doce ou salgada).
-		solid = smoothstep(0.3, 0.7, nat.a);
+		solid = coast_clip(uv, smoothstep(0.3, 0.7, nat.a));
 		float lat = asin(clamp(n.y, -1.0, 1.0));
 		vec3 water = h >= 0.0 ? nat.rgb : pow(water_color(h, lat), vec3(2.2));
 		// Detalhe fino na terra e no gelo: brilho e relevo que a imagem não tem (sintetizado, semente fixa).
@@ -280,12 +286,14 @@ void fragment() {
 		// Cor pronta, com a luz de mapa já dentro: vai na emissão, sem o sol (só um leve escurecer na borda do disco).
 		float r = terrain_river_at(uv);
 		vec3 m = mix(political_style(n, uv, h), vec3(0.478, 0.663, 0.714), smoothstep(0.12, 0.35, r));
+		m = river_highlight(uv, m, vec3(0.05, 0.40, 0.90));
 		ALBEDO = vec3(0.0);
 		ROUGHNESS = 1.0;
 		EMISSION = brush_preview(n, pow(m, vec3(2.2))) * mix(0.8, 1.0, clamp(dot(NORMAL, VIEW), 0.0, 1.0));
 	} else {
 		ALBEDO = col;
 		ALBEDO = river_paint(uv, ALBEDO);
+		ALBEDO = river_highlight(uv, ALBEDO, pow(vec3(0.05, 0.40, 0.90), vec3(2.2)));
 		ALBEDO = political_paint(uv, ALBEDO);
 		ALBEDO = brush_preview(n, ALBEDO);
 		NORMAL = relief_normal(n, uv, h, NORMAL, VIEW_MATRIX * MODEL_MATRIX);

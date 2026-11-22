@@ -50,6 +50,14 @@ political_selected={
 "type": "int",
 "value": 0
 }
+river_hl_on={
+"type": "float",
+"value": 0.0
+}
+coast_map={
+"type": "sampler2D",
+"value": "res://shaders/political_default.tres"
+}
 satellite_optics={
 "type": "sampler2D",
 "value": "res://shaders/political_default.tres"
@@ -75,3 +83,13 @@ satellite_water_region={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
+
+[gui]
+
+timers/tooltip_delay_sec=0.25
+
+[debug]
+
+file_logging/enable_file_logging=true
+file_logging/enable_file_logging.pc=true
+file_logging/max_log_files=10

@@ -4,6 +4,7 @@ extends "res://tests/test_suite.gd"
 
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const MapLayers = preload("res://scripts/ui/map_layers.gd")
+const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 
 var CENTER := Vector2.ZERO  # o centro da janela (a de referência é 1920 × 1080): definido em run()
 
@@ -52,6 +53,23 @@ func run() -> void:
 	if main.material.layer_file != "BiomasGleba.png":
 		return fail("o material deveria estar com BiomasGleba.png, está com %s" % main.material.layer_file)
 	ok("camadas: altitude, temperatura e biomas, com legenda")
+
+	# As opções das sobreposições: a legenda liga e desliga; "Rios em destaque" liga o global do shader e solta os rios ao desligar.
+	var panel = main.domains.presence_panel
+	panel.legend_check.button_pressed = false
+	if main.legend.visible:
+		return fail("com a opção desligada a legenda deveria sumir")
+	panel.legend_check.button_pressed = true
+	if not main.legend.visible:
+		return fail("com a opção ligada a legenda deveria voltar")
+	if FileAccess.file_exists(EvronMaps.directory() + "rivers_indexed.rgbaf"):
+		panel.rivers_check.button_pressed = true
+		if not main.material._river_highlight or main.material._satellite_river_atlas == null:
+			return fail("Rios em destaque deveria carregar os rios")
+		panel.rivers_check.button_pressed = false
+		if main.material._river_highlight or main.material._satellite_river_atlas != null:
+			return fail("desligar Rios em destaque deveria soltar os rios")
+	ok("sobreposições: legenda do mapa e rios em destaque ligam e desligam")
 
 	# Roda do mouse aproxima e afasta; arrastar gira sem fixar ponto.
 	var d0: float = cam.target_dist

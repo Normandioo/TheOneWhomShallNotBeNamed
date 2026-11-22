@@ -9,6 +9,7 @@ var _title: Label
 var _body: VBoxContainer
 var _text: Label
 var _stale: Label
+var enabled := true  # a opção "Legenda do mapa" das sobreposições
 
 
 func _init() -> void:
@@ -29,6 +30,7 @@ func _init() -> void:
 	_text = Label.new()
 	_text.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_text.modulate = Color(1, 1, 1, 0.7)
+	_text.visible = false  # a descrição da camada não aparece: a legenda é só o título e as cores
 	box.add_child(_text)
 	_stale = Label.new()
 	_stale.text = "Terreno editado: esta camada é do mapa original e não acompanha o relevo novo."
@@ -43,11 +45,13 @@ func show_layer(data: Dictionary) -> void:
 	_title.text = data["title"]
 	_text.text = data["text"]
 	for c in _body.get_children():
+		_body.remove_child(c)
 		c.queue_free()
 	for item in data.get("items", []):
 		_add_swatch(item[0], item[1])
 	if data.has("gradient"):
 		_add_gradient(data["gradient"][0], data["gradient"][1], data["labels"])
+	_refresh_visible()
 
 
 func _add_swatch(color: Color, text: String) -> void:
@@ -89,3 +93,14 @@ func _add_gradient(offsets: Array, colors: Array, labels: Array) -> void:
 ## Avisa que a camada ficou desatualizada em relação ao terreno editado (a proposta pede marcar os derivados).
 func show_stale(on: bool) -> void:
 	_stale.visible = on
+	_refresh_visible()
+
+
+## Camada de imagem, sem cores a explicar, não tem legenda: o cartão só aparece com cores ou com o aviso de desatualizada.
+func _refresh_visible() -> void:
+	visible = enabled and (_body.get_child_count() > 0 or _stale.visible)
+
+
+func set_enabled(on: bool) -> void:
+	enabled = on
+	_refresh_visible()

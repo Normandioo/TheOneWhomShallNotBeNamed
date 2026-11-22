@@ -40,7 +40,7 @@ void fragment() {
 		SPECULAR = 0.14 * wet;
 		ROUGHNESS = mix(1.0, 0.36, wet);
 	} else if (natural) {
-		float solid = smoothstep(0.3, 0.7, tex.a);
+		float solid = coast_clip(guv, smoothstep(0.3, 0.7, tex.a));
 		float lat = asin(clamp(n.y, -1.0, 1.0));
 		vec3 water = h >= 0.0 ? tex.rgb : pow(water_color(h, lat), vec3(2.2));
 		vec3 pos_m = n * RADIUS;
@@ -56,6 +56,7 @@ void fragment() {
 	}
 	ALBEDO = col;
 	ALBEDO = river_paint(guv, ALBEDO);
+	ALBEDO = river_highlight(guv, ALBEDO, pow(vec3(0.05, 0.40, 0.90), vec3(2.2)));
 	ALBEDO = political_paint(guv, ALBEDO);
 	ALBEDO = brush_preview(n, ALBEDO);
 	if (experimental) {

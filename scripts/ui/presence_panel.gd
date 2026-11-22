@@ -7,10 +7,14 @@ const UiKit = preload("res://scripts/ui/ui_kit.gd")
 
 signal changed
 signal political_visibility_changed(on: bool)
+signal rivers_highlight_changed(on: bool)
+signal legend_visibility_changed(on: bool)
 
 var _scope: OptionButton
 var _checks := {}  # camada -> CheckBox
 var _box: VBoxContainer
+var rivers_check: CheckBox
+var legend_check: CheckBox
 
 
 func _init() -> void:
@@ -38,6 +42,17 @@ func _init() -> void:
 	_scope.add_item("Todas as entidades")
 	_scope.item_selected.connect(func(_i: int) -> void: changed.emit())
 	_box.add_child(_scope)
+	legend_check = CheckBox.new()
+	legend_check.text = "Legenda do mapa"
+	legend_check.tooltip_text = "Mostra ou esconde a legenda no canto da tela."
+	legend_check.button_pressed = true
+	legend_check.toggled.connect(legend_visibility_changed.emit)
+	_box.add_child(legend_check)
+	rivers_check = CheckBox.new()
+	rivers_check.text = "Rios em destaque"
+	rivers_check.tooltip_text = "Realça a rede de rios em azul por cima de qualquer mapa (de longe, só os grandes)."
+	rivers_check.toggled.connect(rivers_highlight_changed.emit)
+	_box.add_child(rivers_check)
 	refresh_layers()
 
 

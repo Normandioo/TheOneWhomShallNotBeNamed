@@ -308,8 +308,17 @@ public partial class Territory
                         next.Subdivisions[depth].Add(pixel, owner);
         }
         SetBoundary(next.Id, next);
+        // Fronteira nova (não a remodelagem de uma existente): o registro da anterior entre os mesmos dois lados sai. O território que ela mudou
+        // fica como está; só deixa de poder ser reaberta por ela. O desfazer devolve o registro.
+        var dropped = new List<TerritoryBoundary>();
+        if (plan.Previous == null)
+            foreach (var old in _boundaries.Values.Where(p => p.Id != next.Id && p.Target == next.Target && p.Source == next.Source).ToList())
+            {
+                dropped.Add(old);
+                SetBoundary(old.Id, null);
+            }
         Touch();
-        return new TerritoryEdit(this, pixels.ToArray(), before.ToArray(), plan.Previous, next);
+        return new TerritoryEdit(this, pixels.ToArray(), before.ToArray(), plan.Previous, next, dropped);
     }
 
     private HashSet<long> RasterizeBoundary(Vector3[] curve)

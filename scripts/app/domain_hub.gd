@@ -41,6 +41,7 @@ var _pending := false      # o tempo andou e a ficha ainda não foi relida
 var _last_rebuild_ms := 0
 var _sheet_hash := 0       # o que a ficha aberta mostra: só é refeita se isto mudar
 var _search_key := 0       # o que a lista de busca mostra
+var _outline_selected := 0
 var _outline_key := 0      # o que a árvore do Índice mostra
 var _map_key := -1         # o que o globo desenha
 var _defs := {}            # id do calendário -> definição (as definições não mudam depois de criadas)
@@ -212,10 +213,13 @@ func _refresh_hierarchy() -> void:
 				var p = registry.TerritoryParent(int(e.id))
 				parent = int(p) if p != null else 0
 			rows.append({"id": int(e.id), "kind": kind, "name": String(e.name), "parent": parent})
-	var key: int = [rows, _current].hash()
+	var key: int = rows.hash()  # sem o país aberto: trocar de ficha só move a seleção, a árvore não é refeita
 	if key != _outline_key:
 		_outline_key = key
 		search.show_hierarchy(rows, _current)
+	elif _current != _outline_selected:
+		search.select_in_hierarchy(_current)
+	_outline_selected = _current
 
 
 ## O relógio do mundo mostra a data t (presente ou consulta). Atualiza na hora as datas escritas na ficha; a ficha em si

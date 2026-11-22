@@ -89,6 +89,21 @@ float satellite_river(vec2 uv, float cos_lat, float pixel_km) {
 	return coverage;
 }
 
+// Sobreposição "Rios em destaque" em qualquer camada: os MESMOS rios do satélite experimental (satellite_river, trechos com largura de
+// tools/build_indexed_rivers.py), em azul vivo. O traço nunca fica mais fino que um pixel e o rio fino aparece por inteiro (a cobertura sobe rápido); a borda é
+// endurecida para o traço ficar firme. color: azul na mesma escala (sRGB ou linear) de col.
+global uniform float river_hl_on;
+
+vec3 river_highlight(vec2 uv, vec3 col, vec3 color) {
+	if (river_hl_on < 0.5) {
+		return col;
+	}
+	float px_km = max(fwidth(uv.y) * 20015.0, 0.0001);  // km por pixel de tela
+	float cos_lat = max(cos((0.5 - clamp(uv.y, 0.0, 1.0)) * PI), 0.02);
+	float river = smoothstep(0.0, 0.12, satellite_river(uv, cos_lat, px_km));
+	return mix(col, color, river);
+}
+
 vec3 satellite_surface(vec4 texel, vec3 n, vec2 uv, float h, out float detail_m, out float wet) {
 	// Mantém a borda na mesma isolinha. A largura segue o pixel da tela,
 	// inclusive onde os texels se comprimem perto dos polos.
@@ -101,17 +116,29 @@ vec3 satellite_surface(vec4 texel, vec3 n, vec2 uv, float h, out float detail_m,
 	}
 	float water_height = h;
 	float coast_weight = optics.a;
+	float preview_coverage = 0.0;
 	if (satellite_water_region.z > 0.0) {
 		vec2 offset = uv - satellite_water_region.xy;
 		offset.x = fract(offset.x + 0.5) - 0.5;
 		vec2 local_uv = offset / satellite_water_region.zw + 0.5;
 		vec4 preview = texture(satellite_water_preview, local_uv);
 		float coverage = preview.b;
+		preview_coverage = coverage;
 		water_height = mix(h, -preview.r, coverage);
 		coast_weight = mix(optics.a, preview.g, coverage);
 	}
 	vec3 ocean = pow(experimental_water_color(water_height, optics.g, optics.r, coast_weight), vec3(2.2));
-	vec3 water = mix(ocean, texel.rgb, smoothstep(0.22, 0.67, optics.b));
+	// Terra x mar pela costa do mapa político (a mesma linha em todas as camadas); onde a água de pré-visualização cobre, vale a dela.
+	bool coast_known;
+	float coast_w = coast_land(uv, coast_known);
+	float land_w = smoothstep(0.22, 0.67, optics.b);
+	if (coast_known) {
+		land_w = mix(coast_w, land_w, preview_coverage);
+	}
+	vec3 water = mix(ocean, texel.rgb, land_w);
+	if (preview_coverage < 0.5) {
+		solid = coast_clip(uv, solid);
+	}
 	vec3 pos_m = n * RADIUS;
 	float px_m = length(fwidth(pos_m));
 	vec2 grain = experimental_fine_detail(pos_m, px_m);

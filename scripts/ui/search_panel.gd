@@ -81,7 +81,7 @@ func _init() -> void:
 	_list = ItemList.new()
 	_list.custom_minimum_size = Vector2(0, 170)
 	_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_list.item_selected.connect(func(i: int) -> void: entity_chosen.emit(_ids[i]))
+	_list.item_selected.connect(func(i: int) -> void: entity_chosen.emit.call_deferred(_ids[i]))
 	_results.add_child(_list)
 
 	_sections = VBoxContainer.new()  # cada seção divide a altura: a dos países pesa mais; as vazias ficam só com o título
@@ -170,7 +170,7 @@ func _add_page(key: String, icon_name: String, page_name: String, kinds: Array, 
 			if other.tree != tree:
 				other.tree.deselect_all()
 		_tree_silent = false
-		entity_chosen.emit(int(it.get_metadata(0))))
+		entity_chosen.emit.call_deferred(int(it.get_metadata(0))))  # a lista é refeita ao abrir a ficha: dentro do clique, apagaria o item em uso (queda no Linux)
 	section.add_child(tree)
 	var index := _pages.size()
 	_pages.append({"key": key, "name": page_name, "kinds": kinds, "tree": tree, "header": header, "section": section, "count": 0,
@@ -260,6 +260,16 @@ func show_hierarchy(rows: Array, selected_id: int = 0) -> void:
 		var item: TreeItem = _tree_items[id]
 		if item.get_child_count() > 0:
 			item.collapsed = not open.has(id)
+	select_in_hierarchy(selected_id)
+	_tree_silent = false
+	var countries := rows.filter(func(r: Dictionary) -> bool: return r.kind == "pais").size()
+	summary_changed.emit("%d países · %d cadastros" % [countries, rows.size()])
+
+
+## Marca o cadastro escolhido na árvore, sem refazê-la: abre os de cima e a seção dele e rola até ele. Não repete o evento de seleção.
+func select_in_hierarchy(selected_id: int) -> void:
+	var was := _tree_silent
+	_tree_silent = true
 	if _tree_items.has(selected_id):
 		var chosen: TreeItem = _tree_items[selected_id]
 		var up := chosen.get_parent()
@@ -273,9 +283,7 @@ func show_hierarchy(rows: Array, selected_id: int = 0) -> void:
 			_refresh_section(_item_page[selected_id])
 		page.tree.scroll_to_item(chosen)
 	_last_selected = selected_id
-	_tree_silent = false
-	var countries := rows.filter(func(r: Dictionary) -> bool: return r.kind == "pais").size()
-	summary_changed.emit("%d países · %d cadastros" % [countries, rows.size()])
+	_tree_silent = was
 
 
 ## Um grupo (título) numa árvore: não se escolhe, só agrupa.

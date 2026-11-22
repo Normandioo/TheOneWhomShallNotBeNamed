@@ -65,6 +65,14 @@ func run() -> void:
 		return fail("a lista de busca deveria ter 2 cadastros: %d" % search._list.item_count)
 	ok("criar pelo painel: texto da busca vira o nome; sem texto, nome provisório; a lista acompanha")
 
+	# Trocar de ficha só move a seleção do Índice: a árvore não é refeita (item é o mesmo objeto).
+	var antes: TreeItem = search._tree_items[pais]
+	hub.open(sem_nome)
+	hub.open(pais)
+	if search._tree_items[pais] != antes or search._tree_items[pais].get_tree().get_selected() != antes:
+		return fail("trocar de ficha refez a árvore do Índice ou perdeu a seleção")
+	ok("trocar de ficha move a seleção do Índice sem refazer a árvore")
+
 	# Campos vazios ficam recolhidos; "Adicionar informação" revela um; digitar grava.
 	var f: Dictionary = sheet._fields["pais.governo"]
 	if f.row.visible or sheet._add_menu.item_count != 12 or not sheet._add_menu.visible:

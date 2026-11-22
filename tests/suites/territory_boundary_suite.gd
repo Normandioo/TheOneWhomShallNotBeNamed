@@ -102,6 +102,24 @@ func run() -> void:
 	stack.redo()
 	ok("remodelagem preserva o lado já conquistado e recusa sobrepor pintura posterior")
 
+	# Uma fronteira NOVA entre os mesmos dois lados aposenta o registro da anterior, sem desfazer o que ela mudou; desfazer devolve o registro.
+	var before_new := layer.Pack()
+	var old_ids: Array = layer.BoundariesFor(2).map(func(b): return int(b.id))
+	var second = layer.PlanBoundaryClaim(2, _line(terrain, 150), 0).get("plan")
+	if second == null:
+		return fail("uma segunda fronteira nova deveria ser possível")
+	var second_edit = layer.ApplyBoundary(second)
+	stack.push("Nova fronteira", second_edit)
+	var now_ids: Array = layer.BoundariesFor(2).map(func(b): return int(b.id))
+	if now_ids.size() != 1 or now_ids[0] == old_ids[0] or layer.OwnerAt(west) != 2 or layer.OwnerAt(middle) != 2:
+		return fail("a fronteira nova deve substituir o registro da anterior e manter o território que ela mudou: %s -> %s" % [old_ids, now_ids])
+	stack.undo()
+	if layer.Pack() != before_new or layer.BoundariesFor(2).map(func(b): return int(b.id)) != old_ids:
+		return fail("desfazer a fronteira nova devolve o registro da anterior")
+	stack.redo()
+	stack.undo()
+	ok("fronteira nova aposenta a anterior (o território fica) e o desfazer devolve o registro")
+
 	var db_path := OS.get_user_data_dir().path_join("evron-fronteiras-%d.sqlite" % OS.get_process_id())
 	var registry := Registry.new()
 	var reopened := Territory.new()
@@ -280,7 +298,7 @@ func _editor() -> void:
 	if DisplayServer.get_name() != "headless":
 		await save("evron-fronteira-depois")
 	await _draw_cut(8.0)
-	if main.territory.OwnerAt(Geo.dir(0, 6)) != selected or main.territory.OwnerAt(Geo.dir(13, 8)) != third or main.territory.BoundariesFor(selected).size() != 2:
+	if main.territory.OwnerAt(Geo.dir(0, 6)) != selected or main.territory.OwnerAt(Geo.dir(13, 8)) != third or main.territory.BoundariesFor(selected).size() != 1:  # a fronteira nova aposenta o registro da anterior; o território dela fica
 		return fail("um segundo gesto deve ampliar a região sem exigir nova seleção: " + panel._boundary_status.text)
 	if provinces.OwnerAt(Geo.dir(0, 6)) != 0 or provinces.OwnerAt(Geo.dir(0, 9)) != province:
 		return fail("a conquista deve recortar apenas o lado cedido da província")

@@ -16,6 +16,7 @@ var political_palette_texture: ImageTexture  # 256×256: a cor de cada país por
 var political_top_texture: ImageTexture      # 256×256 RG8: o país de cada id (a província aponta para o país)
 var height_texture: ImageTexture  # também usada pelos blocos (TileLayer), para o mesmo relevo
 var coast_texture: ImageTexture   # mapa político: distância à costa e lagos (Terrain.CoastImage)
+var _river_highlight := false  # a sobreposição "Rios em destaque" está ligada (usa o atlas de rios do satélite)
 var layer_file := ""  # arquivo da camada carregada ("" = nenhuma)
 
 
@@ -75,7 +76,7 @@ func set_political_selected(id: int) -> void:
 func set_coast(coast: Image) -> void:
 	if coast_texture == null:
 		coast_texture = ImageTexture.create_from_image(coast)
-		material.set_shader_parameter("coast_map", coast_texture)
+		RenderingServer.global_shader_parameter_set("coast_map", coast_texture)  # global: o globo, os blocos e a camada política leem a mesma costa
 	else:
 		coast_texture.update(coast)
 
@@ -187,6 +188,29 @@ func _load_rivers() -> void:
 	material.set_shader_parameter("rivers_on", true)
 
 
+## "Rios em destaque": liga ou desliga a sobreposição de rios em todas as camadas. Usa os mesmos trechos de rio do satélite experimental (o atlas de
+## tools/build_indexed_rivers.py, uns 80 MB), carregados ao ligar e soltos ao desligar se o satélite experimental não estiver na tela.
+## Devolve false se o arquivo não existe.
+func set_river_highlight(on: bool) -> bool:
+	_river_highlight = on
+	if on:
+		if _satellite_river_atlas == null:
+			var rivers := EvronMaps.load_satellite_rivers()
+			if rivers == null:
+				_river_highlight = false
+				push_warning("rios não encontrados em data/evron/: rode python tools/build_indexed_rivers.py")
+				return false
+			_satellite_river_atlas = ImageTexture.create_from_image(rivers)
+		RenderingServer.global_shader_parameter_set("satellite_river_atlas", _satellite_river_atlas)
+		RenderingServer.global_shader_parameter_set("river_hl_on", 1.0)
+		return true
+	RenderingServer.global_shader_parameter_set("river_hl_on", 0.0)
+	if not _satellite_loaded:
+		RenderingServer.global_shader_parameter_set("satellite_river_atlas", EMPTY_MAP_TEXTURE)
+		_satellite_river_atlas = null
+	return true
+
+
 func _load_satellite() -> void:
 	if _satellite_loaded:
 		return
@@ -197,9 +221,11 @@ func _load_satellite() -> void:
 			_satellite_optics = ImageTexture.create_from_image(optics)
 			RenderingServer.global_shader_parameter_set("satellite_optics", _satellite_optics)
 			RenderingServer.global_shader_parameter_set("satellite_optics_on", 1.0)
-	var rivers := EvronMaps.load_satellite_rivers()
-	if rivers != null:
-		_satellite_river_atlas = ImageTexture.create_from_image(rivers)
+	if _satellite_river_atlas == null:
+		var rivers := EvronMaps.load_satellite_rivers()
+		if rivers != null:
+			_satellite_river_atlas = ImageTexture.create_from_image(rivers)
+	if _satellite_river_atlas != null:
 		RenderingServer.global_shader_parameter_set("satellite_river_atlas", _satellite_river_atlas)
 		RenderingServer.global_shader_parameter_set("satellite_rivers_on", 1.0)
 
@@ -208,7 +234,9 @@ func _unload_satellite() -> void:
 	RenderingServer.global_shader_parameter_set("satellite_optics_on", 0.0)
 	RenderingServer.global_shader_parameter_set("satellite_rivers_on", 0.0)
 	RenderingServer.global_shader_parameter_set("satellite_optics", EMPTY_MAP_TEXTURE)
-	RenderingServer.global_shader_parameter_set("satellite_river_atlas", EMPTY_MAP_TEXTURE)
+	if not _river_highlight:  # com os rios em destaque ligados o atlas continua: é o mesmo
+		RenderingServer.global_shader_parameter_set("satellite_river_atlas", EMPTY_MAP_TEXTURE)
+		_satellite_river_atlas = null
 	_satellite_optics = null
 	_satellite_river_atlas = null
 	_satellite_loaded = false

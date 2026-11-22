@@ -101,7 +101,13 @@ func _new_layer() -> Territory:
 	return t
 
 
+const TIP_WIDTH := 48  # caracteres por linha das dicas
+
+
 func _ready() -> void:
+	get_tree().node_added.connect(func(n: Node) -> void:
+		if n is BaseButton or n is Range:
+			_name_on_hover.call_deferred(n))
 	hud.theme = UiKit.map_theme()
 	if not EvronMaps.available():
 		push_error("Mapas não encontrados em data/evron/. Rode: python tools/import_maps.py <caminho>/mapas.zip")
@@ -168,6 +174,12 @@ func _ready() -> void:
 	domains.bind_map(globe.places, presence_panel, globe.focus)
 	layer_panel.political_visibility_changed.connect(presence_panel.set_political_visible)
 	presence_panel.political_visibility_changed.connect(_show_political)
+	presence_panel.legend_visibility_changed.connect(func(on: bool) -> void:
+		legend.set_enabled(on)
+		_layout())
+	presence_panel.rivers_highlight_changed.connect(func(on: bool) -> void:
+		if not material.set_river_highlight(on):
+			presence_panel.rivers_check.set_pressed_no_signal(false))
 	_show_political("politica" in presence_panel.layers())
 	var draw_panel := DrawPanel.new()
 	hud.add_child(draw_panel)
@@ -252,6 +264,29 @@ func _ready() -> void:
 	set_layer(0)
 
 
+## Todo botão mostra o próprio nome ao passar o mouse (o texto pode estar cortado; o "✕" é "Fechar"). Os que já têm dica não mudam, mas dicas
+## compridas são quebradas em linhas curtas: assim o balão fica ao lado do cursor, em vez de uma faixa larga que o Godot empurra para a borda da tela.
+func _name_on_hover(c: Control) -> void:
+	if not is_instance_valid(c):
+		return
+	if c.tooltip_text == "" and c is BaseButton:
+		var label: String = c.text.strip_edges()
+		c.tooltip_text = "Fechar" if label == "✕" else label
+	if c.tooltip_text.length() > TIP_WIDTH and not c.tooltip_text.contains("
+"):
+		var lines: PackedStringArray = []
+		var line := ""
+		for word in c.tooltip_text.split(" "):
+			if line != "" and line.length() + word.length() + 1 > TIP_WIDTH:
+				lines.append(line)
+				line = word
+			else:
+				line = word if line == "" else line + " " + word
+		lines.append(line)
+		c.tooltip_text = "
+".join(lines)
+
+
 func _exit_tree() -> void:
 	if domains != null:
 		save_terrain(true)
@@ -270,8 +305,8 @@ func _process(delta: float) -> void:
 		terrain.Dirty = false
 		_since_upload = 0.0
 		_coast_stale = true
-	if _coast_stale and not brush.active and MapLayers.LAYERS[layer]["kind"] == "political":
-		material.set_coast(terrain.CoastImage())  # só com o mapa político na tela e fora da pincelada
+	if _coast_stale and not brush.active:
+		material.set_coast(terrain.CoastImage())  # a costa de todas as camadas; fora da pincelada
 		_coast_stale = false
 	territories.boundary_tool.tick()  # prévia do traço de fronteira quando o mouse para
 	# Só as camadas mostradas (a do nível e as de cima) vão à GPU, compostas; durante a pincelada, no máximo 10x por segundo (16 MiB).
@@ -401,7 +436,7 @@ func _layout() -> void:
 	var overlays: Control = _dock.get("presence")
 	legend.position = Vector2(left + 12.0, bottom - legend.size.y - 12.0 - lift)
 	if overlays != null and overlays.visible:
-		overlays.position = Vector2(left + 12.0, legend.position.y - overlays.size.y - 10.0)
+		overlays.position = Vector2(left + 12.0, (legend.position.y if legend.visible else bottom - 12.0 - lift) - overlays.size.y - 10.0)
 	layer_panel.position = Vector2(left + 12.0, top + 12.0)  # o ponto fixado, em cima do globo
 	var sheet: Control = _dock["sheet"]
 	if sheet.visible:

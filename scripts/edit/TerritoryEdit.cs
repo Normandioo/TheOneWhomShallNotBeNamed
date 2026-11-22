@@ -15,6 +15,7 @@ public partial class TerritoryEdit : RefCounted
     private ushort[] _after = Array.Empty<ushort>();
     private TerritoryBoundary? _oldBoundary;
     private TerritoryBoundary? _newBoundary;
+    private readonly List<TerritoryBoundary> _dropped = new();  // registros de fronteiras que esta edição aposentou
     private (Territory Map, TerritoryBoundary? Old, TerritoryBoundary New)? _parentBoundary;
     private int _depth;
     private readonly List<TerritoryEdit> _subdivisions = new();
@@ -22,8 +23,9 @@ public partial class TerritoryEdit : RefCounted
     public TerritoryEdit() { }  // o Godot exige um construtor sem argumentos
 
     internal TerritoryEdit(Territory territory, int[] idx, ushort[] before,
-        TerritoryBoundary? oldBoundary = null, TerritoryBoundary? newBoundary = null)
+        TerritoryBoundary? oldBoundary = null, TerritoryBoundary? newBoundary = null, List<TerritoryBoundary>? dropped = null)
     {
+        if (dropped != null) _dropped = dropped;
         _territory = territory;
         _idx = idx;
         _before = before;
@@ -35,7 +37,7 @@ public partial class TerritoryEdit : RefCounted
     /// Quantos pixels a edição mudou.
     public int Count => _idx.Length;
 
-    public long Bytes => _idx.Length * 8L + (_oldBoundary?.Bytes ?? 0) + (_newBoundary?.Bytes ?? 0) + _subdivisions.Sum(edit => edit.Bytes);
+    public long Bytes => _idx.Length * 8L + (_oldBoundary?.Bytes ?? 0) + (_newBoundary?.Bytes ?? 0) + _dropped.Sum(path => path.Bytes) + _subdivisions.Sum(edit => edit.Bytes);
 
     public bool TouchesOwner(int owner) =>
         _oldBoundary?.Source == owner || _oldBoundary?.Target == owner ||
@@ -46,11 +48,13 @@ public partial class TerritoryEdit : RefCounted
     {
         for (int i = _subdivisions.Count - 1; i >= 0; i--) _subdivisions[i].Undo();
         Write(_before, _oldBoundary);
+        foreach (var path in _dropped) _territory!.SetBoundary(path.Id, path);
     }
 
     public void Redo()
     {
         Write(_after, _newBoundary);
+        foreach (var path in _dropped) _territory!.SetBoundary(path.Id, null);
         foreach (var edit in _subdivisions) edit.Redo();
     }
 
