@@ -65,13 +65,15 @@ vec4 river_texel(int address) {
 }
 
 // Avalia cada trecho próximo separadamente. A união preserva curvas e confluências entre amostras e entre mosaicos.
-float satellite_river(vec2 uv, float cos_lat, float pixel_km) {
+// min_px = 0: o desenho do satélite (rio mais fino que um pixel some aos poucos). min_px > 0: a sobreposição "Rios em destaque": os rios largos para o
+// zoom saem com min_px pixels de tela, os finos com 1 pixel (mais transparentes de longe).
+float satellite_river(vec2 uv, float cos_lat, float pixel_km, float min_px) {
 	ivec2 cell = ivec2(int(fract(uv.x) * 1024.0), clamp(int(uv.y * 512.0), 0, 511));
 	ivec2 span = ivec2(texelFetch(satellite_river_atlas, cell, 0).rg);
 	vec2 km = vec2(TAU * cos_lat, PI) * (RADIUS * 0.001);
 	float aa = min(pixel_km, 20.0);
 	float coverage = 0.0;
-	for (int i = 0; i < span.y; i++) {
+	for (int i = 0; i < min(span.y, 128); i++) {  // teto de trechos por célula; 32 picava os rios em tracinhos onde a célula é densa
 		int address = span.x + i * 2;
 		vec4 segment = river_texel(address);
 		vec2 origin = vec2(fract(segment.x - uv.x + 0.5) - 0.5, segment.y - uv.y) * km;
@@ -80,8 +82,13 @@ float satellite_river(vec2 uv, float cos_lat, float pixel_km) {
 		float distance_km = length(origin + t * delta);
 		vec2 widths = river_texel(address + 1).rg;
 		float width_km = mix(widths.x, widths.y, t);
-		float line = clamp((0.5 * max(width_km, aa) - distance_km) / aa + 0.5, 0.0, 1.0);
-		coverage = max(coverage, line * min(1.0, width_km / pixel_km));
+		// Sobreposição: os rios largos para o zoom (largura acima de ~4-20% do pixel) levam o traço grosso; os finos ficam em 1 pixel e, de longe,
+		// mais transparentes. A passagem é contínua (a largura varia ao longo do rio): um corte seco picaria o traço em tracinhos.
+		float tier = min_px > 0.0 ? smoothstep(0.04, 0.2, width_km / pixel_km) : 0.0;
+		float draw_px = min_px > 0.0 ? mix(1.0, min_px, tier) : 0.0;
+		float line = clamp((0.5 * max(width_km, max(aa, pixel_km * draw_px)) - distance_km) / aa + 0.5, 0.0, 1.0);
+		float fade = min_px > 0.0 ? mix(mix(1.0, 0.3, smoothstep(8.0, 30.0, pixel_km)), 1.0, tier) : min(1.0, width_km / pixel_km);
+		coverage = max(coverage, line * fade);
 		if (coverage >= 0.999) {
 			break;
 		}
@@ -90,7 +97,7 @@ float satellite_river(vec2 uv, float cos_lat, float pixel_km) {
 }
 
 // Sobreposição "Rios em destaque" em qualquer camada: os MESMOS rios do satélite experimental (satellite_river, trechos com largura de
-// tools/build_indexed_rivers.py), em azul vivo. O traço nunca fica mais fino que um pixel e o rio fino aparece por inteiro (a cobertura sobe rápido); a borda é
+// tools/build_indexed_rivers.py), em azul vivo. O traço nunca fica mais fino que 2,5 pixels de tela; a borda é
 // endurecida para o traço ficar firme. color: azul na mesma escala (sRGB ou linear) de col.
 global uniform float river_hl_on;
 
@@ -100,7 +107,7 @@ vec3 river_highlight(vec2 uv, vec3 col, vec3 color) {
 	}
 	float px_km = max(fwidth(uv.y) * 20015.0, 0.0001);  // km por pixel de tela
 	float cos_lat = max(cos((0.5 - clamp(uv.y, 0.0, 1.0)) * PI), 0.02);
-	float river = smoothstep(0.0, 0.12, satellite_river(uv, cos_lat, px_km));
+	float river = smoothstep(0.1, 0.6, satellite_river(uv, cos_lat, px_km, 3.0));
 	return mix(col, color, river);
 }
 
@@ -148,7 +155,7 @@ vec3 satellite_surface(vec4 texel, vec3 n, vec2 uv, float h, out float detail_m,
 	float river = 0.0;
 	if (satellite_rivers_on > 0.5 && solid > 0.0) {
 		float cos_lat = sqrt(max(0.0, 1.0 - n.y * n.y));
-		river = satellite_river(uv, cos_lat, max(px_m * 0.001, 0.0001)) * solid;
+		river = satellite_river(uv, cos_lat, max(px_m * 0.001, 0.0001), 0.0) * solid;
 		color = mix(color, pow(vec3(0.093, 0.196, 0.211), vec3(2.2)), river);
 		detail_m *= 1.0 - river;
 	}

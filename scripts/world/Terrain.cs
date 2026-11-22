@@ -164,7 +164,18 @@ public partial class Terrain : RefCounted
     /// G = 1 em lago. Distância por chanfro com a largura real de cada linha (passos de 1 pixel e diagonais: erro de poucos %), suavizada
     /// (gaussiana de 1,2 px: some a escada de pixels) e presa a ±0,5 px da original, então a costa desenhada não sai de meio pixel do dado
     /// e ilhas e canais de 1 pixel ficam (como em tools/mapa_politico.py). Recalcular quando a altitude muda.
-    public Image CoastImage()
+    public Image? CoastImage()
+    {
+        try { return CoastImageCore(); }
+        catch (Exception e) when (e is OutOfMemoryException || (e is AggregateException a && a.InnerException is OutOfMemoryException))
+        {
+            GC.Collect();  // ~200 MB de arrays temporários: sem RAM, devolve null e quem chama mantém a costa anterior
+            GD.PushWarning("CoastImage: sem memória; a costa anterior foi mantida.");
+            return null;
+        }
+    }
+
+    Image CoastImageCore()
     {
         int w = Size.X, h = Size.Y, n = w * h;
         double dyKm = Math.PI * EvronGeo.RadiusKm / h;
@@ -223,8 +234,8 @@ public partial class Terrain : RefCounted
         }
         float[] toWater = null!, toLand = null!;
         System.Threading.Tasks.Parallel.Invoke(() => toWater = Chamfer(true), () => toLand = Chamfer(false));
-        var raw = new float[n];
-        for (int i = 0; i < n; i++) raw[i] = water[i] ? -toLand[i] : toWater[i];
+        var raw = toWater;  // no mesmo vetor: menos 33 MB de pico
+        for (int i = 0; i < n; i++) if (water[i]) raw[i] = -toLand[i];
 
         // Gaussiana separável (σ = 1,2 px, raio 3), com a volta na longitude; depois presa a ±0,5 px da original.
         var k = new float[7];
@@ -232,7 +243,7 @@ public partial class Terrain : RefCounted
         float ks = 0;
         foreach (var v in k) ks += v;
         for (int j = 0; j < 7; j++) k[j] /= ks;
-        var tmp = new float[n];
+        var tmp = toLand;  // já não é preciso depois de raw
         System.Threading.Tasks.Parallel.For(0, h, y =>
         {
             int row = y * w;
@@ -249,9 +260,10 @@ public partial class Terrain : RefCounted
         });
         float half = (float)(0.5 * dyKm);
         ushort one = BitConverter.HalfToUInt16Bits((Half)1f), zero = BitConverter.HalfToUInt16Bits((Half)0f);
-        var halves = new ushort[n * 2];
+        var data = new byte[n * 4];  // escrito direto como ushort (RGH): sem cópia intermediária de 33 MB
         System.Threading.Tasks.Parallel.For(0, h, y =>
         {
+            var halves = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, ushort>(data.AsSpan());
             int r0 = Math.Max(y - 3, 0), r6 = Math.Min(y + 3, h - 1);
             for (int x = 0; x < w; x++)
             {
@@ -262,8 +274,6 @@ public partial class Terrain : RefCounted
                 halves[2 * i + 1] = _lake != null && _lake[i] && H[i] >= 0f ? one : zero;
             }
         });
-        var data = new byte[n * 4];
-        Buffer.BlockCopy(halves, 0, data, 0, data.Length);
         return Image.CreateFromData(w, h, false, Image.Format.Rgh, data);
     }
 

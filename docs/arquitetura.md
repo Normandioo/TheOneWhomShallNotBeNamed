@@ -43,12 +43,13 @@ scripts/
                      contexto dos outros: o banco, a ficha aberta (current, open, reload, refresh_sheet) e o mapa de presenças
     territory_editor.gd o editor territorial (TerritoryEditor da especificação 17.5): modo pintar e suas ferramentas, camadas
                      sob demanda, imagem composta do globo, paleta e destaque do selecionado, máscara, avisos, importar PNG, gravação
+    perf_monitor.gd  o monitor de desempenho (F3, arrastável): quadros, RAM, GPU, tempo das operações (PerfMonitor.start/stop) e perf.csv
     place_drawing.gd desenhar o contorno de um lugar ponto a ponto no globo
     rules_controller.gd a janela de regras: montar, executar na data mostrada e fixar valores
     types_controller.gd o designer de tipos, campos, camadas do mapa e vínculos
     world_files.gd   exportar e importar o mundo como pasta .world
   edit/            comandos de edição: toda mudança é um comando com desfazer e refazer.
-    command_stack.gd pilha de desfazer/refazer, limitada a 256 MiB; cada comando = nome + objeto com Undo/Redo/Bytes
+    command_stack.gd pilha de desfazer/refazer, limitada a 4% da RAM (48 a 256 MiB); cada comando = nome + objeto com Undo/Redo/Bytes
     terrain_brush.gd pincel de terreno: modos, nomes, parâmetros e quando marcar (o que o GDScript usa)
     BrushKernel.cs   o trabalho pixel a pixel do pincel (todos os modos, erosão e rios)
     TerrainEdit.cs   uma pincelada como DADO: pixels mexidos, altura antes e depois (arrays; gravável no banco)

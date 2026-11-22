@@ -14,6 +14,8 @@ const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 const Terrain = preload("res://scripts/world/Terrain.cs")
 const CommandStack = preload("res://scripts/edit/command_stack.gd")
+const PerfMonitor = preload("res://scripts/app/perf_monitor.gd")
+const GpuSync = preload("res://scripts/app/gpu_sync.gd")
 const TerrainBrush = preload("res://scripts/edit/terrain_brush.gd")
 const Calendar = preload("res://scripts/world/calendar.gd")
 const WorldClock = preload("res://scripts/world/world_clock.gd")
@@ -45,7 +47,6 @@ const ToolPanel = preload("res://scripts/ui/tool_panel.gd")
 const TimeBar = preload("res://scripts/ui/time_bar.gd")
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 
-const HEIGHT_UPLOAD_SECONDS := 0.1  # durante a pincelada a altitude vai para a GPU no máximo 10x por segundo
 const AUTOSAVE_SECONDS := 30.0  # reais; o relógio também é salvo a cada comando e ao fechar
 
 @onready var hud: Control = $Hud
@@ -57,6 +58,7 @@ var domains_db := "user://evron_world.db"
 var terrain: Terrain
 var territory: Territory  # a camada dos países: o dono de cada pixel
 var commands := CommandStack.new()
+var _perf: PerfMonitor  # F3: monitor de desempenho
 var brush: TerrainBrush
 var material := GlobeMaterial.new()
 var globe: GlobeView
@@ -84,9 +86,7 @@ var layer := 0                    # índice em MapLayers.LAYERS
 var tool := ToolPanel.NAVIGATE    # -1 navegar; senão TerrainBrush.Op
 var selected_dir := Vector3.ZERO  # ponto fixado pelo clique (ZERO = nenhum)
 var brush_preview := Vector4.ZERO # o que foi para o parâmetro global "brush" (fora do editor não dá para lê-lo)
-var _since_upload := 0.0
-var _since_political := 0.0
-var _coast_stale := true  # a costa do mapa político está atrasada em relação à altitude
+var gpu_sync: GpuSync  # leva altitude, rios, política e costa para a GPU a cada quadro
 
 
 var _flow: Image  # os rios grandes do Gleba, para as camadas criadas depois
@@ -109,6 +109,8 @@ func _ready() -> void:
 		if n is BaseButton or n is Range:
 			_name_on_hover.call_deferred(n))
 	hud.theme = UiKit.map_theme()
+	_perf = PerfMonitor.new(commands)
+	add_child(_perf)
 	if not EvronMaps.available():
 		push_error("Mapas não encontrados em data/evron/. Rode: python tools/import_maps.py <caminho>/mapas.zip")
 	terrain = Terrain.new()
@@ -261,6 +263,7 @@ func _ready() -> void:
 	commands.changed.connect(_on_history_changed)
 	globe.surface_hovered.connect(_on_hover)
 	globe.surface_clicked.connect(select)
+	gpu_sync = GpuSync.new(terrain, brush, material, territories)
 	set_layer(0)
 
 
@@ -299,24 +302,8 @@ func _process(delta: float) -> void:
 	globe.update(delta)
 	territories.boundary_tool.update_zoom(globe.camera_altitude_km())
 	status_bar.show_camera_altitude(globe.camera_altitude_km())
-	_since_upload += delta
-	if terrain.Dirty and (not brush.active or _since_upload >= HEIGHT_UPLOAD_SECONDS):
-		material.refresh_height(terrain.HeightImage())
-		terrain.Dirty = false
-		_since_upload = 0.0
-		_coast_stale = true
-	if _coast_stale and not brush.active:
-		material.set_coast(terrain.CoastImage())  # a costa de todas as camadas; fora da pincelada
-		_coast_stale = false
+	gpu_sync.tick(delta)
 	territories.boundary_tool.tick()  # prévia do traço de fronteira quando o mouse para
-	# Só as camadas mostradas (a do nível e as de cima) vão à GPU, compostas; durante a pincelada, no máximo 10x por segundo (16 MiB).
-	if (not territories.territory_stroking or _since_political >= 0.1) and territories.political_dirty():
-		material.refresh_political(territories.political_image())
-		_since_political = 0.0
-	_since_political += delta
-	if terrain.RiversDirty and not brush.active:  # os rios só mudam ao soltar o mouse, desfazer ou refazer
-		material.refresh_rivers(terrain.RiversImage())
-		terrain.RiversDirty = false
 	_since_save += delta
 	if _since_save >= AUTOSAVE_SECONDS:
 		save_clock()
@@ -345,6 +332,9 @@ func _input(e: InputEvent) -> void:
 
 
 func _unhandled_input(e: InputEvent) -> void:
+	if e is InputEventKey and e.pressed and not e.echo and e.keycode == KEY_F3:
+		_perf.toggle()
+		return
 	if e is InputEventKey and e.pressed and not e.echo and not e.ctrl_pressed and not e.alt_pressed and not e.meta_pressed:
 		var typing := get_viewport().gui_get_focus_owner()
 		if not (typing is LineEdit or typing is TextEdit or typing is SpinBox):
@@ -485,7 +475,9 @@ F1  Esta ajuda"
 func set_layer(index: int) -> void:
 	layer = index
 	var selected: Dictionary = MapLayers.LAYERS[index]
+	var t_l := PerfMonitor.start()
 	material.show_layer(selected)
+	PerfMonitor.stop("trocar camada (" + str(selected["file"] if selected.has("file") else selected["kind"]) + ")", t_l)
 	# Nos mapas que não são o político, a sobreposição "Fronteira política" mostra os países: se o nível ficou numa área independente
 	# (religião, cultura…), muitas vezes vazia, os países sumiriam. Volta para os países, a não ser que se esteja pintando.
 	if selected["kind"] != "political" and territories != null and not territories.painting_territory 			and not territories.territory_level in TerritoryEditor.HIERARCHY:

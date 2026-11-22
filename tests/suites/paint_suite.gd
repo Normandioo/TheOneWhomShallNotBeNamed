@@ -368,7 +368,11 @@ func run() -> void:
 			if MapLayers.LAYERS[i]["kind"] == "political":
 				main.set_layer(i)
 		await frames(2)
-		if main._coast_stale or main.material.coast_texture == null:
+		for _i in 100:  # a costa é calculada numa thread (~1 s)
+			if not main.gpu_sync.coast_pending():
+				break
+			await frames(2)
+		if main.gpu_sync.coast_pending() or main.material.coast_texture == null:
 			return fail("com o mapa político na tela, a costa é calculada")
 		var t1 := Time.get_ticks_msec()
 		main.terrain.CoastImage()

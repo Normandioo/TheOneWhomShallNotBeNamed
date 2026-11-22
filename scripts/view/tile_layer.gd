@@ -12,6 +12,7 @@ extends Node3D
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 const TILE_SHADER = preload("res://shaders/globe_tile.gdshader")
+const PerfMonitor = preload("res://scripts/app/perf_monitor.gd")
 
 const ROOT := "res://data/evron/tiles/"
 const MAX_CACHE := 80             # ~1,3 MiB por bloco com mipmaps: ~105 MiB no máximo
@@ -88,7 +89,10 @@ func update(cam: Camera3D) -> void:
 	if name_id == "":
 		return
 	_frame += 1
+	var t_all := PerfMonitor.start()
+	var t_up := PerfMonitor.start()
 	_upload_ready()
+	PerfMonitor.stop("blocos: criar texturas", t_up)
 	var focal := cam.get_viewport().get_visible_rect().size.y / (2.0 * tan(deg_to_rad(cam.fov) / 2.0))
 	var want := {}
 	var expanded := {}
@@ -103,7 +107,10 @@ func update(cam: Camera3D) -> void:
 		if on:
 			drawn.append(key)
 	_expanded = expanded
+	var t_ev := PerfMonitor.start()
 	_evict(reserved)
+	PerfMonitor.stop("blocos: limpar cache", t_ev)
+	PerfMonitor.stop("blocos: quadro inteiro", t_all)
 
 
 ## Memória de GPU aproximada dos blocos carregados, em MiB (RGBA8 + mipmaps).

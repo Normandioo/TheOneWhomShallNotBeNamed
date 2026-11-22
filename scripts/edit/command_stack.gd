@@ -4,7 +4,9 @@
 
 signal changed
 
-const LIMIT_BYTES := 256 * 1024 * 1024  # memória do histórico; os comandos mais antigos saem (o último fica sempre)
+const MAX_BYTES := 256 * 1024 * 1024
+## Memória do histórico: 4% da RAM entre 48 e 256 MiB; os comandos mais antigos saem (o último fica sempre).
+static var LIMIT_BYTES: int = clampi(int(OS.get_memory_info().get("physical", 0) * 0.04), 48 * 1024 * 1024, MAX_BYTES)
 
 var _undo: Array[Dictionary] = []  # {"name": String, "cmd": Object}
 var _redo: Array[Dictionary] = []

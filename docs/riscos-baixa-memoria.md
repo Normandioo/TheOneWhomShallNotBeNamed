@@ -27,7 +27,7 @@ lado do executável (não vai no `.pck`).
 
 ## 2. Costa recalculada em todas as camadas  — risco alto (mudança desta branch)
 
-- **Onde:** `scripts/world/Terrain.cs`, `CoastImage()` (linha ~167); chamada em `scripts/main.gd` (`_process`, `_coast_stale`).
+- **Onde:** `scripts/world/Terrain.cs`, `CoastImage()` (linha ~167); chamada em `scripts/main.gd` (`scripts/app/gpu_sync.gd`).
 - **O que mudou:** antes a costa só era calculada com o mapa político na tela. Agora **todas** as camadas usam a mesma costa (global `coast_map`),
   então ela é calculada no primeiro quadro e **depois de cada edição de relevo**, em qualquer camada.
 - **O que aloca:** `bool[n]` (8 MB), vários `float[n]` de 33 MB (`d` duas vezes, `raw`, `tmp`), `ushort[2n]` (33 MB) e `byte[4n]` (33 MB):
@@ -119,6 +119,11 @@ lado do executável (não vai no `.pck`).
 - GPU: `RenderingServer.get_rendering_info(...)` (memória de textura, número de chamadas) e o Monitor de desempenho do Godot.
 - Testes que cobrem as áreas tocadas: `paint`, `brush`, `globe`, `tiles`, `layers_ui`, `territory_boundary`.
 
-## O que NÃO foi feito
+## Estado das correções
 
-Nenhuma correção foi aplicada: este documento só lista os riscos. Nada foi medido em máquina fraca; todos os números são estimativas.
+- **Feito:** item 2 (`CoastImage()` captura `OutOfMemoryException`, devolve `null` e `main.gd` mantém a costa anterior; o pico caiu de ~200 para
+  ~107 MB: `raw` e `tmp` reaproveitam os vetores das distâncias e o RGH é escrito direto no `byte[]`), item 7 (verificado: `Composite` já reaproveita
+  a imagem e só recompõe as linhas mexidas; só o envio à GPU é inteiro), item 3 (teto = 4% da RAM entre 48 e 256 MiB) e item 5 (laço de `satellite_river` com teto de trechos, hoje 128).
+- **Pendente:** item 1 (montar o nível 4096 da pirâmide de blocos em vez de decodificar o PNG 8K: exige costurar 8×4 blocos de 512 e um teste),
+  itens 4, 6 e 8 (medir antes, com o monitor F3).
+- Nada foi medido em máquina fraca; todos os números são estimativas.
