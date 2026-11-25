@@ -77,9 +77,9 @@ public partial class Registry
         PRAGMA writable_schema = RESET;
         """;
 
-    static readonly string[] TypeColumns = { "world_id", "name", "description", "category", "unit", "rgb", "created_at" };
+    static readonly string[] TypeColumns = { "world_id", "name", "description", "category", "unit", "rgb", "created_at", "rule" };
     static readonly string[] OccurrenceColumns =
-        { "world_id", "type_id", "name", "kind", "lat", "lon", "origin", "state", "note", "created_at" };
+        { "world_id", "type_id", "name", "kind", "lat", "lon", "origin", "state", "note", "created_at", "fixed", "generation_id", "gen_lat", "gen_lon", "gen_km" };
 
     /// O prefixo da camada pintável de um recurso: "recurso:<id do tipo>".
     public const string ResourceLevelPrefix = "recurso:";
@@ -153,8 +153,8 @@ public partial class Registry
     public ResourceEdit AddArea(long typeId) => _db.Tx(() =>
     {
         long id = _db.Insert("insert into resource_occurrence(type_id, kind) values (@0, 'area')", typeId);
-        // O dono de um pixel tem 2 bytes, e o último valor é o do rascunho territorial.
-        if (id >= Territory.MaxOwner) throw new InvalidOperationException("o mundo chegou ao limite de áreas de recurso");
+        // O dono de um pixel tem 2 bytes; o topo da faixa é da prévia de geração e do rascunho territorial.
+        if (id >= ResourcePlan.PreviewBase) throw new InvalidOperationException("o mundo chegou ao limite de áreas de recurso");
         return Edit("resource_occurrence", OccurrenceColumns, id, null);
     });
 
@@ -163,13 +163,13 @@ public partial class Registry
         CheckPoint(lat, lon);
         RequirePoint(id);
         return Change("resource_occurrence", OccurrenceColumns, id, () => _db.Run(
-            "update resource_occurrence set lat = @0, lon = @1 where id = @2", lat, lon, id));
+            "update resource_occurrence set lat = @0, lon = @1, fixed = 1 where id = @2", lat, lon, id));
     }
 
     /// Nome próprio (opcional) e anotação da ocorrência.
     public ResourceEdit SetOccurrenceText(long id, string name, string note) =>
         Change("resource_occurrence", OccurrenceColumns, id, () => _db.Run(
-            "update resource_occurrence set name = @0, note = @1 where id = @2", Optional(name), Optional(note), id));
+            "update resource_occurrence set name = @0, note = @1, fixed = 1 where id = @2", Optional(name), Optional(note), id));
 
     /// Cópia de um ponto com identidade nova, no mesmo lugar (mova em seguida). Áreas do mesmo recurso não se sobrepõem.
     public ResourceEdit DuplicatePoint(long id) => _db.Tx(() =>
@@ -189,7 +189,7 @@ public partial class Registry
     /// lat, lon (0 numa área), origin, state, note}.
     public Array<Dictionary> Occurrences(long typeId) =>
         new(_db.Rows("""
-                select o.id, o.type_id, t.name, t.rgb, o.name, o.kind, o.lat, o.lon, o.origin, o.state, o.note
+                select o.id, o.type_id, t.name, t.rgb, o.name, o.kind, o.lat, o.lon, o.origin, o.state, o.note, o.fixed
                 from resource_occurrence o join resource_type t on t.id = o.type_id
                 where @0 = 0 or o.type_id = @0 order by o.id
                 """, typeId)
@@ -197,16 +197,19 @@ public partial class Registry
             {
                 ["id"] = Convert.ToInt64(r[0]), ["type_id"] = Convert.ToInt64(r[1]), ["type"] = Str(r[2]), ["rgb"] = Convert.ToInt64(r[3]),
                 ["name"] = Str(r[4]), ["kind"] = Str(r[5]), ["lat"] = r[6] == null ? 0.0 : Convert.ToDouble(r[6]),
-                ["lon"] = r[7] == null ? 0.0 : Convert.ToDouble(r[7]), ["origin"] = Str(r[8]), ["state"] = Str(r[9]), ["note"] = Str(r[10]),
+                ["lon"] = r[7] == null ? 0.0 : Convert.ToDouble(r[7]), ["origin"] = Str(r[8]), ["state"] = Str(r[9]), ["note"] = Str(r[10]), ["fixed"] = Convert.ToInt64(r[11]) == 1,
             }));
 
     /// O tipo de uma ocorrência; 0 se ela não existe.
     public long OccurrenceType(long id) =>
         _db.Scalar("select type_id from resource_occurrence where id = @0", id) is object o ? Convert.ToInt64(o) : 0;
 
-    /// O nome para mostrar: o próprio ou "Recurso nº 3"; "" se a ocorrência não existe.
+    /// O nome para mostrar: o próprio ou "Sal, área 3", com o mesmo número da lista do painel (a ordem de criação entre as
+    /// ocorrências do mesmo tipo e forma); "" se a ocorrência não existe.
     public string OccurrenceLabel(long id) => _db.Scalar("""
-        select coalesce(o.name, t.name || ' nº ' || o.id) from resource_occurrence o join resource_type t on t.id = o.type_id where o.id = @0
+        select coalesce(o.name, t.name || case o.kind when 'area' then ', área ' else ', ponto ' end ||
+            (select count(*) from resource_occurrence x where x.type_id = o.type_id and x.kind = o.kind and x.id <= o.id))
+        from resource_occurrence o join resource_type t on t.id = o.type_id where o.id = @0
         """, id)?.ToString() ?? "";
 
     /// Os pontos de um tipo a até toleranceKm de (lat, lon), o mais perto primeiro.

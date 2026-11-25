@@ -21,6 +21,7 @@ const HEADLESS_SUITES := [
 	"res://tests/suites/paint_suite.gd",
 	"res://tests/suites/calendar_suite.gd",
 	"res://tests/suites/resource_suite.gd",
+	"res://tests/suites/generation_suite.gd",
 ]
 const SCENE_SUITES := [
 	"res://tests/suites/globe_suite.gd",

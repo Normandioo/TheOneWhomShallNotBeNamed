@@ -8,24 +8,23 @@ const ResourcePanel = preload("res://scripts/ui/resource_panel.gd")
 const TerritoryEditor = preload("res://scripts/app/territory_editor.gd")
 
 
-## Dois comandos que são um só para o autor (apagar a pintura e o registro de uma área).
-class Both:
-	var first: Object
-	var second: Object
-	var Bytes: int
+## Vários comandos que são um só para o autor (apagar uma área com a pintura; aplicar uma geração).
+class Batch:
+	var steps: Array
+	var Bytes := 0
 
-	func _init(a: Object, b: Object) -> void:
-		first = a
-		second = b
-		Bytes = a.Bytes + b.Bytes
+	func _init(commands_applied: Array) -> void:
+		steps = commands_applied
+		for step in steps:
+			Bytes += step.Bytes
 
 	func Undo() -> void:
-		second.Undo()
-		first.Undo()
+		for i in range(steps.size() - 1, -1, -1):
+			steps[i].Undo()
 
 	func Redo() -> void:
-		first.Redo()
-		second.Redo()
+		for step in steps:
+			step.Redo()
 
 
 var hub
@@ -33,6 +32,7 @@ var panel: ResourcePanel
 var layer                       # PlaceLayer dos pontos e dos nomes das áreas
 var commands                    # CommandStack
 var territories: TerritoryEditor
+var generator                   # o generator_controller (prévia e aplicar), se ligado
 var navigate := Callable()      # sai do pincel ou da pintura antes de esperar um clique
 var focus_map := Callable()     # func(direção, zoom)
 var type_id := 0
@@ -55,28 +55,40 @@ func setup(domain_hub, resource_panel, place_layer, command_stack, territory_edi
 	commands.changed.connect(refresh)
 	territories.resource_owner_picked.connect(func(id: int) -> void:
 		occurrence_id = id
+		_fix_edited()
 		refresh())
+	panel.fixed_toggled.connect(func(on: bool) -> void:
+		_apply("fixar ocorrência" if on else "liberar ocorrência", hub.registry.SetFixed(occurrence_id, on)))
 	panel.query_changed.connect(refresh)
 	panel.type_chosen.connect(func(id: int) -> void:
-		_leave_painting()
+		leave_painting()
 		cancel_click()
 		type_id = id
 		occurrence_id = 0
-		_show_map()
+		show_map()
 		refresh())
 	panel.occurrence_chosen.connect(func(id: int) -> void:
-		_leave_painting()
+		leave_painting()
 		cancel_click()
 		occurrence_id = id
 		refresh())
 	panel.create_requested.connect(create_type)
+	panel.back_requested.connect(func() -> void:
+		leave_painting()
+		cancel_click()
+		if generator != null:
+			generator.close()
+		type_id = 0
+		occurrence_id = 0
+		show_map()
+		refresh())
 	panel.type_saved.connect(func(n: String, description: String, category: String, unit: String, color: Color) -> void:
 		_apply("editar recurso", hub.registry.SetResourceType(type_id, n, description, category, unit, color.to_rgba32() >> 8),
 			"O recurso precisa de um nome."))
 	panel.type_delete_requested.connect(func() -> void:
-		_leave_painting()
+		leave_painting()
 		_apply("excluir recurso", hub.registry.DeleteResourceType(type_id), "Exclua antes as ocorrências deste recurso.")
-		_show_map())
+		show_map())
 	panel.area_requested.connect(new_area)
 	panel.paint_requested.connect(paint)
 	panel.point_requested.connect(func() -> void: _wait("place", "Clique no globo para colocar o ponto (Esc cancela)."))
@@ -100,15 +112,17 @@ func set_open(open: bool) -> void:
 	if open and navigate.is_valid():
 		navigate.call()
 	if not open:
-		_leave_painting()
+		leave_painting()
 		cancel_click()
+		if generator != null:
+			generator.close()
 	panel.visible = open
-	_show_map()
+	show_map()
 	refresh()
 
 
 func create_type(type_name: String) -> void:
-	_leave_painting()
+	leave_painting()
 	var cmd = hub.registry.CreateResourceType(type_name)
 	if cmd != null:
 		type_id = cmd.Id
@@ -116,14 +130,14 @@ func create_type(type_name: String) -> void:
 		panel.new_name.text = ""
 		panel.query.text = ""
 	_apply("criar recurso", cmd, "Dê um nome ao recurso.")
-	_show_map()
+	show_map()
 
 
 ## Uma área nova do recurso escolhido, já no modo pintar.
 func new_area() -> void:
 	if type_id == 0:
 		return
-	_leave_painting()
+	leave_painting()
 	cancel_click()
 	var cmd = hub.registry.AddArea(type_id)
 	if cmd != null:
@@ -141,8 +155,9 @@ func paint() -> void:
 	cancel_click()
 	if navigate.is_valid():
 		navigate.call()
-	_show_map()
-	territories.start_resource(_level(), occurrence_id)
+	show_map()
+	_fix_edited()
+	territories.start_resource(level(), occurrence_id)
 
 
 ## Excluir leva junto a pintura da área, num comando só.
@@ -150,18 +165,28 @@ func delete_occurrence() -> void:
 	var o := _occurrence()
 	if o.is_empty():
 		return
-	_leave_painting()
+	leave_painting()
 	cancel_click()
 	var painted = null
 	if o.kind == "area":
-		var map = territories.layer(_level())
+		var map = territories.layer(level())
 		painted = map.ClearOwner(occurrence_id) if map != null else null
+	var suppressed = hub.registry.SuppressOccurrence(occurrence_id) if o.origin == "gerada" else null  # não volta na próxima geração
 	var removed = hub.registry.DeleteOccurrence(occurrence_id)
-	if removed != null and painted != null:
-		removed = Both.new(painted, removed)
-	elif removed == null and painted != null:
-		painted.Undo()
-	_apply("excluir ocorrência", removed)
+	if removed == null:
+		if suppressed != null:
+			suppressed.Undo()
+		if painted != null:
+			painted.Undo()
+		_apply("excluir ocorrência", null)
+		return
+	var steps: Array = []
+	if suppressed != null:
+		steps.append(suppressed)
+	if painted != null:
+		steps.append(painted)
+	steps.append(removed)
+	push_batch("excluir ocorrência", steps)
 
 
 func focus() -> void:
@@ -186,7 +211,12 @@ func cancel_click() -> void:
 
 ## Um clique no globo em n. true = era dos recursos (colocar, mover ou escolher o que está na tela).
 func click(n: Vector3, tolerance_km: float) -> bool:
-	if not hub.usable or not panel.visible or type_id == 0 or n == Vector3.ZERO:
+	if not hub.usable or not panel.visible or n == Vector3.ZERO:
+		return false
+	if generator != null and generator.active():
+		generator.click(n, tolerance_km)
+		return true  # na prévia o clique é só das sugestões
+	if type_id == 0:
 		return false
 	var ll := EvronGeo.lat_lon(n)
 	if _waiting == "place":
@@ -205,7 +235,7 @@ func click(n: Vector3, tolerance_km: float) -> bool:
 	if not hits.is_empty():
 		# Cliques repetidos no mesmo lugar passam por todos os pontos que se sobrepõem.
 		picked = hits[(hits.find(occurrence_id) + 1) % hits.size()]
-	elif territories.territory_level == _level():
+	elif territories.territory_level == level():
 		var owner: int = territories.territory.OwnerAt(n)
 		if owner != 0 and hub.registry.OccurrenceType(owner) == type_id:
 			picked = owner
@@ -237,6 +267,10 @@ func refresh() -> void:
 		panel.show_occurrences(mine, occurrence_id)
 		panel.show_occurrence(_occurrence())
 		shown = mine
+		if generator != null:
+			generator.show_type(type_id)
+			if generator.active():  # na prévia, as geradas que vão sair somem
+				shown = mine.filter(func(o): return o.origin != "gerada" or o.fixed)
 	if TerritoryEditor.is_resource(territories.territory_level):
 		# Desfazer a criação da área que está sendo pintada encerra a pintura.
 		if territories.painting_territory and hub.registry.OccurrenceType(territories.territory_owner) == 0:
@@ -255,6 +289,10 @@ func refresh() -> void:
 		var color := ResourcePanel._color(o.rgb)
 		items.append({"place_id": o.id, "lat": at.x, "lon": at.y, "radius_km": 0.0,
 			"color": Color.WHITE if int(o.id) == occurrence_id else color, "label": ("◆ " if o.kind == "ponto" else "") + title})
+	if panel.visible and generator != null:
+		if generator.review.active():
+			items = []  # na avaliação às cegas, o que já existe revelaria quais lugares vêm da regra
+		items.append_array(generator.labels())
 	var key: int = items.hash()
 	if key != _key:
 		_key = key
@@ -265,12 +303,12 @@ func refresh() -> void:
 func _measure(mine: Array) -> void:
 	_centers = _centers if _centers_key != "" else {}
 	var has_area := mine.any(func(o): return o.kind == "area")
-	var map = territories.layer(_level()) if has_area else null
+	var map = territories.layer(level()) if has_area else null
 	if map == null:
 		_centers = {}
 		_centers_key = ""
 	else:
-		var key := "%s:%d" % [_level(), map.Version]
+		var key := "%s:%d" % [level(), map.Version]
 		if key != _centers_key and not territories.territory_stroking:
 			_centers_key = key
 			_centers = map.Centroids()
@@ -279,26 +317,39 @@ func _measure(mine: Array) -> void:
 
 
 ## O mapa mostra a camada do recurso escolhido enquanto o painel está aberto; depois volta ao que estava.
-func _show_map() -> void:
+func show_map() -> void:
 	var current: String = territories.territory_level
 	if territories.painting_territory or territories.drafting:
 		return
 	if panel.visible and type_id != 0:
 		if not TerritoryEditor.is_resource(current):
 			_back_level = current
-		territories.show_level(_level())
+		territories.show_level(level())
 	elif TerritoryEditor.is_resource(current):
 		territories.show_level(_back_level)
 
 
 ## Sai da pintura de uma área (a de um país, em andamento, não é assunto dos recursos).
-func _leave_painting() -> void:
+func leave_painting() -> void:
 	if territories.painting_territory and TerritoryEditor.is_resource(territories.territory_level):
 		territories.stop_painting()
 
 
-func _level() -> String:
+func level() -> String:
 	return TerritoryEditor.RESOURCE + str(type_id)
+
+
+## Comandos já aplicados que valem um desfazer só.
+func push_batch(action: String, steps: Array) -> void:
+	panel.show_message("")
+	commands.push(action, Batch.new(steps))
+
+
+## Pintar uma sugestão gerada a torna decisão do autor: fica fixada.
+func _fix_edited() -> void:
+	var o := _occurrence()
+	if not o.is_empty() and o.origin == "gerada" and not o.fixed:
+		_apply("fixar sugestão editada", hub.registry.SetFixed(occurrence_id, true))
 
 
 func _occurrence() -> Dictionary:
@@ -314,7 +365,7 @@ func _wait(what: String, text: String) -> void:
 		return
 	if navigate.is_valid():
 		navigate.call()
-	_show_map()
+	show_map()
 	_waiting = what
 	panel.waiting = true
 	panel.show_message(text)

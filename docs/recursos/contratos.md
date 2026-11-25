@@ -42,13 +42,19 @@ quebrar. "Vale agora" = implementado na etapa 1. "Reservado" = decidido, ainda s
 - Camada do Gleba é dado de um mundo gerado, não levantamento. Toda derivação guardará algoritmo, versão, parâmetros,
   camadas e data.
 
-## Proteções (reservado, etapa 2)
+## Proteções e geração (valem agora, etapa 2)
 
-- Ocorrência `manual` nunca é alterada nem apagada por geração.
-- São dois controles separados: proteção contra geração (por ocorrência ou campo) e comportamento na simulação (por campo,
-  com política explícita: suspender consumo, só apresentação ou reposição autoral).
-- Remover uma sugestão gerada grava uma supressão, para a mesma sugestão não voltar.
-- Geração tem prévia; aplicar é um comando só, com desfazer.
+- A geração só substitui ocorrências **geradas e não fixadas**. Manuais e fixadas nunca são alteradas nem apagadas.
+- Editar uma gerada (pintar, mover, renomear, anotar, pegar com o conta-gotas) a **fixa**. "Fixada" pode ser ligada e desligada.
+- Excluir uma gerada, ou tirá-la na prévia, grava uma **supressão**: sugestões com centro a até o raio dela (no máximo 200 km) ficam
+  de fora. "Liberar sugestões removidas" apaga as supressões do recurso.
+- Fixar e suprimir não mudam as outras sugestões: os centros são escolhidos antes de aplicar as proteções. A área do autor, porém,
+  recorta as manchas vizinhas.
+- Mesma regra, semente, mapas e relevo dão o mesmo resultado. Cada geração grava versão do algoritmo, regra, camadas e data.
+- Prévia antes; aplicar é um comando só, com desfazer. Se o mundo mudou desde a prévia, aplicar é recusado.
+- Limite: proteção é da ocorrência inteira; fixar um campo só não existe.
+- Reservado (etapa 3): comportamento na simulação (suspender consumo, só apresentação ou reposição autoral), separado da proteção
+  contra geração.
 
 ## Desfazer (vale agora)
 

@@ -247,6 +247,24 @@ public partial class Territory : RefCounted
         return Apply(all, 0);
     }
 
+    /// Vários donos de uma vez (pixel -> dono novo), numa edição só; null se nada muda.
+    internal TerritoryEdit? Rewrite(System.Collections.Generic.Dictionary<int, int> owners)
+    {
+        var idx = new List<int>();
+        var before = new List<ushort>();
+        foreach (var (p, owner) in owners)
+        {
+            int cur = Get(p);
+            if (cur == owner) continue;
+            idx.Add(p);
+            before.Add((ushort)cur);
+            Put(p, owner);
+        }
+        if (idx.Count == 0) return null;
+        Touch();
+        return new TerritoryEdit(this, idx.ToArray(), before.ToArray());
+    }
+
     private TerritoryEdit? Apply(List<int> pixels, int owner)
     {
         if (pixels.Count == 0) return null;

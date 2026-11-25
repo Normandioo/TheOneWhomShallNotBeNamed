@@ -44,7 +44,7 @@ func tick(delta: float) -> void:
 		coast_stale = true
 	_tick_coast()
 	# Só as camadas mostradas (a do nível e as de cima) vão à GPU, compostas; durante a pincelada, no máximo 10x por segundo (16 MiB).
-	if (not _territories.territory_stroking or _since_political >= UPLOAD_SECONDS) and _territories.political_dirty():
+	if not _territories.previewing and (not _territories.territory_stroking or _since_political >= UPLOAD_SECONDS) and _territories.political_dirty():
 		var t_p := PerfMonitor.start()
 		_material.refresh_political(_territories.political_image())
 		PerfMonitor.stop("político->GPU", t_p)

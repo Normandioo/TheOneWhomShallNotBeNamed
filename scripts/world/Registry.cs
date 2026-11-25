@@ -90,6 +90,7 @@ public partial class Registry : RefCounted
         PopulationMigration,  // RegistryPlaces.cs
         ResourcesMigration,  // RegistryResources.cs
         PaintedShapesMigration,  // RegistryResources.cs
+        GenerationMigration,  // RegistryGeneration.cs
     };
 
     WorldDb _db = new();

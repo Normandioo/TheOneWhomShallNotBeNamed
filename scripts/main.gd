@@ -43,6 +43,8 @@ const DomainHub = preload("res://scripts/app/domain_hub.gd")
 const TerritoryEditor = preload("res://scripts/app/territory_editor.gd")
 const ResourcePanel = preload("res://scripts/ui/resource_panel.gd")
 const ResourceController = preload("res://scripts/app/resource_controller.gd")
+const GeneratorController = preload("res://scripts/app/generator_controller.gd")
+const WhyCard = preload("res://scripts/ui/why_card.gd")
 const RulesController = preload("res://scripts/app/rules_controller.gd")
 const TypesController = preload("res://scripts/app/types_controller.gd")
 const WorldFiles = preload("res://scripts/app/world_files.gd")
@@ -75,6 +77,7 @@ var _country_names := true  # a sobreposição "Nomes dos países"
 var domains: DomainHub                # as fichas (busca, ficha, calendários) e o contexto dos outros controladores
 var territories: TerritoryEditor      # pintar território, camadas, paleta e seleção do mapa
 var resources := ResourceController.new()
+var generator := GeneratorController.new()
 var rules := RulesController.new()
 var types := TypesController.new()
 var world_files := WorldFiles.new()
@@ -243,6 +246,20 @@ func _ready() -> void:
 	territories.setup(domains, territory, commands, territory_panel, {}, _new_layer)  # lê a camada dos países e manda a paleta; as outras sob demanda
 	territories.area_palette_changed.connect(material.set_area_palette)
 	resources.setup(domains, resource_panel, globe.resources, commands, territories)  # depois do editor: usa as camadas dele
+	if domains.usable:
+		generator.setup(resources, resource_panel.generator, terrain)
+		var why_card := WhyCard.new()  # "Por que aqui?": no meio do espaço livre, embaixo
+		hud.add_child(why_card)
+		_dock["why_card"] = why_card
+		why_card.resized.connect(_layout)
+		why_card.visibility_changed.connect(_layout)
+		why_card.toggle_requested.connect(generator.toggle_explained)
+		why_card.closed.connect(generator.hide_why)
+		generator.card = why_card
+		territories.preview_image.connect(func(img) -> void:
+			material.set_political(img if img != null else territories.political_image())
+			# A prévia é desenhada pela camada política: aparece mesmo com "Fronteira política" desligada.
+			material.show_political(img != null or TerritoryEditor.is_resource(territories.territory_level) or "politica" in presence_panel.layers()))
 	var area_labels := AreaLabels.new()
 	hud.add_child(area_labels)  # rótulos da interface sobre o globo, por baixo dos painéis
 	hud.move_child(area_labels, 0)
@@ -487,7 +504,7 @@ func _layout() -> void:
 		resource_dock.position = Vector2(free_right, top)
 		resource_dock.size = Vector2(ResourcePanel.WIDTH, bottom - top)
 	var lift := 0.0  # a barra de edição de baixo (relevo ou território) fica no meio do espaço livre; a legenda sobe acima dela
-	for bar in [_dock.get("territory"), tool_panel.edit_bar, _dock.get("region_card")]:
+	for bar in [_dock.get("territory"), tool_panel.edit_bar, _dock.get("region_card"), _dock.get("why_card")]:
 		if bar != null and bar.visible:
 			bar.size = bar.get_combined_minimum_size()
 			bar.position = Vector2(clampf((left + free_right) / 2.0 - bar.size.x / 2.0, left + 8.0, maxf(left + 8.0, free_right - bar.size.x - 8.0)),

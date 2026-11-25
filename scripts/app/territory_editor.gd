@@ -19,6 +19,7 @@ signal palette_changed(entries: Array)  # as cores mudaram ([{id, rgb, top}]): q
 signal territory_level_shown(level: String, layer)  # a camada mostrada no globo passou a ser outra
 signal selection_changed(top_id: int)  # o país (ou o topo) a destacar no mapa; 0 = nenhum
 signal resource_owner_picked(id: int)   # o conta-gotas trocou a área de recurso pintada
+signal preview_image(image)             # Image = mostrar a prévia de uma geração; null = voltar ao mapa de verdade
 
 const SNAP_BAND_KM := 60.0  # "assentar no relevo": a fronteira vai até ~6 pixels do mapa (9,8 km cada) atrás de uma crista ou rio
 ## As camadas pintáveis (Registry.Levels): a hierarquia política e as áreas de predominância (religião, cultura...).
@@ -57,6 +58,8 @@ var _territory_changed_ms := 0
 var _palette_hash := 0
 var _area_palette_hash := 0
 var overlay_level := ""         # a área ("cultura", "etnia"...) sobreposta ao mapa que está na tela (a caixa das sobreposições); "" = nenhuma
+var previewing := false      # a prévia de uma geração está na tela: o mapa de verdade não é reenviado por cima
+var _preview_colors: Array = []
 var _force_upload := false     # a próxima imagem política vai à GPU mesmo sem edição (trocou o que está composto)
 var _selected_top := 0
 var subdivisions_view := false  # mapa político por subdivisões: o país selecionado mostra cada província (e município) na sua cor; os outros ficam cinzas
@@ -265,6 +268,24 @@ func _pick_owner(n: Vector3) -> void:
 		resource_owner_picked.emit(owner)
 	elif owner != hub.current():
 		hub.open(owner)
+
+
+## A prévia de uma geração: a imagem com donos de mentira e as cores deles. end_preview volta ao mapa de verdade.
+func show_preview(image: Image, colors: Array) -> void:
+	previewing = true
+	_preview_colors = colors
+	refresh_palette()
+	preview_image.emit(image)
+
+
+func end_preview() -> void:
+	if not previewing:
+		return
+	previewing = false
+	_preview_colors = []
+	_force_upload = true
+	refresh_palette()
+	preview_image.emit(null)
 
 
 ## Mostra e edita a camada de um nível. As outras ficam como estão (e continuam gravadas).
@@ -725,6 +746,7 @@ func refresh_palette() -> void:
 		entries.append({"id": id, "rgb": rgb, "top": top})
 	if drafting:
 		entries.append({"id": DRAFT, "rgb": DRAFT_COLOR, "top": DRAFT})
+	entries.append_array(_preview_colors)
 	var key: int = entries.hash()
 	if key != _palette_hash:
 		_palette_hash = key

@@ -34,6 +34,7 @@ scripts/
                      regras declarativas e fixações; o mundo como pasta .world
     RegistryResources.cs (C#, parte do Registry) catálogo de recursos e ocorrências; cada gravação devolve um ResourceEdit
     Vec.cs           (C#) vetor em double na esfera (distâncias)
+    RegistryGeneration.cs / ResourceGenerator.cs / ResourcePlan.cs (C#) geração de sugestões: regra, candidatos, prévia e aplicar
     calendar.gd      o calendário universal: só conversões (365 dias, sem bissextos); tempo = segundos int64 desde a época
     world_clock.gd   o relógio oficial: presente, consulta, pausa, velocidade, eventos e o contrato dos módulos
     world_store.gd   salva e lê o relógio em JSON (user://evron_world.json), com .bak e troca atômica
@@ -47,6 +48,7 @@ scripts/
     rules_controller.gd a janela de regras: montar, executar na data mostrada e fixar valores
     types_controller.gd o designer de tipos, campos, camadas do mapa e vínculos
     resource_controller.gd painel de recursos, camada das ocorrências e o clique no globo (colocar, mover, escolher)
+    generator_controller.gd prévia, tirar sugestão pelo clique, aplicar e descartar
     world_files.gd   exportar e importar o mundo como pasta .world
   edit/            comandos de edição: toda mudança é um comando com desfazer e refazer.
     command_stack.gd pilha de desfazer/refazer, limitada a 4% da RAM (48 a 256 MiB); cada comando = nome + objeto com Undo/Redo/Bytes
@@ -278,8 +280,22 @@ e o raciocínio de cada método estão em `docs/alternativas-fronteiras.md`.
 - **Tela:** botão "Recursos" na barra de cima (`ui/resource_panel.gd` + `app/resource_controller.gd`). Com um recurso escolhido, o
   mapa mostra a camada dele (um de cada vez) pelo `TerritoryEditor`, sem as ações de país; fechar o painel volta ao mapa anterior.
   Os pontos e os nomes das áreas são um segundo `PlaceLayer`. Trocar de mapa no meio de uma pintura a encerra.
+- **Geração (etapa 2, migração 19):** "Gerar sugestões…" no painel. A regra combina superfície, classes de rocha (`Bedrock.png`),
+  grupos de Köppen (`Clima.png`), árvores (`Vegetação.png`), riqueza do solo (`Soil Richness.png`, confiança baixa), altitude e
+  declive (do terreno, com as edições). Centros agrupados por ruído de ~600 km; manchas crescem só nos candidatos. Os seis modelos
+  de `ui/generator_panel.gd` são pontos de partida, não conteúdo do mundo. Não há mapa de minério. Proteções em `contratos.md`.
+  Os parâmetros dos modelos não foram calibrados.
+- **Aptidão e perfis:** uma regra pode ter indícios com peso; a aptidão é a soma (até 100), com um mínimo. Sem indícios o resultado
+  é o da versão 1. Os quatro perfis (cobre, estanho, ferro, sal) estão em `ui/resource_profiles.gd`, com as fontes e os limites em
+  `docs/recursos/perfis.md`. "Gerar todos" faz a prévia dos recursos com regra e aplica num desfazer só.
+- **Menu:** duas telas. A lista (buscar, abrir, "+ Novo recurso", "Sugerir para todos") e o recurso com as abas "No mapa",
+  "Sugerir" e "Editar". Em "Sugerir" só o modelo, a quantidade, o tamanho e a prévia ficam à vista; as condições ficam em "Ajustes
+  avançados" e os testes em "Testar a regra (avançado)", recolhidos. Sair da aba fecha a prévia e encerra a avaliação, salvando-a.
+- **"Por que aqui?"** (`ui/why_card.gd`): clicar numa sugestão da prévia mostra os sinais e a soma em palavras simples, com o botão
+  de tirar ou devolver; numa sugestão aplicada, o botão do painel explica pela regra da geração dela. Fica fora da avaliação às cegas.
+- **Testes do gerador na tela:** estabilidade (`Registry.RuleStability`) e avaliação às cegas (`app/blind_review.gd`).
 - **Memória:** cada camada de recurso aberta fica carregada até fechar o programa (`shortcut:` em `territory_editor.gd`).
-- **Ainda não feito:** geração automática, supressões e controles de proteção (etapa 2); quantidade, teor, conhecimento, direitos e
+- **Ainda não feito:** proteção por campo; províncias geológicas, vulcanismo e bacias como condição; várias regras por recurso; quantidade, teor, conhecimento, direitos e
   exploração (etapa 3 em diante); percurso (linha) e referência a uma região; ver vários recursos ao mesmo tempo; abrir uma
   ocorrência a partir de uma ficha.
 
