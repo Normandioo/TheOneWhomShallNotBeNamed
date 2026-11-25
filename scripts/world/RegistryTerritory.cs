@@ -168,7 +168,7 @@ public partial class Registry
     }
 
     static string CheckLevel(string level) =>
-        System.Array.IndexOf(Levels, level) >= 0 ? level : throw new ArgumentException($"nível territorial desconhecido: {level}");
+        System.Array.IndexOf(Levels, level) >= 0 || ResourceTypeOfLevel(level) > 0 ? level : throw new ArgumentException($"nível territorial desconhecido: {level}");
 
     /// Avisos de inconsistência entre um nível e o de cima (não corrige nada), por exemplo províncias (lower) e países (upper):
     /// "fora" = parte da província em outro país ou fora de qualquer país; "sem_pais" = província pintada sem o vínculo com o de cima;
@@ -238,7 +238,10 @@ public partial class Registry
     public Array<Dictionary> CountryPalette() => Palette("pais");
 
     /// A paleta de um nível territorial: as entidades desse tipo que podem ter território (id até 65535).
+    /// Na camada de um recurso os donos são as ocorrências em área dele, todas na cor do recurso.
     public Array<Dictionary> Palette(string level) => new(
-        _db.Rows("select id, color from entity where kind = @0 and id <= 65535 order by id", CheckLevel(level))
+        (ResourceTypeOfLevel(level) is long type && type > 0
+            ? _db.Rows("select o.id, t.rgb from resource_occurrence o join resource_type t on t.id = o.type_id where o.type_id = @0 and o.kind = 'area' order by o.id", type)
+            : _db.Rows("select id, color from entity where kind = @0 and id <= 65535 order by id", CheckLevel(level)))
            .Select(r => new Dictionary { ["id"] = Convert.ToInt64(r[0]), ["rgb"] = r[1] != null ? Convert.ToInt64(r[1]) : DefaultColor(Convert.ToInt64(r[0])) }));
 }

@@ -101,24 +101,24 @@ func run() -> void:
 		return fail("a ficha da fortaleza mostra o vínculo com a cidade")
 	ok("vínculo personalizado entre os dois tipos novos")
 
-	# 4 e 5. Uma geometria desenhada ligada à fortaleza, e uma camada nova do mapa para ver as fortalezas.
+	# 4 e 5. Uma área ligada à fortaleza, e uma camada nova do mapa para ver as fortalezas.
 	var builtin_layers: Array = reg.MapLayers()
 	if builtin_layers.size() != 6 or not builtin_layers[0].kinds.has("pais") or not builtin_layers[0].kinds.has("provincia"):
 		return fail("as 6 camadas de fábrica vêm com os seus tipos: %s" % [builtin_layers])
-	var walls: int = reg.AddPolygonPlace("Muralhas", "regiao", PackedFloat64Array([10, 10, 10, 14, 13, 14, 13, 10]), "")
+	var walls: int = reg.AddPlace("Muralhas", "regiao", 11.5, 12.0, 300.0, "")
 	reg.AddPresence(castle, walls, "territorio", "alta")
 	var all_layers := PackedStringArray(["politica", "cultural", "etnica", "linguistica", "religiosa", "racial"])
 	if reg.MapItems(all_layers, castle, 0).size() != 0:
 		return fail("antes de ter camada, a fortaleza não aparece em nenhuma camada de fábrica")
 	var forts: String = reg.CreateMapLayer("Fortificações", 0x996633, PackedStringArray([fort, guard]))
 	var items: Array = reg.MapItems(PackedStringArray([forts]), 0, 0)
-	if forts != "fortificacoes" or items.size() != 1 or items[0].entity_id != castle or items[0].layer != forts or items[0].vertices.size() != 8:
-		return fail("a camada nova mostra o contorno desenhado da fortaleza: %s" % [items])
+	if forts != "fortificacoes" or items.size() != 1 or items[0].entity_id != castle or items[0].layer != forts or items[0].radius_km != 300.0:
+		return fail("a camada nova mostra a área da fortaleza: %s" % [items])
 	if reg.MapItems(all_layers, castle, 0).size() != 0 or reg.CreateMapLayer("fortificações", 0, PackedStringArray([fort])) != null:
 		return fail("a fortaleza só está na camada nova; nome repetido é recusado")
 	if reg.EntitiesAt(11.5, 12, 1, PackedStringArray([forts]), 0, 0).size() != 1:
-		return fail("clicar dentro do contorno acha a fortaleza pela camada nova")
-	ok("geometria desenhada ligada à fortaleza e camada nova do mapa que a mostra (aceite 4 e 5)")
+		return fail("clicar dentro da área acha a fortaleza pela camada nova")
+	ok("área ligada à fortaleza e camada nova do mapa que a mostra (aceite 4 e 5)")
 
 	reg.Close()
 	reg.Open(path)

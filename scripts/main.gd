@@ -33,7 +33,6 @@ const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
 const StatusBar = preload("res://scripts/ui/status_bar.gd")
 const CalendarPanel = preload("res://scripts/ui/calendar_panel.gd")
 const PresencePanel = preload("res://scripts/ui/presence_panel.gd")
-const DrawPanel = preload("res://scripts/ui/draw_panel.gd")
 const TerritoryPanel = preload("res://scripts/ui/territory_panel.gd")
 const NewRegionCard = preload("res://scripts/ui/new_region_card.gd")
 const AreaBar = preload("res://scripts/ui/area_bar.gd")
@@ -42,7 +41,8 @@ const Territory = preload("res://scripts/world/Territory.cs")
 const TerrainEdit = preload("res://scripts/edit/TerrainEdit.cs")
 const DomainHub = preload("res://scripts/app/domain_hub.gd")
 const TerritoryEditor = preload("res://scripts/app/territory_editor.gd")
-const PlaceDrawing = preload("res://scripts/app/place_drawing.gd")
+const ResourcePanel = preload("res://scripts/ui/resource_panel.gd")
+const ResourceController = preload("res://scripts/app/resource_controller.gd")
 const RulesController = preload("res://scripts/app/rules_controller.gd")
 const TypesController = preload("res://scripts/app/types_controller.gd")
 const WorldFiles = preload("res://scripts/app/world_files.gd")
@@ -74,7 +74,7 @@ var legend: LegendPanel
 var _country_names := true  # a sobreposição "Nomes dos países"
 var domains: DomainHub                # as fichas (busca, ficha, calendários) e o contexto dos outros controladores
 var territories: TerritoryEditor      # pintar território, camadas, paleta e seleção do mapa
-var place_drawing: PlaceDrawing       # desenhar o contorno de um lugar
+var resources := ResourceController.new()
 var rules := RulesController.new()
 var types := TypesController.new()
 var world_files := WorldFiles.new()
@@ -189,10 +189,15 @@ func _ready() -> void:
 		if not material.set_river_highlight(on):
 			presence_panel.rivers_check.set_pressed_no_signal(false))
 	_show_political("politica" in presence_panel.layers())
-	var draw_panel := DrawPanel.new()
-	hud.add_child(draw_panel)
-	place_drawing = PlaceDrawing.new()
-	place_drawing.setup(domains, draw_panel)
+	var resource_panel := ResourcePanel.new()
+	hud.add_child(resource_panel)
+	_dock["resources"] = resource_panel
+	resource_panel.visibility_changed.connect(func() -> void:
+		tool_panel.resources_toggle.set_pressed_no_signal(resource_panel.visible)
+		_layout())
+	resources.navigate = func() -> void: set_tool(ToolPanel.NAVIGATE)
+	resources.focus_map = globe.focus
+	tool_panel.resources_toggled.connect(resources.set_open)
 	var territory_panel := TerritoryPanel.new()
 	hud.add_child(territory_panel)
 	_dock["territory"] = territory_panel
@@ -237,6 +242,7 @@ func _ready() -> void:
 	territories.painting_changed.connect(_on_painting_changed)
 	territories.setup(domains, territory, commands, territory_panel, {}, _new_layer)  # lê a camada dos países e manda a paleta; as outras sob demanda
 	territories.area_palette_changed.connect(material.set_area_palette)
+	resources.setup(domains, resource_panel, globe.resources, commands, territories)  # depois do editor: usa as camadas dele
 	var area_labels := AreaLabels.new()
 	hud.add_child(area_labels)  # rótulos da interface sobre o globo, por baixo dos painéis
 	hud.move_child(area_labels, 0)
@@ -253,6 +259,8 @@ func _ready() -> void:
 	material.set_political(territory.OwnersImage())
 	territories.territory_level_shown.connect(func(level: String, _layer) -> void:
 		material.set_political(territories.political_image())
+		# A área de um recurso é desenhada pela camada política: aparece mesmo com "Fronteira política" desligada.
+		material.show_political(TerritoryEditor.is_resource(level) or "politica" in presence_panel.layers())
 		layer_panel.show_level(level)
 		if not level in TerritoryEditor.HIERARCHY:
 			territories.set_subdivisions_view(false)
@@ -473,6 +481,11 @@ func _layout() -> void:
 		index.size = Vector2(SearchPanel.WIDTH, bottom - top)
 		left += SearchPanel.WIDTH
 	var free_right: float = width - SheetPanel.WIDTH if _dock["sheet"].visible else width
+	var resource_dock: Control = _dock.get("resources")
+	if resource_dock != null and resource_dock.visible:  # à direita, encostado na ficha quando ela está aberta
+		free_right -= ResourcePanel.WIDTH
+		resource_dock.position = Vector2(free_right, top)
+		resource_dock.size = Vector2(ResourcePanel.WIDTH, bottom - top)
 	var lift := 0.0  # a barra de edição de baixo (relevo ou território) fica no meio do espaço livre; a legenda sobe acima dela
 	for bar in [_dock.get("territory"), tool_panel.edit_bar, _dock.get("region_card")]:
 		if bar != null and bar.visible:
@@ -507,6 +520,7 @@ func _open_config(which: String) -> void:
 
 ## O modo Território: pinta o cadastro aberto na ficha (T ou o botão da barra de cima).
 func _start_territory() -> void:
+	resources.cancel_click()
 	if domains.current() == 0:
 		territories.start_draft()  # nada aberto: pinta uma região nova e o cartão pergunta o que é
 	else:
@@ -543,7 +557,7 @@ func set_layer(index: int) -> void:
 	PerfMonitor.stop("trocar camada (" + str(selected["file"] if selected.has("file") else selected["kind"]) + ")", t_l)
 	# Nos mapas que não são o político, a sobreposição "Fronteira política" mostra os países: se o nível ficou numa área independente
 	# (religião, cultura…), muitas vezes vazia, os países sumiriam. Volta para os países, a não ser que se esteja pintando.
-	if selected["kind"] != "political" and territories != null and not territories.painting_territory 			and not territories.territory_level in TerritoryEditor.HIERARCHY:
+	if selected["kind"] != "political" and territories != null and not territories.painting_territory 			and not territories.territory_level in TerritoryEditor.HIERARCHY and not TerritoryEditor.is_resource(territories.territory_level):
 		territories.show_level("pais")
 	var tiles: String = selected.get("tiles", "")
 	if selected["kind"] == "natural" and (material.layer_file != selected["file"] or
@@ -562,6 +576,8 @@ func _show_political(on: bool) -> void:
 
 ## -1 = navegar; senão uma operação do pincel (TerrainBrush.Op).
 func set_tool(op: int) -> void:
+	if op != ToolPanel.NAVIGATE:
+		resources.cancel_click()
 	if territories.painting_territory:  # escolher uma ferramenta da barra sai do modo pintar território
 		territories.stop_painting()
 	if brush.active:
@@ -635,8 +651,7 @@ func _on_clock_changed() -> void:
 
 
 func select(n: Vector3) -> void:
-	if place_drawing.drawing:  # no modo desenhar fronteira, o clique marca um ponto do contorno (cola a vértices de fronteiras vizinhas até ~2% da altura)
-		place_drawing.draw_click(n, maxf(8.0, globe.camera_altitude_km() * 0.02))
+	if resources.click(n, maxf(20.0, globe.camera_altitude_km() * 0.02)):
 		return
 	selected_dir = n
 	domains.set_fixed_point(n)

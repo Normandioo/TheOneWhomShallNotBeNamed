@@ -18,6 +18,7 @@ signal draft_closed                      # o rascunho acabou (criado ou descarta
 signal palette_changed(entries: Array)  # as cores mudaram ([{id, rgb, top}]): quem desenha atualiza a paleta
 signal territory_level_shown(level: String, layer)  # a camada mostrada no globo passou a ser outra
 signal selection_changed(top_id: int)  # o país (ou o topo) a destacar no mapa; 0 = nenhum
+signal resource_owner_picked(id: int)   # o conta-gotas trocou a área de recurso pintada
 
 const SNAP_BAND_KM := 60.0  # "assentar no relevo": a fronteira vai até ~6 pixels do mapa (9,8 km cada) atrás de uma crista ou rio
 ## As camadas pintáveis (Registry.Levels): a hierarquia política e as áreas de predominância (religião, cultura...).
@@ -26,6 +27,7 @@ const PAINTABLE := ["pais", "provincia", "municipio", "religiao", "cultura", "et
 const AREA_LEVELS := ["religiao", "cultura", "etnia", "raca", "idioma"]  # as áreas de predominância: aparecem sobre os países (cinzas)
 const DRAFT := 65535            # o dono reservado do rascunho (nenhum cadastro tem esse id)
 const DRAFT_COLOR := 0xc98a82
+const RESOURCE := "recurso:"    # prefixo da camada de um recurso (Registry.ResourceLevelPrefix): os donos são ocorrências, não cadastros
 
 var hub                    # o DomainHub: o banco, a ficha aberta, abrir e reler a ficha
 var registry
@@ -76,7 +78,9 @@ func setup(domain_hub, t, stack, panel, more := {}, factory := Callable()) -> vo
 		_adopt(level, more[level])
 	for level in HIERARCHY:
 		layer(level)  # províncias e municípios aparecem no mapa desde o começo (com a cor do país)
-	boundary_tool.setup(territory, registry, hub.map, panel, commands)
+	boundary_tool.name_of = owner_name
+	boundary_tool.kind_of = owner_kind
+	boundary_tool.setup(territory, hub.map, panel, commands)
 	boundary_tool.record_edit = _record_edit
 	panel.mode_changed.connect(_set_territory_mode)
 	panel.radius_changed.connect(func(km: float) -> void: territory_radius = km)
@@ -151,20 +155,52 @@ func _on_import_apply(indices: PackedInt32Array, owners: PackedInt32Array) -> vo
 func start_painting(id: int, mode := "pincel") -> void:
 	if drafting and id != 0:
 		discard_draft()  # pintar um cadastro abandona o rascunho
-	if not hub.usable or territory == null or hub.is_drawing() or painting_territory or id == 0:
+	if not hub.usable or territory == null or painting_territory or id == 0:
 		return
 	var kind: String = registry.Kind(id)
 	if not kind in PAINTABLE or id > 65535 or layer(kind) == null:
 		hub.sheet.show_territory_message("Este tipo de cadastro não tem área pintável (ou o id passa de 65535).")
 		return
 	show_level(kind)
-	territory_owner = id
 	_apply_mask(id)
+	_begin_painting(id, mode)
+
+
+## Pinta a área de uma ocorrência de recurso, com as mesmas ferramentas dos países, na camada do recurso.
+func start_resource(level: String, occurrence: int, mode := "pincel") -> void:
+	if drafting:
+		discard_draft()
+	if not hub.usable or territory == null or painting_territory or occurrence <= 0 or occurrence >= DRAFT or layer(level) == null:
+		return
+	show_level(level)
+	territory.SetMask(null, 0)
+	_begin_painting(occurrence, mode)
+
+
+static func is_resource(level: String) -> bool:
+	return level.begins_with(RESOURCE)
+
+
+## O tipo e o nome de um dono da camada na tela: um cadastro ou, na camada de um recurso, uma ocorrência dele.
+func owner_kind(id: int) -> String:
+	if not is_resource(territory_level):
+		return registry.Kind(id)
+	var type: int = registry.OccurrenceType(id)
+	return RESOURCE + str(type) if type > 0 else ""
+
+
+func owner_name(id: int) -> String:
+	return registry.OccurrenceLabel(id) if is_resource(territory_level) else registry.Name(id)
+
+
+func _begin_painting(id: int, mode: String) -> void:
+	territory_owner = id
 	painting_territory = true
 	territory_stroking = false
 	territory_mode = mode
 	territory_panel.set_mode(mode)
-	territory_panel.show_state(registry.Name(id), territory.AreaKm2(id))
+	territory_panel.set_territory_actions(not is_resource(territory_level))
+	territory_panel.show_state(owner_name(id), territory.AreaKm2(id))
 	_refresh_merge_choices()
 	_show_warnings()
 	if territory_mode == "fronteira":
@@ -187,8 +223,8 @@ func _apply_mask(id: int) -> void:
 
 
 func _refresh_merge_choices() -> void:
-	if drafting:
-		return  # o rascunho não tem nível: ainda não há com quem unir
+	if drafting or is_resource(territory_level):
+		return  # o rascunho não tem nível, e a barra de um recurso não tem as ações de país
 	var others: Array = []
 	for p in registry.Palette(territory_level):
 		if int(p.id) != territory_owner and territory.AreaKm2(int(p.id)) > 0.0:
@@ -217,15 +253,17 @@ func territory_merge(from_id: int) -> void:
 ## Conta-gotas: o território clicado (do mesmo nível) passa a ser o pintado; a ferramenta volta ao pincel.
 func _pick_owner(n: Vector3) -> void:
 	var owner: int = territory.OwnerAt(n)
-	if owner == 0 or registry.Kind(owner) != territory_level:
+	if owner == 0 or owner_kind(owner) != territory_level:
 		territory_panel.set_message("Sem território deste nível aí.")
 		return
 	territory_owner = owner
-	territory_panel.show_state(registry.Name(owner), territory.AreaKm2(owner))
+	territory_panel.show_state(owner_name(owner), territory.AreaKm2(owner))
 	_refresh_merge_choices()
 	_set_territory_mode("pincel")
 	territory_panel.set_mode("pincel")
-	if owner != hub.current():
+	if is_resource(territory_level):
+		resource_owner_picked.emit(owner)
+	elif owner != hub.current():
 		hub.open(owner)
 
 
@@ -233,6 +271,8 @@ func _pick_owner(n: Vector3) -> void:
 func show_level(level: String) -> void:
 	if layer(level) == null or level == territory_level:
 		return
+	if painting_territory:
+		stop_painting()  # o dono pintado é da camada que sai: noutra, o número seria de outra coisa
 	territory_end()
 	territory_level = level
 	territory = levels[level]
@@ -248,9 +288,12 @@ func show_level(level: String) -> void:
 func layer(level: String):
 	if levels.has(level):
 		return levels[level]
-	if not level in PAINTABLE or not layer_factory.is_valid():
+	if not (level in PAINTABLE or is_resource(level)) or not layer_factory.is_valid():
 		return null
-	_adopt(level, layer_factory.call())
+	# shortcut: cada camada de recurso aberta fica na memória (~32 MiB) até fechar; descartar as já gravadas se pesar.
+	var made = layer_factory.call()
+	made.IsResource = is_resource(level)
+	_adopt(level, made)
 	return levels[level]
 
 
@@ -258,7 +301,8 @@ func _adopt(level: String, t) -> void:
 	levels[level] = t
 	if hub.usable:
 		registry.LoadTerritoryLevel(level, t)
-		registry.UseTerritory(level, t)  # o nó "área" das regras lê a área pintada
+		if not is_resource(level):
+			registry.UseTerritory(level, t)  # o nó "área" das regras lê a área pintada
 	_territory_seen[level] = t.Version
 	_territory_saved[level] = t.Version
 
@@ -360,7 +404,7 @@ func _show_warnings() -> void:
 func start_draft(kind_hint := "") -> void:
 	if kind_hint != "" or not drafting:
 		_draft_hint = kind_hint  # "Pintar mais" (já em rascunho) mantém o tipo pedido
-	if not hub.usable or territory == null or hub.is_drawing() or painting_territory or not layer_factory.is_valid():
+	if not hub.usable or territory == null or painting_territory or not layer_factory.is_valid():
 		return
 	if draft == null:
 		draft = layer_factory.call()
@@ -671,7 +715,7 @@ func refresh_palette() -> void:
 	var colors := {}
 	for level in shown_levels:
 		for p in registry.Palette(level):
-			colors[int(p.id)] = int(_live_colors.get(int(p.id), p.rgb))
+			colors[int(p.id)] = int(p.rgb) if is_resource(level) else int(_live_colors.get(int(p.id), p.rgb))
 	var focus := _selected_top if subdivisions_view and territory_level in HIERARCHY else 0
 	for id in colors:
 		var top := _top(id)
@@ -708,6 +752,8 @@ func set_subdivisions_view(on: bool) -> void:
 
 ## O topo da hierarquia de um cadastro: o país de uma província ou município (subindo pelos vínculos); o próprio id para os outros.
 func _top(id: int) -> int:
+	if is_resource(territory_level):
+		return id  # uma ocorrência não tem cadastro de cima (e o número dela pode ser o de um cadastro)
 	var top := id
 	for _i in 3:
 		var parent: int = registry.TerritoryParent(top)
@@ -720,7 +766,7 @@ func _top(id: int) -> int:
 func refresh_selection() -> void:
 	var top := 0
 	var id: int = hub.current()
-	if id != 0 and id <= 65535 and registry.Kind(id) in PAINTABLE:
+	if not is_resource(territory_level) and id != 0 and id <= 65535 and registry.Kind(id) in PAINTABLE:
 		top = _top(id)
 	if top != _selected_top:
 		_selected_top = top
@@ -765,7 +811,7 @@ func save() -> bool:
 ## O dono a abrir no clique do globo: o da camada do nível ou, onde ela não tem dono, o das de cima (o país sob a província) e, por fim, o das
 ## de baixo que o mapa também desenha (província ou município sem país). 0 = nenhum.
 func owner_at(dir: Vector3) -> int:
-	if territory == null:
+	if territory == null or is_resource(territory_level):
 		return 0
 	for shown in [territory] + shown_below():
 		var owner: int = shown.OwnerAt(dir)

@@ -39,10 +39,10 @@ public partial class TerritoryEdit : RefCounted
 
     public long Bytes => _idx.Length * 8L + (_oldBoundary?.Bytes ?? 0) + (_newBoundary?.Bytes ?? 0) + _dropped.Sum(path => path.Bytes) + _subdivisions.Sum(edit => edit.Bytes);
 
-    public bool TouchesOwner(int owner) =>
+    public bool TouchesOwner(int owner) => _territory is { IsResource: false } && (
         _oldBoundary?.Source == owner || _oldBoundary?.Target == owner ||
         _newBoundary?.Source == owner || _newBoundary?.Target == owner ||
-        Array.IndexOf(_before, (ushort)owner) >= 0 || Array.IndexOf(_after, (ushort)owner) >= 0 || _subdivisions.Exists(edit => edit.TouchesOwner(owner));
+        Array.IndexOf(_before, (ushort)owner) >= 0 || Array.IndexOf(_after, (ushort)owner) >= 0 || _subdivisions.Exists(edit => edit.TouchesOwner(owner)));
 
     public void Undo()
     {

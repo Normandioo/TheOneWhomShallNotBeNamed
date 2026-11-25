@@ -15,6 +15,8 @@ public partial class Territory : RefCounted
 {
     public const int MaxOwner = 65535;
 
+    public bool IsResource { get; set; }  // camada de um recurso: os donos são ocorrências, não cadastros
+
     public Vector2I Size { get; private set; }
     public bool Dirty { get; set; }      // algo mudou desde a última OwnersImage() levada à GPU
     public long Version { get; private set; }  // sobe a cada edição (desfazer e refazer também): invalida o que foi calculado

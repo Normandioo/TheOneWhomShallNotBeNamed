@@ -3,7 +3,7 @@ extends RefCounted
 ## devolve volta para o painel). Não tem regra de mundo (quem valida e grava é o Registry; quem converte datas é o local_calendar.gd).
 ## Segue o relógio: Main chama set_time com a data mostrada e tick a cada quadro.
 ## Os outros controladores (scripts/app/) usam o hub como contexto: o banco, a ficha aberta (current, open, reload, refresh_sheet),
-## a data mostrada e o mapa de presenças. O território e o desenho de lugar se registram em territories e place_drawing.
+## a data mostrada e o mapa de presenças. O território se registra em territories.
 ## Quem o cria precisa guardar uma referência (os sinais dos painéis só guardam funções deste objeto).
 ##
 ## Quando o C# lança uma exceção, o GDScript recebe null: por isso os resultados que viram id passam por _id() e a ficha
@@ -34,8 +34,6 @@ var presence_panel         # camadas e escopo do mapa
 var focus_map := Callable()  # func(direção, zoom): leva a câmera a um ponto
 var fixed_dir := Vector3.ZERO  # o ponto fixado no globo (onde "Criar lugar aqui" cria)
 var territories = null     # o editor territorial (TerritoryEditor), se ligado
-var place_drawing = null   # o desenho de contorno de lugar (PlaceDrawing), se ligado
-var _map_items: Array = [] # o que o globo desenha agora (de onde vêm os vértices que atraem o clique)
 var _current := 0
 var _pending := false      # o tempo andou e a ficha ainda não foi relida
 var _last_rebuild_ms := 0
@@ -191,23 +189,12 @@ func redraw_map() -> void:
 	refresh_map()
 
 
-## O que o globo desenha agora (os vértices que atraem o clique do desenho de contorno).
-func map_items() -> Array:
-	return _map_items
-
-
-func is_drawing() -> bool:
-	return place_drawing != null and place_drawing.drawing
-
-
 func is_painting() -> bool:
 	return territories != null and territories.painting_territory
 
 
 func open(id: int) -> void:
 	if id == 0 or not usable:
-		return
-	if place_drawing != null and not place_drawing.allow_open():  # abrir outra ficha no meio do desenho o perderia
 		return
 	if territories != null:
 		territories.on_open(id)
@@ -377,7 +364,7 @@ func set_fixed_point(dir: Vector3) -> void:
 
 ## O clique na camada política seleciona o dono do pixel. Onde ela não tem um dono visível, consulta as presenças do mapa.
 func pick(dir: Vector3, tolerance_km: float) -> int:
-	if not usable or is_drawing() or is_painting() or map == null or dir == Vector3.ZERO:
+	if not usable or is_painting() or map == null or dir == Vector3.ZERO:
 		return 0
 	if territories != null and "politica" in presence_panel.layers():
 		var owner: int = territories.owner_at(dir)
@@ -425,7 +412,6 @@ func refresh_map() -> void:
 	var items = [] if not all and _current == 0 else registry.MapItems(presence_panel.layers(), 0 if all else _current, shown_t)
 	if items == null:
 		return
-	_map_items = items
 	var key: int = items.hash()
 	if key != _map_key:
 		_map_key = key

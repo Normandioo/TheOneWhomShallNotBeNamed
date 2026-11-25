@@ -76,7 +76,7 @@ public partial class Registry : RefCounted
         FieldsMigration,  // RegistrySheet.cs
         CalendarsMigration,  // RegistryCalendar.cs
         PlacesMigration,  // RegistryPlaces.cs
-        BordersMigration,  // RegistryBorders.cs
+        BordersMigration,  // RegistryPlaces.cs
         TerritoryMigration,  // RegistryTerritory.cs
         TerritoryBoundaryMigration,  // RegistryTerritory.cs
         TerritoryLevelsMigration,  // RegistryTerritory.cs
@@ -88,6 +88,8 @@ public partial class Registry : RefCounted
         CulturalLayersMigration,  // RegistryTerritory.cs
         TerrainTilesMigration,  // RegistryTerrain.cs
         PopulationMigration,  // RegistryPlaces.cs
+        ResourcesMigration,  // RegistryResources.cs
+        PaintedShapesMigration,  // RegistryResources.cs
     };
 
     WorldDb _db = new();

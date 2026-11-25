@@ -7,11 +7,9 @@ const SearchPanel = preload("res://scripts/ui/search_panel.gd")
 const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
 const CalendarPanel = preload("res://scripts/ui/calendar_panel.gd")
 const PresencePanel = preload("res://scripts/ui/presence_panel.gd")
-const DrawPanel = preload("res://scripts/ui/draw_panel.gd")
 const TerritoryPanel = preload("res://scripts/ui/territory_panel.gd")
 const PlaceLayer = preload("res://scripts/view/place_layer.gd")
 const DomainHub = preload("res://scripts/app/domain_hub.gd")
-const PlaceDrawing = preload("res://scripts/app/place_drawing.gd")
 const TerritoryEditor = preload("res://scripts/app/territory_editor.gd")
 const CommandStack = preload("res://scripts/edit/command_stack.gd")
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
@@ -22,14 +20,13 @@ const H := 128
 
 var hub
 var terr  # o TerritoryEditor ligado ao hub
-var drawer  # o PlaceDrawing
 var reg
 var sheet
 var search
 var presence
 var map
 var tpanel
-var dpanel
+
 var stack
 var terrain
 var territory
@@ -57,10 +54,9 @@ func _build(db_path: String) -> void:
 	presence = PresencePanel.new()
 	map = PlaceLayer.new()
 	map.radius = 6.371
-	dpanel = DrawPanel.new()
 	tpanel = TerritoryPanel.new()
 	var cal := CalendarPanel.new()
-	for n in [search, sheet, cal, presence, map, dpanel, tpanel]:
+	for n in [search, sheet, cal, presence, map, tpanel]:
 		host.add_child(n)
 	terrain = _make_terrain()
 	territory = load("res://scripts/world/Territory.cs").new()
@@ -69,8 +65,6 @@ func _build(db_path: String) -> void:
 	hub = DomainHub.new()
 	hub.setup(db_path, search, sheet, cal)
 	hub.bind_map(map, presence, func(_d: Vector3, _z: float) -> void: pass)
-	drawer = PlaceDrawing.new()
-	drawer.setup(hub, dpanel)
 	terr = TerritoryEditor.new()
 	terr.palette_changed.connect(func(entries: Array) -> void: palettes.append(entries))
 	terr.painting_changed.connect(func(on: bool) -> void: painting_events.append(on))
@@ -247,16 +241,11 @@ func run() -> void:
 		return fail("desfazer o apagar")
 	ok("Esc termina; a ficha mostra a área; 'Apagar território' é um comando que desfaz")
 
-	# Não pinta durante o desenho de fronteira por contorno; só país pinta.
-	drawer.start_border("Região", "territorio", 0)
-	terr.start_painting(aren)
-	if terr.painting_territory:
-		return fail("não se pinta território durante o desenho de contorno")
-	drawer.draw_cancel()
+	# Só quem tem camada pintável pinta: uma etnia criada sem área não entra no modo.
 	terr.start_painting(povo)
 	if terr.painting_territory:
 		return fail("uma etnia não pinta território")
-	ok("não pinta durante o desenho de contorno nem para uma etnia")
+	ok("uma etnia não pinta território")
 
 	# A cor do país: a prévia vai para a paleta, só o "final" grava no banco.
 	hub.open(aren)

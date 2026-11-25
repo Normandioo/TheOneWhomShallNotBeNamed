@@ -18,7 +18,8 @@ var dragging: bool:
 
 var _map
 var _territory
-var _registry
+var name_of := Callable()  # o nome e o tipo de um dono da camada (o editor sabe se é cadastro ou ocorrência)
+var kind_of := Callable()
 var _panel
 var _commands
 var record_edit: Callable
@@ -50,9 +51,8 @@ var _spacing := SPACING_PX
 var _stabilize := 0
 
 
-func setup(territory, registry, map, panel, commands) -> void:
+func setup(territory, map, panel, commands) -> void:
 	_territory = territory
-	_registry = registry
 	_map = map
 	_panel = panel
 	_commands = commands
@@ -250,7 +250,7 @@ func _make_plan(points: PackedVector3Array) -> Dictionary:
 
 func _validate_plan(result: Dictionary) -> Dictionary:
 	var plan = result.get("plan")
-	if plan != null and plan.SourceOwner != 0 and (_registry.Name(plan.SourceOwner).is_empty() or _registry.Kind(plan.SourceOwner) != _registry.Kind(_owner)):
+	if plan != null and plan.SourceOwner != 0 and (String(name_of.call(plan.SourceOwner)).is_empty() or kind_of.call(plan.SourceOwner) != kind_of.call(_owner)):
 		return {"message": "O território cortado precisa pertencer a um cadastro do mesmo nível (país com país, província com província)."}
 	return result
 
@@ -324,9 +324,9 @@ func _start_open_plan(points: PackedVector3Array) -> void:
 ## Mostra no mapa o lado escolhido e diz o que vai acontecer.
 func _show_preview() -> void:
 	preview_changed.emit(_territory.PreviewImageOver(_plan, below))
-	var source: String = _registry.Name(_plan.SourceOwner) if _plan.SourceOwner != 0 else "terra sem dono"
+	var source: String = name_of.call(_plan.SourceOwner) if _plan.SourceOwner != 0 else "terra sem dono"
 	var text := "Prévia: ≈ %s km² de %s passam para %s. Solte o mouse para aplicar." % [
-		_thousands(roundi(_territory.PlanAreaKm2(_plan))), source, _registry.Name(_plan.TargetOwner)]
+		_thousands(roundi(_territory.PlanAreaKm2(_plan))), source, name_of.call(_plan.TargetOwner)]
 	if _plan.ChoiceCount > 1:
 		text += " Mais de um lado encosta: depois de soltar, \"Outro lado\" troca."
 	_panel.show_boundary_state(text)
@@ -357,7 +357,7 @@ func apply_preview() -> void:
 	if _plan == null:
 		return
 	var plan = _plan
-	var neighbor: String = _registry.Name(plan.SourceOwner) if plan.SourceOwner != 0 else "a terra sem dono"
+	var neighbor: String = name_of.call(plan.SourceOwner) if plan.SourceOwner != 0 else "a terra sem dono"
 	var applied_id := _id
 	var points := _points.duplicate()
 	_plan = null
@@ -455,7 +455,7 @@ func _refresh_menus() -> void:
 	var neighbors := {}
 	for path in _paths:
 		if not neighbors.has(path.source):
-			neighbors[path.source] = _registry.Name(path.source) if int(path.source) != 0 else "contorno em terra livre"
+			neighbors[path.source] = name_of.call(path.source) if int(path.source) != 0 else "contorno em terra livre"
 	_panel.show_boundary_options(_paths, neighbors, _id)
 
 

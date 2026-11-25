@@ -50,6 +50,7 @@ var _preview_row: HBoxContainer
 var _merge_button: MenuButton
 var _merge_menu: PopupMenu  # a lista de cadastros do botão de unir
 var _merge_ids: Array = []
+var _actions: HBoxContainer  # unir, importar e fronteiras naturais: só para cadastros
 var _side_button: Button
 
 
@@ -132,7 +133,10 @@ func _init() -> void:
 	_merge_menu.id_pressed.connect(func(i: int) -> void:
 		if i >= 0 and i < _merge_ids.size():
 			merge_requested.emit(_merge_ids[i]))
-	row.add_child(_merge_button)
+	_actions = HBoxContainer.new()
+	_actions.add_theme_constant_override("separation", 6)
+	row.add_child(_actions)
+	_actions.add_child(_merge_button)
 	for spec in [["upload", "Importar PNG: cada mancha de cor de um mapa equiretangular vira uma região que você liga a um cadastro deste nível.", import_requested, null],
 			["grow", "Crescer este país: ocupa a terra sem dono em volta do território e da capital, até onde os vizinhos chegariam antes (800 km de caminho).", grow_requested, false],
 			["grow_all", "Crescer todos: todos os países com território ou capital crescem juntos pela terra sem dono; as divisas caem em serras, rios grandes e estreitos.", grow_requested, true],
@@ -148,7 +152,7 @@ func _init() -> void:
 				sig.emit()
 			else:
 				sig.emit(arg))
-		row.add_child(ab)
+		_actions.add_child(ab)
 	row.add_child(VSeparator.new())
 	var done := Button.new()
 	done.icon = UiIcons.get_icon("check", 20)
@@ -276,6 +280,10 @@ func show_merge_choices(entities: Array) -> void:
 		_merge_menu.add_item(String(e.name), _merge_ids.size())
 		_merge_ids.append(int(e.id))
 	_merge_button.disabled = entities.is_empty()
+
+
+func set_territory_actions(on: bool) -> void:
+	_actions.visible = on
 
 
 func hide_panel() -> void:

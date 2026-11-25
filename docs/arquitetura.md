@@ -23,8 +23,6 @@ scripts/
     RegistryCalendar.cs (C#, parte do Registry) calendários locais, eras e o uso por entidade, com validade
     local_calendar.gd conversão universal <-> calendário local (funções sobre uma definição; usa o calendar.gd)
     RegistryPlaces.cs (C#, parte do Registry) lugares (ponto ou disco), presenças no mapa, estimativas e distribuições demográficas
-    RegistryBorders.cs (C#, parte do Registry) lugares com contorno desenhado à mão (polígono de vértices lat/lon)
-    PlaceGeometry.cs (C#) geometria do contorno na esfera: validar, centro, área, "está dentro", distância até a borda
     Territory.cs     (C#) a camada política: o dono de cada pixel (ushort, grade da altitude), pincel, balde, borracha, área em km²
     TerritoryNatural.cs (C#, parte do Territory) fronteiras naturais: crescer pela terra sem dono por custo (serra, rio, mar) e assentar no relevo
                      (Terrain.cs também dá os lagos do Gleba e a costa do mapa político: CoastImage, distância em km)
@@ -34,6 +32,8 @@ scripts/
                      tiles de 512 px, composição das camadas para a tela e máscara, importação de PNG, fronteiras vetoriais e contornos
     RegistryTypes.cs / RegistryRules.cs / RegistryWorldFile.cs (C#, partes do Registry) tipos, campos e camadas como dados;
                      regras declarativas e fixações; o mundo como pasta .world
+    RegistryResources.cs (C#, parte do Registry) catálogo de recursos e ocorrências; cada gravação devolve um ResourceEdit
+    Vec.cs           (C#) vetor em double na esfera (distâncias)
     calendar.gd      o calendário universal: só conversões (365 dias, sem bissextos); tempo = segundos int64 desde a época
     world_clock.gd   o relógio oficial: presente, consulta, pausa, velocidade, eventos e o contrato dos módulos
     world_store.gd   salva e lê o relógio em JSON (user://evron_world.json), com .bak e troca atômica
@@ -44,9 +44,9 @@ scripts/
     territory_editor.gd o editor territorial (TerritoryEditor da especificação 17.5): modo pintar e suas ferramentas, camadas
                      sob demanda, imagem composta do globo, paleta e destaque do selecionado, máscara, avisos, importar PNG, gravação
     perf_monitor.gd  o monitor de desempenho (F3, arrastável): quadros, RAM, GPU, tempo das operações (PerfMonitor.start/stop) e perf.csv
-    place_drawing.gd desenhar o contorno de um lugar ponto a ponto no globo
     rules_controller.gd a janela de regras: montar, executar na data mostrada e fixar valores
     types_controller.gd o designer de tipos, campos, camadas do mapa e vínculos
+    resource_controller.gd painel de recursos, camada das ocorrências e o clique no globo (colocar, mover, escolher)
     world_files.gd   exportar e importar o mundo como pasta .world
   edit/            comandos de edição: toda mudança é um comando com desfazer e refazer.
     command_stack.gd pilha de desfazer/refazer, limitada a 4% da RAM (48 a 256 MiB); cada comando = nome + objeto com Undo/Redo/Bytes
@@ -72,7 +72,6 @@ scripts/
     calendar_panel.gd janela dos calendários locais: os cadastrados e o formulário de um novo (com a primeira era)
     presence_panel.gd camadas e escopo do mapa de presenças (a ficha aberta ou todas as entidades)
     territory_panel.gd a barra do modo pintar território (pincel, balde, borracha, raio, "só em terra", área, Terminar)
-    draw_panel.gd    a barra do modo desenhar fronteira (pontos marcados, Desfazer, Concluir, Cancelar; Esc, Enter e Backspace)
     time_bar.gd      placa da data (topo, ao centro) e janela do calendário: data, pausa, velocidade, avanços, consulta
     legend_panel.gd, ui_kit.gd
 scenes/main.tscn   Main e o Hud (os painéis); a vista 3D é criada em código pelo GlobeView
@@ -202,8 +201,7 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
 
 ### Lugares, presenças e demografia (etapa 5)
 
-- **Lugar** (`place`): nome, tipo (assentamento, região, local sagrado, natural, outro), `lat`/`lon` e `radius_km`: **0 = ponto; > 0 = área aproximada em disco**; e, desde as
-  fronteiras, pode ser um **contorno** desenhado à mão (ver "Fronteiras desenhadas à mão"). É compartilhável: o mesmo lugar em duas fichas é o mesmo registro (a capital do país
+- **Lugar** (`place`): nome, tipo (assentamento, região, local sagrado, natural, outro), `lat`/`lon` e `radius_km`: **0 = ponto; > 0 = área aproximada em disco**. É compartilhável: o mesmo lugar em duas fichas é o mesmo registro (a capital do país
   e a sede da religião). Distâncias pela esfera (`atan2`), então o disco atravessa a longitude 180° e cobre o polo.
 - **Presença** (`presence`): entidade + lugar + função (capital, sede, origem, presença, centro cultural, lugar sagrado, território, reivindicação, outro) +
   validade `[início, fim)` + certeza. A **camada do mapa vem do tipo da entidade**: país = fronteira política, cultura = presença cultural, etnia = distribuição
@@ -234,32 +232,11 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
   administrado × reivindicado em desenho próprio e "percentuais por região" como camada; nomes alternativos e históricos de lugar; critérios numéricos configuráveis para os níveis
   baixa/média/alta; fonte da estimativa na interface; recálculo de estimativas por data (hoje cada uma é um registro).
 
-### Fronteiras desenhadas à mão
+### Fronteiras desenhadas ponto a ponto: removidas
 
-- **O que é:** um lugar com **contorno**: polígono de vértices `lat/lon` (`place_vertex`, migração 5) unidos por **arcos de círculo máximo**. `place.lat/lon` guarda o centro (onde fica o rótulo) e
-  `radius_km = 0`; quem tem vértices é contorno, aconteça o que acontecer com o raio. O contorno é um lugar como os outros: pode ser compartilhado e é ligado às entidades por presenças
-  (território, reivindicação etc.), então a camada, a data e o clique funcionam sem caso especial. `Registry.AddPolygonPlace` cria, `SetPlaceVertices` troca o contorno (um disco ou ponto vira contorno),
-  `PlaceVertices` e `PlaceAreaKm2` leem; `MapItems`/`PresencesOf` trazem `vertices` e `area_km2` (também o disco).
-- **Validação** (`PlaceGeometry.Validate`, tudo ou nada): 3 a 2000 pontos, em pares lat/lon válidos; o último ponto pode repetir o primeiro; recusa pontos seguidos no mesmo lugar, **lados que
-  se cruzam ou se tocam** (testado no plano gnomônico em torno do centro, onde círculos máximos são retas), contorno **sem área** e **grande demais** (precisa caber a menos de 85° do centro:
-  o contorno é sempre a região menor; para algo maior, divide-se em regiões).
-- **Geometria na esfera, em vetores unitários e double** (a convenção de `EvronGeo`): nada de grade, então o contorno atravessa a longitude 180° e cobre o polo sem caso especial. **Área** pela
-  soma dos ângulos sólidos dos triângulos (centro, p_i, p_i+1) com sinal (Van Oosterom & Strackee), válida também para contorno côncavo: um octante dá πR²/2 exato. **Dentro:** soma do giro do
-  rumo (visto do ponto) de cada vértice ao seguinte, ±2π dentro e 0 fora; só vale a menos de 85° do centro (um ponto no lado oposto do planeta também "gira" 360° e é descartado antes).
-  **Distância até a borda:** menor distância aos arcos (pé da perpendicular no arco ou o vértice mais próximo).
-- **Clique (`EntitiesAt`)**: o contorno acha o ponto se está dentro ou a até a tolerância da borda (`distance_km` 0 dentro; senão a distância à borda); o disco e o ponto seguem como antes. Entre contornos
-  aninhados, o menor (pelo raio equivalente à área) vem primeiro.
-- **No globo** (`view/place_layer.gd`): o contorno é triangulado no plano gnomônico (`Geometry2D.triangulate_polygon`, côncavo inclusive) e cada triângulo é subdividido com pontos médios sobre a esfera até
-  os lados ficarem curtos, para o preenchimento acompanhar a curvatura; o aro é uma faixa ao longo dos arcos. Um contorno que não triangula (não deveria passar pela validação) ainda desenha o aro.
-  O **rascunho** (`show_draft`) é uma linha amarela pelos pontos marcados (e o lado que fecharia, mais fraco) com uma marca em cada ponto.
-- **Desenhar** (`DomainHub.start_border`/`draw_click`/`draw_undo`/`draw_finish`/`draw_cancel`, barra `ui/draw_panel.gd`): na seção "Presença no mapa" da ficha, o nome da região, a função (padrão: Território) e
-  "Desenhar no mapa" abrem o modo; o **clique no globo marca um ponto** (arrastar continua girando a câmera; `Main.select` roteia o clique ao hub enquanto `drawing`). **Desfazer ponto**, **Concluir** (3 pontos ou mais)
-  e **Cancelar**; Esc, Enter e Backspace fazem o mesmo. Concluir cria o lugar e liga a entidade com a função escolhida; um contorno inválido não é gravado e o desenho continua para corrigir. No modo, abrir
-  outra ficha e o clique de seleção são ignorados. **Redesenhar** (botão na linha da presença de um contorno) troca o contorno do mesmo lugar.
-- **Fronteira vizinha sem fresta:** o ponto clicado a menos de 2% da altura da câmera (ao menos 8 km) de um **vértice de um contorno que está no mapa** cola nesse vértice (as bordas compartilhadas ficam exatamente
-  iguais). Para ver o vizinho, ponha o painel de presenças em "Todas as entidades".
-- **Ainda não feito:** mover ou apagar um vértice solto de um contorno já criado (hoje: Redesenhar); buracos e várias partes num mesmo território (ilhas); contorno maior que 85° do centro; pré-visualização do lado
-  a fechar sob o mouse; importar contornos; verificar sobreposição entre territórios de países diferentes (hoje cada um é independente, e o clique lista todos que cobrem o ponto).
+Os contornos em polígono (`place_vertex`) saíram em favor das áreas pintadas. A migração 18 apaga as regiões desse tipo **e os
+vínculos, estimativas e distribuições presos a elas**, em qualquer mundo aberto ou importado. A tabela ainda nasce na migração 5
+(migrações antigas não mudam). Fronteira se faz pintando (abaixo), inclusive com a ferramenta Fronteira.
 
 ### Território pintado (a camada política por pixel)
 
@@ -290,6 +267,21 @@ e o raciocínio de cada método estão em `docs/alternativas-fronteiras.md`.
 - **GPU:** a camada inteira (16 MiB) volta à GPU, no máximo 10 vezes por segundo durante a pincelada e uma vez ao soltar (como a altitude).
 - **Ainda não feito (de propósito, para testar o método primeiro):** nome grande do país no centro, barra de população e ícones de cidades sobre o território; linha de costa; "território compartilhado" entre países;
   recalcular as camadas do Gleba que ficam desatualizadas; subir a resolução da camada (8K); a seleção por clique escolhe só o país (não a província); o desfazer não atravessa a exclusão de um país.
+
+## Recursos (etapas 0 e 1 do plano `Plano_Recursos_Populacao_Economia_Evron_v1.pdf`)
+
+- Contratos (unidades, identidade, geometria, proveniência, proteções, desfazer): `docs/recursos/contratos.md`.
+- **Banco** (migrações 17 e 18): `resource_type` (só o nome é obrigatório) e `resource_occurrence` (`ponto` ou `area`). A pintura de
+  cada recurso usa `territory_layer`/`territory_tile` no nível `recurso:<id>`. Nada ambiental limita onde colocar. Tudo é `manual`
+  e `narrativo`: ainda não há cálculo.
+- **Desfazer:** `ResourceEdit` (linha antes e depois) e `TerritoryEdit` (pintura), na pilha comum.
+- **Tela:** botão "Recursos" na barra de cima (`ui/resource_panel.gd` + `app/resource_controller.gd`). Com um recurso escolhido, o
+  mapa mostra a camada dele (um de cada vez) pelo `TerritoryEditor`, sem as ações de país; fechar o painel volta ao mapa anterior.
+  Os pontos e os nomes das áreas são um segundo `PlaceLayer`. Trocar de mapa no meio de uma pintura a encerra.
+- **Memória:** cada camada de recurso aberta fica carregada até fechar o programa (`shortcut:` em `territory_editor.gd`).
+- **Ainda não feito:** geração automática, supressões e controles de proteção (etapa 2); quantidade, teor, conhecimento, direitos e
+  exploração (etapa 3 em diante); percurso (linha) e referência a uma região; ver vários recursos ao mesmo tempo; abrir uma
+  ocorrência a partir de uma ficha.
 
 ## Testes
 

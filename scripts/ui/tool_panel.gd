@@ -21,6 +21,7 @@ signal import_requested
 signal search_requested        # a caixa de busca: abre o Índice na aba Busca
 signal config_requested(which: String)  # "tipos", "regras" ou "calendarios"
 signal help_requested
+signal resources_toggled(open: bool)  # o painel de recursos
 
 const NAVIGATE := -1
 const HEIGHT := 48
@@ -39,6 +40,7 @@ var _roughness_label: Label
 var _terrain_toggle: Button
 var _territory_toggle: Button
 var _navigate: Button
+var resources_toggle: Button
 var _saved: Label
 var _counts: Label
 var _workspace: HBoxContainer
@@ -100,6 +102,12 @@ func _init(radius_km: float, strength_m: float, roughness_value := 0.5) -> void:
 	_counts.add_theme_font_size_override("font_size", 13)
 	_counts.add_theme_color_override("font_color", UiKit.MUTED)
 	_workspace.add_child(_counts)
+	resources_toggle = Button.new()
+	resources_toggle.text = "Recursos"
+	resources_toggle.toggle_mode = true
+	resources_toggle.tooltip_text = "Catálogo de recursos e ocorrências no mapa"
+	resources_toggle.toggled.connect(func(open: bool) -> void: resources_toggled.emit(open))
+	_workspace.add_child(resources_toggle)
 	var search := Button.new()
 	search.text = "Buscar…            Ctrl F"
 	search.icon = UiIcons.get_icon("search", 16)

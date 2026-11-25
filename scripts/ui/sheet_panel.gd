@@ -27,8 +27,7 @@ signal closed
 signal calendar_use_added(calendar_id: int, purpose: String)
 signal calendar_use_removed(use_id: int)
 signal place_focus_requested(place_id: int)
-signal border_draw_requested(name: String, role: String)   # desenhar uma fronteira nova no globo
-signal border_redraw_requested(place_id: int, role: String)  # refazer o contorno de um lugar que já é contorno
+
 signal territory_paint_requested                              # entrar no modo pintar território para este país
 signal territory_boundary_requested                           # entrar direto no pincel de fronteira do país selecionado
 signal subdivision_requested(child_kind: String)            # criar uma província (ou município) dentro deste cadastro e pintá-la
@@ -94,7 +93,6 @@ var _geo := {}             # lugares e datas para as seções de mapa e populaç
 var _fixed_label: Label
 var _create_place_btn: Button
 var _geo_message: Label
-var _border_msg: Label
 var _territory_msg: Label
 var _place_pickers: Array = []  # os menus de lugar da ficha (a busca de um atualiza todos)
 var _universal_label: Label
@@ -304,12 +302,6 @@ func show_territory_message(text: String) -> void:
 	if _territory_msg != null:
 		_territory_msg.text = text
 		_territory_msg.visible = text != ""
-
-
-func show_border_message(text: String) -> void:
-	if _border_msg != null:
-		_border_msg.text = text
-		_border_msg.visible = text != ""
 
 
 func show_geo_message(text: String) -> void:
@@ -1022,7 +1014,6 @@ func _build_territory() -> void:
 
 func _build_places() -> void:
 	_place_pickers.clear()
-	_border_msg = null
 	_fixed_label = null
 	_create_place_btn = null
 	if _geo.is_empty():
@@ -1038,11 +1029,8 @@ func _build_places() -> void:
 		row.add_theme_constant_override("separation", 8)
 		row.custom_minimum_size.y = 32
 		box.add_child(row)
-		var is_border: bool = p.vertices.size() >= 6
 		var what := "ponto"
-		if is_border:
-			what = "contorno de %d pontos · ≈ %s km²" % [p.vertices.size() / 2, LayerPanel._thousands(roundi(p.area_km2))]
-		elif p.radius_km > 0.0:
+		if p.radius_km > 0.0:
 			what = "área de %s km" % LayerPanel._thousands(roundi(p.radius_km))
 		var color: Color = UiKit.layer_color.get(p.layer, Color.WHITE)
 		var open := Button.new()
@@ -1063,13 +1051,6 @@ func _build_places() -> void:
 			detail.modulate = Color(1, 1, 1, 0.6)
 			row.add_child(detail)
 		row.add_child(_pill(UiKit.role_label(p.role), color))
-		if is_border:
-			var redraw := Button.new()
-			redraw.text = "Redesenhar"
-			redraw.flat = true
-			redraw.tooltip_text = "Marcar o contorno de novo no globo (troca o contorno deste lugar)"
-			redraw.pressed.connect(func() -> void: border_redraw_requested.emit(int(p.place_id), p.role))
-			row.add_child(redraw)
 		var del := Button.new()
 		del.text = "✕"
 		del.flat = true
@@ -1079,7 +1060,7 @@ func _build_places() -> void:
 		_rule(box)
 	var role_keys: Array = UiKit.ROLE_LABEL.keys()
 
-	# Três jeitos de pôr um lugar, um formulário de cada vez.
+	# Dois jeitos de pôr um lugar, um formulário de cada vez.
 	var choices := HFlowContainer.new()
 	choices.add_theme_constant_override("h_separation", 8)
 	choices.add_theme_constant_override("v_separation", 6)
@@ -1153,25 +1134,6 @@ func _build_places() -> void:
 		if name_edit.text.strip_edges() != "":
 			place_created.emit(name_edit.text.strip_edges(), kind_keys[kind.selected], radius.value, role_keys[role.selected]))
 	new_row2.add_child(_create_place_btn)
-
-	# 3. Desenhar um contorno à mão.
-	var drawn: VBoxContainer = add_form.call("＋ Contorno", "Desenha uma fronteira à mão no globo, ponto a ponto.")
-	var draw_row := HFlowContainer.new()
-	drawn.add_child(draw_row)
-	var border_name := LineEdit.new()
-	border_name.placeholder_text = "nome da região"
-	border_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	draw_row.add_child(border_name)
-	var border_role := _option(role_keys, func(k): return UiKit.ROLE_LABEL[k])
-	border_role.select(role_keys.find("territorio"))
-	draw_row.add_child(border_role)
-	var draw_btn := Button.new()
-	draw_btn.text = "Desenhar no mapa"
-	draw_btn.pressed.connect(func() -> void: border_draw_requested.emit(border_name.text.strip_edges(), role_keys[border_role.selected]))
-	draw_row.add_child(draw_btn)
-	_border_msg = _note("")
-	_border_msg.visible = false
-	drawn.add_child(_border_msg)
 
 
 func _build_population() -> void:

@@ -20,6 +20,7 @@ const UNDER_TILES_SCALE := 0.9988
 var camera: GlobeCamera
 var tiles: TileLayer
 var places: PlaceLayer  # as presenças dos cadastros (discos e rótulos) sobre o globo
+var resources: PlaceLayer  # as ocorrências de recursos, numa camada própria
 var _globe: MeshInstance3D
 var _material: ShaderMaterial
 
@@ -63,6 +64,9 @@ func _ready() -> void:
 	places = PlaceLayer.new()
 	places.radius = RADIUS
 	viewport.add_child(places)
+	resources = PlaceLayer.new()
+	resources.radius = RADIUS
+	viewport.add_child(resources)
 
 	camera = GlobeCamera.new()
 	camera.radius = RADIUS
