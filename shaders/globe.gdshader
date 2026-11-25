@@ -160,7 +160,7 @@ vec3 political_sea_tint(vec2 uv, float dist_km, out float amount) {
 	return found > 0.0 ? acc / found : vec3(0.0);
 }
 
-vec3 political_style(vec3 n, vec2 uv, float h) {
+vec3 political_style(vec3 n, vec2 uv, float h, vec2 frag) {
 	vec2 c = textureLod(coast_map, vec2(uv.x, clamp(uv.y, 0.0, 1.0)), 0.0).rg;
 	float d = c.r;
 	float km_px = max(fwidth(d), 0.001);  // km por pixel de tela (o campo é uma distância)
@@ -172,6 +172,13 @@ vec3 political_style(vec3 n, vec2 uv, float h) {
 	float focus = id != 0 ? political_focus(id) : (political_selected != 0 ? -1.0 : 0.0);
 	float edge = id != 0 ? political_edge(uv, id) : 0.0;
 	vec3 base = id != 0 ? map_tone(political_color(id).rgb) : vec3(0.82, 0.76, 0.60);
+	int aid = 0;
+	if (area_on > 0.5) {  // uma área sobreposta: se o mapa de baixo são os países, eles ficam cinzas (a fronteira continua)
+		aid = area_owner(uv);
+		if (area_gray > 0.5) {
+			base = vec3(0.34 + 0.30 * dot(base, vec3(0.299, 0.587, 0.114)));
+		}
+	}
 	float patch = pol_noise(uv, vec2(96.0, 48.0)) * 0.6 + pol_noise(uv, vec2(384.0, 192.0)) * 0.4 - 0.5;
 	base *= 1.0 + patch * 0.16;
 	base = mix(base, vec3(0.55, 0.54, 0.51), smoothstep(1300.0, 3900.0, h) * 0.20);
@@ -190,6 +197,10 @@ vec3 political_style(vec3 n, vec2 uv, float h) {
 	}
 	float dist_fade = 1.0 - 0.6 * smoothstep(4.0, 25.0, km_px);  // de longe as linhas afinam e ficam mais claras, sem ar de desenho animado
 	land = mix(land, focus > 0.5 ? vec3(0.98, 0.93, 0.70) : land * 0.30, line * 0.75 * dist_fade);
+	if (aid != 0) {
+		vec3 tint = map_tone(area_color(aid).rgb) * (1.0 + 0.4 * lit) * (1.0 - 0.62 * dark);
+		land = mix(land, tint, mix(0.6, 0.82, area_gray));
+	}
 	// Água: mar pela profundidade com manchas; lago de cor fixa; halo claro na costa; perto da costa a água pega a cor do país dono.
 	bool lake = c.g > 0.5;
 	float dist = max(-d, 0.0);
@@ -200,7 +211,7 @@ vec3 political_style(vec3 n, vec2 uv, float h) {
 	if (!lake && dist < 150.0) {
 		float amount;
 		vec3 tint = political_sea_tint(uv, dist, amount);
-		water = mix(water, tint * 0.85, amount * 0.46 * exp(-dist / 60.0));
+		water = mix(water, tint * 0.85, amount * 0.46 * exp(-dist / 60.0) * (1.0 - area_on * area_gray));
 	}
 	// Costa: troca de terra para água em um pixel e a linha escura #15191c.
 	vec3 col = mix(water, land, smoothstep(-0.5 * km_px, 0.5 * km_px, d));
@@ -285,7 +296,7 @@ void fragment() {
 	if (mode == 4) {
 		// Cor pronta, com a luz de mapa já dentro: vai na emissão, sem o sol (só um leve escurecer na borda do disco).
 		float r = terrain_river_at(uv);
-		vec3 m = mix(political_style(n, uv, h), vec3(0.478, 0.663, 0.714), smoothstep(0.12, 0.35, r));
+		vec3 m = mix(political_style(n, uv, h, FRAGCOORD.xy), vec3(0.478, 0.663, 0.714), smoothstep(0.12, 0.35, r));
 		m = river_highlight(uv, m, vec3(0.05, 0.40, 0.90));
 		ALBEDO = vec3(0.0);
 		ROUGHNESS = 1.0;

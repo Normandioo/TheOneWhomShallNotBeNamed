@@ -23,6 +23,8 @@ project/assembly_name="Evron"
 
 window/size/viewport_width=1920
 window/size/viewport_height=1080
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
 [shader_globals]
 
@@ -51,6 +53,22 @@ political_selected={
 "value": 0
 }
 river_hl_on={
+"type": "float",
+"value": 0.0
+}
+area_map={
+"type": "sampler2D",
+"value": "res://shaders/political_default.tres"
+}
+area_palette={
+"type": "sampler2D",
+"value": "res://shaders/political_default.tres"
+}
+area_gray={
+"type": "float",
+"value": 0.0
+}
+area_on={
 "type": "float",
 "value": 0.0
 }

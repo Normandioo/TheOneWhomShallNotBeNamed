@@ -14,6 +14,11 @@ global uniform sampler2D political_palette;
 global uniform float political_on;
 global uniform sampler2D political_top;
 global uniform int political_selected;
+// A área (cultura, etnia, raça, religião, idioma) sobre o mapa político: os países ficam cinzas e a área aparece com a sua cor e uma borda tracejada.
+global uniform sampler2D area_map;
+global uniform sampler2D area_palette;
+global uniform float area_on;
+global uniform float area_gray;  // 1 = o mapa de baixo são os países (ficam cinzas); 0 = outro mapa de área (a cor dele fica, a sobreposição vai por cima)
 // A costa de todos os mapas: R = distância com sinal até a costa em km (+ terra), G = lago (Terrain.CoastImage). Global para o mapa político e as outras
 // camadas desenharem a MESMA linha de costa.
 global uniform sampler2D coast_map : filter_linear, repeat_enable;
@@ -121,6 +126,44 @@ int political_owner(vec2 uv, float width, float coast_km, out float line, out fl
 		}
 	}
 	return best_id;
+}
+
+int area_id(ivec2 p, ivec2 size) {
+	vec2 rg = texelFetch(area_map, ivec2(((p.x % size.x) + size.x) % size.x, clamp(p.y, 0, size.y - 1)), 0).rg;
+	return int(rg.r * 255.0 + 0.5) + 256 * int(rg.g * 255.0 + 0.5);
+}
+
+vec4 area_color(int id) {
+	return texelFetch(area_palette, ivec2(id & 255, id >> 8), 0);
+}
+
+// O dono da área em uv, suavizado como political_owner (a mesma B-spline: a borda sai em curva, sem escada). Só a cor: não há linha de borda.
+int area_owner(vec2 uv) {
+	ivec2 size = textureSize(area_map, 0);
+	vec2 p = vec2(uv.x * float(size.x), clamp(uv.y, 0.0, 1.0) * float(size.y)) - 0.5;
+	ivec2 i0 = ivec2(floor(p)) - 1;
+	vec4 wx = political_bspline(fract(p.x)), wy = political_bspline(fract(p.y));
+	int ids[16];
+	float w[16];
+	for (int j = 0; j < 4; j++) {
+		for (int i = 0; i < 4; i++) {
+			ids[j * 4 + i] = area_id(i0 + ivec2(i, j), size);
+			w[j * 4 + i] = wx[i] * wy[j];
+		}
+	}
+	float best = -1.0;
+	int best_id = -1;
+	for (int k = 0; k < 16; k++) {
+		float s = 0.0;
+		for (int j = 0; j < 16; j++) {
+			s += ids[j] == ids[k] ? w[j] : 0.0;
+		}
+		if (s > best) {
+			best = s;
+			best_id = ids[k];
+		}
+	}
+	return (best_id > 0 && area_color(best_id).a > 0.5) ? best_id : 0;
 }
 
 // O destaque do topo selecionado: 1 = é ele, 0 = não há seleção, -1 = há seleção e é outro.

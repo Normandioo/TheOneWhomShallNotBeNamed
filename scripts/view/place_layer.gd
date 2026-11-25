@@ -46,6 +46,16 @@ func _init() -> void:
 
 
 ## Redesenha tudo. items: o que Registry.MapItems devolve (place_id, place, lat, lon, radius_km, layer, role, entity).
+## Esconde os nomes do outro lado do planeta (eles não têm teste de profundidade).
+func _process(_delta: float) -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null or _labels.is_empty():
+		return
+	var eye := cam.global_position.normalized()
+	for l in _labels:
+		l.visible = l.global_position.normalized().dot(eye) > 0.2
+
+
 func show_items(items: Array) -> void:
 	for l in _labels:
 		l.queue_free()
@@ -275,7 +285,7 @@ func _add_label(group: Array) -> void:
 	label.outline_size = 10
 	label.outline_modulate = Color(0, 0, 0, 0.9)
 	label.modulate = UiKit.layer_color.get(first.layer, Color.WHITE).lightened(0.25)
-	label.no_depth_test = false
+	label.no_depth_test = true  # com teste de profundidade o relevo cortava o nome ao girar o globo; o lado de trás é escondido em _process
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	label.position = EvronGeo.dir(first.lat, first.lon) * radius * (HEIGHT + 0.0008)
 	add_child(label)

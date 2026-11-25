@@ -307,7 +307,7 @@ public partial class Registry
 
         return new Dictionary { ["id"] = id, ["kind"] = kind, ["name"] = NameAt(id, t) is { Length: > 0 } n ? n : Name(id), ["summary"] = Str(e[0][1]),
                                 ["names"] = names, ["tags"] = Tags(id), ["fields"] = fields, ["links"] = links,
-                                ["calendars"] = CalendarsOf(id, t), ["presences"] = PresencesOf(id, t), ["estimates"] = EstimatesOf(id, t),
+                                ["calendars"] = CalendarsOf(id, t), ["presences"] = PresencesOf(id, t), ["estimates"] = EstimatesOf(id, t), ["population"] = PopulationOf(id, t),
                                 ["compositions"] = CompositionsOf(id, t) };
     }
 
@@ -361,6 +361,7 @@ public partial class Registry
             _db.Run("delete from distribution_share where distribution_id in (select id from distribution where subject_id = @0)", id);
             _db.Run("delete from distribution where subject_id = @0", id);
             _db.Run("delete from population_estimate where subject_id = @0", id);
+            _db.Run("delete from population_total where subject_id = @0", id);
             // Quem era categoria de uma distribuição some dela, e a lista deixa de ser completa (não dá para afirmar que está inteira).
             _db.Run("update distribution set complete = 0 where id in (select distribution_id from distribution_share where category_id = @0)", id);
             _db.Run("delete from distribution_share where category_id = @0", id);

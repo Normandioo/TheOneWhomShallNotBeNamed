@@ -77,6 +77,21 @@ func run() -> void:
 	hub.open(aren)
 	if terr._selected_top != aren:
 		return fail("abrir o país o seleciona")
+	# Modo por subdivisões: as províncias do país aberto ficam em cores próprias e os outros países, cinzas.
+	var pal: Array = []
+	terr.palette_changed.connect(func(entries: Array) -> void: pal.assign(entries))
+	terr.set_subdivisions_view(true)
+	var rgb_of := func(id: int) -> int:
+		for e in pal:
+			if int(e.id) == id:
+				return int(e.rgb)
+		return -1
+	var gray_rgb: int = rgb_of.call(dravia)
+	if pal.is_empty() or (gray_rgb >> 16) != ((gray_rgb >> 8) & 255) or rgb_of.call(prov) != int(reg.EntityColor(prov)):
+		return fail("subdivisões: outro país cinza (%x) e a província na própria cor (%x)" % [gray_rgb, rgb_of.call(prov)])
+	terr.set_subdivisions_view(false)
+	if rgb_of.call(prov) != int(reg.EntityColor(aren)):
+		return fail("sem o modo, a província volta à cor do país")
 	if DisplayServer.get_name() != "headless":
 		await _shots(hub, terr, aren)
 	ok("Nova província: criada e ligada pela ficha, pinta só dentro do país, e o mapa mostra os países por baixo")

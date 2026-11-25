@@ -12,6 +12,9 @@ const TerritoryEdit = preload("res://scripts/edit/TerritoryEdit.cs")
 const LayerPanel = preload("res://scripts/ui/layer_panel.gd")
 
 signal painting_changed(on: bool)      # entrou ou saiu do modo pintar
+signal draft_ready(info: Dictionary)   # terminou de pintar o rascunho: abre o cartão "Nova região"
+signal area_palette_changed(entries: Array)  # as cores das áreas mudaram ([{id, rgb}])
+signal draft_closed                      # o rascunho acabou (criado ou descartado)
 signal palette_changed(entries: Array)  # as cores mudaram ([{id, rgb, top}]): quem desenha atualiza a paleta
 signal territory_level_shown(level: String, layer)  # a camada mostrada no globo passou a ser outra
 signal selection_changed(top_id: int)  # o país (ou o topo) a destacar no mapa; 0 = nenhum
@@ -20,6 +23,9 @@ const SNAP_BAND_KM := 60.0  # "assentar no relevo": a fronteira vai até ~6 pixe
 ## As camadas pintáveis (Registry.Levels): a hierarquia política e as áreas de predominância (religião, cultura...).
 const HIERARCHY := ["pais", "provincia", "municipio"]
 const PAINTABLE := ["pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma"]
+const AREA_LEVELS := ["religiao", "cultura", "etnia", "raca", "idioma"]  # as áreas de predominância: aparecem sobre os países (cinzas)
+const DRAFT := 65535            # o dono reservado do rascunho (nenhum cadastro tem esse id)
+const DRAFT_COLOR := 0xc98a82
 
 var hub                    # o DomainHub: o banco, a ficha aberta, abrir e reler a ficha
 var registry
@@ -34,6 +40,10 @@ var boundary_tool := TerritoryBoundaryTool.new()
 var painting_territory := false  # no modo pintar: o botão esquerdo do mouse pinta
 var territory_stroking := false  # uma pincelada em andamento
 var territory_owner := 0         # quem está sendo pintado
+var draft = null                 # a camada do rascunho: o que se pinta sem cadastro, até o cartão "Nova região" dar tipo, nome e a quem pertence
+var drafting := false            # há um rascunho (sendo pintado ou esperando o cartão)
+var _draft_hint := ""            # o tipo que o cartão já traz marcado (pedido por "pintar no mapa" da ficha)
+var _draft_back := "pais"        # o nível que estava na tela antes do rascunho
 var territory_mode := "pincel"   # pincel | balde | borracha | conta-gotas | fronteira
 var territory_radius := 300.0
 var territory_land_only := true
@@ -43,7 +53,11 @@ var _territory_seen := {}        # nível -> a versão vista pela última vez
 var _territory_saved := {}       # nível -> a versão gravada no banco
 var _territory_changed_ms := 0
 var _palette_hash := 0
+var _area_palette_hash := 0
+var overlay_level := ""         # a área ("cultura", "etnia"...) sobreposta ao mapa que está na tela (a caixa das sobreposições); "" = nenhuma
+var _force_upload := false     # a próxima imagem política vai à GPU mesmo sem edição (trocou o que está composto)
 var _selected_top := 0
+var subdivisions_view := false  # mapa político por subdivisões: o país selecionado mostra cada província (e município) na sua cor; os outros ficam cinzas
 var _live_colors := {}           # cadastro -> cor em prévia (o seletor está aberto; ainda não foi gravada)
 
 
@@ -84,6 +98,7 @@ func setup(domain_hub, t, stack, panel, more := {}, factory := Callable()) -> vo
 		sheet.territory_boundary_requested.connect(func() -> void: start_painting(hub.current(), "fronteira"))
 		sheet.territory_clear_requested.connect(_on_territory_clear)
 		sheet.subdivision_requested.connect(_on_subdivide)
+		sheet.paint_kind_requested.connect(func(kind: String) -> void: start_draft(kind))
 		sheet.entity_color_changed.connect(_on_color_changed)
 	refresh_palette()
 
@@ -100,6 +115,8 @@ func bind_import(panel) -> void:
 
 ## O PNG escolhido: separa as regiões e abre o mapeamento com as entidades do nível pintado.
 func _on_import_file(path: String) -> void:
+	if drafting:
+		return  # o rascunho ainda não é um cadastro
 	var img := Image.load_from_file(path)
 	if img == null or img.is_empty():
 		territory_panel.set_message("Não consegui ler a imagem.")
@@ -132,6 +149,8 @@ func _on_import_apply(indices: PackedInt32Array, owners: PackedInt32Array) -> vo
 
 ## Entra no modo pintar território para o país: o botão esquerdo do mouse no globo passa a pintar (Main roteia), com pincel, balde ou borracha.
 func start_painting(id: int, mode := "pincel") -> void:
+	if drafting and id != 0:
+		discard_draft()  # pintar um cadastro abandona o rascunho
 	if not hub.usable or territory == null or hub.is_drawing() or painting_territory or id == 0:
 		return
 	var kind: String = registry.Kind(id)
@@ -162,12 +181,14 @@ func _apply_mask(id: int) -> void:
 		return
 	var parent: int = registry.TerritoryParent(id)
 	if parent != 0 and parent <= 65535:
-		territory.SetMask(layer(HIERARCHY[i - 1]), parent)
+		territory.SetMask(layer(String(registry.Kind(parent))), parent)  # o cadastro de cima pode ser o país mesmo para um município
 	else:
 		territory_panel.set_message("%s não está ligada a um(a) %s: pinta sem limite." % [registry.Name(id), UiKit.kind_label(HIERARCHY[i - 1]).to_lower()])
 
 
 func _refresh_merge_choices() -> void:
+	if drafting:
+		return  # o rascunho não tem nível: ainda não há com quem unir
 	var others: Array = []
 	for p in registry.Palette(territory_level):
 		if int(p.id) != territory_owner and territory.AreaKm2(int(p.id)) > 0.0:
@@ -177,6 +198,8 @@ func _refresh_merge_choices() -> void:
 
 ## Unir: o território inteiro de outro cadastro do mesmo nível passa para o que está sendo pintado.
 func territory_merge(from_id: int) -> void:
+	if drafting:
+		return  # o rascunho ainda não é um cadastro
 	if not painting_territory or registry.Kind(from_id) != territory_level:
 		return
 	territory_end()
@@ -216,6 +239,7 @@ func show_level(level: String) -> void:
 	boundary_tool.use_territory(territory)
 	boundary_tool.below = shown_below()
 	_palette_hash = 0
+	_force_upload = true
 	refresh_palette()
 	territory_level_shown.emit(level, territory)
 
@@ -254,6 +278,12 @@ func shown_below() -> Array:
 ## As camadas que formam a imagem do globo, a de cima primeiro: na hierarquia política, todas (municípios sobre províncias sobre
 ## países; a cor é sempre a do país, estilo Europa Universalis); nas áreas de religião etc., só a do nível.
 func _composed() -> Array:
+	if drafting and territory_level == "rascunho":  # o rascunho por cima, sobre a hierarquia toda
+		var with_draft: Array = [draft]
+		for k in range(HIERARCHY.size() - 1, -1, -1):
+			if levels.has(HIERARCHY[k]):
+				with_draft.append(levels[HIERARCHY[k]])
+		return with_draft
 	if not territory_level in HIERARCHY:
 		return [territory]
 	var out: Array = []
@@ -261,6 +291,33 @@ func _composed() -> Array:
 		if levels.has(HIERARCHY[k]):
 			out.append(levels[HIERARCHY[k]])
 	return out
+
+
+## Está na tela uma área (cultura, etnia, raça, religião ou idioma) sobre o mapa dos países?
+func area_active() -> bool:
+	return overlay_level != ""
+
+
+## O mapa de baixo são os países? Então eles ficam cinzas sob a área sobreposta.
+func area_gray() -> bool:
+	return area_active() and territory_level in HIERARCHY
+
+
+## A camada da sobreposição, ou null.
+func area_layer():
+	return layer(overlay_level) if overlay_level != "" else null
+
+
+## Sobrepõe uma área ao mapa que está na tela ("" tira). Não muda o que está sendo mostrado nem editado.
+func set_overlay(level: String) -> void:
+	overlay_level = level if level in AREA_LEVELS else ""
+	_area_palette_hash = 0
+	refresh_palette()
+
+
+## Os donos da área sobreposta (RG8), para a GPU.
+func area_image() -> Image:
+	return area_layer().Composite([])
 
 
 ## A imagem dos donos que vai para o globo.
@@ -271,7 +328,8 @@ func political_image() -> Image:
 
 ## Alguma das camadas mostradas mudou desde a última imagem? (zera as marcas)
 func political_dirty() -> bool:
-	var dirty := false
+	var dirty := _force_upload
+	_force_upload = false
 	for l in _composed():
 		dirty = dirty or l.Dirty
 		l.Dirty = false
@@ -296,8 +354,135 @@ func _show_warnings() -> void:
 	territory_panel.set_message("\n".join(lines.slice(0, 6)) + ("\n…" if lines.size() > 6 else ""))
 
 
+# --- rascunho: pintar primeiro, dar o nome depois -----------------------------------------------------------------------
+
+## Pintar sem cadastro aberto: a área vira um rascunho (dono reservado, só na tela) até o cartão "Nova região" dar tipo, nome e a quem pertence.
+func start_draft(kind_hint := "") -> void:
+	if kind_hint != "" or not drafting:
+		_draft_hint = kind_hint  # "Pintar mais" (já em rascunho) mantém o tipo pedido
+	if not hub.usable or territory == null or hub.is_drawing() or painting_territory or not layer_factory.is_valid():
+		return
+	if draft == null:
+		draft = layer_factory.call()
+	if not drafting:
+		draft.ClearOwner(DRAFT)
+		_draft_back = territory_level
+		territory_end()
+		territory_level = "rascunho"
+		territory = draft
+		territory.SetMask(null, 0)
+		boundary_tool.use_territory(territory)
+		boundary_tool.below = []
+		drafting = true
+		_palette_hash = 0
+		refresh_palette()
+	territory_owner = DRAFT
+	painting_territory = true
+	territory_stroking = false
+	territory_mode = "pincel"
+	territory_panel.set_mode("pincel")
+	territory_panel.show_state("Região nova", draft.AreaKm2(DRAFT))
+	painting_changed.emit(true)
+
+
+## Terminou de pintar: sem nada pintado o rascunho se encerra; com área, abre o cartão com o tipo e o "pertence a" sugeridos pelo lugar.
+func _finish_draft() -> void:
+	if territory_stroking:
+		territory_end()
+	painting_territory = false
+	territory_panel.hide_panel()
+	painting_changed.emit(false)
+	if draft.AreaKm2(DRAFT) <= 0.0:
+		discard_draft()
+		return
+	var info := _draft_info()
+	if _draft_hint != "":
+		info.kind = _draft_hint
+	draft_ready.emit(info)
+
+
+## O que o cartão sugere: o país que cobre mais da metade da área (e a província, se houver) e um tipo pelo tamanho: pequeno dentro de um país parece município.
+func _draft_info() -> Dictionary:
+	var area: float = draft.AreaKm2(DRAFT)
+	var info := {"area_km2": area, "kind": "pais", "country": {}, "province": {}}
+	var countries = layer("pais")
+	var best := _best_overlap(draft.OverlapKm2(countries, DRAFT), area)
+	if not best.is_empty():
+		info.country = {"id": best.id, "name": registry.Name(int(best.id)), "share": best.share}
+		var fraction: float = area / maxf(float(countries.AreaKm2(int(best.id))), 1.0)
+		info.kind = "municipio" if fraction < 0.15 else ("provincia" if fraction < 0.6 else "pais")
+	var provinces = layer("provincia")
+	var inside := _best_overlap(draft.OverlapKm2(provinces, DRAFT), area)
+	if not inside.is_empty() and info.kind == "municipio":
+		info.province = {"id": inside.id, "name": registry.Name(int(inside.id)), "share": inside.share}
+	return info
+
+
+## Entre os donos de `over` (dono -> km²), o que cobre mais da metade da área; {} se nenhum.
+func _best_overlap(over: Dictionary, area: float) -> Dictionary:
+	var best_id := 0
+	var best_km := 0.0
+	for o in over:
+		if int(o) != 0 and float(over[o]) > best_km:
+			best_id = int(o)
+			best_km = float(over[o])
+	if best_id == 0 or best_km < 0.5 * area:
+		return {}
+	return {"id": best_id, "share": best_km / area}
+
+
+## O cartão pediu "Criar": cria o cadastro, liga ao de cima, passa a área do rascunho para a camada do tipo e abre a ficha.
+func draft_create(kind: String, region_name: String, parent: int) -> void:
+	if not drafting or not kind in PAINTABLE:
+		return
+	var made = registry.Create(kind, region_name if region_name != "" else "Sem nome (%s)" % UiKit.kind_label(kind))
+	if made == null:
+		return
+	var id := int(made)
+	var target = layer(kind)
+	if target == null or id >= DRAFT:
+		territory_panel.set_message("Não foi possível pintar este cadastro (o id passa de 65534).")
+		return
+	var upper: bool = parent > 0 and kind in ["provincia", "municipio"]
+	if upper:
+		registry.Link(id, parent, kind + "_de")
+		target.SetMask(layer(String(registry.Kind(parent))), parent)  # só dentro do de cima
+	else:
+		target.SetMask(null, 0)
+	var edit = target.TakeFrom(draft, DRAFT, id)
+	target.SetMask(null, 0)
+	if edit != null:
+		_record_edit("Criar %s (%d pontos)" % [UiKit.kind_label(kind).to_lower(), edit.Count], edit, kind)
+	_close_draft(kind)
+	hub.open(id)
+
+
+## Descarta o rascunho (e volta ao nível que estava na tela).
+func discard_draft() -> void:
+	if not drafting:
+		return
+	painting_territory = false
+	territory_panel.hide_panel()
+	_close_draft(_draft_back)
+	painting_changed.emit(false)
+
+
+func _close_draft(show: String) -> void:
+	draft.ClearOwner(DRAFT)
+	drafting = false
+	painting_territory = false
+	territory_level = ""  # força show_level a trocar de camada
+	show_level(show if layer(show) != null else "pais")
+	_palette_hash = 0
+	refresh_palette()
+	draft_closed.emit()
+
+
 func stop_painting() -> void:
 	if not painting_territory:
+		return
+	if drafting:
+		_finish_draft()
 		return
 	if territory_stroking:
 		territory_end()
@@ -370,6 +555,8 @@ func _dab(n: Vector3) -> void:
 ## Fronteiras naturais: os países crescem pela terra sem dono a partir do território e da capital (a presença "capital" vigente na data
 ## mostrada). all = todos crescem; senão só o país pintado ganha terra, parando onde os vizinhos chegariam antes.
 func territory_grow(all: bool) -> void:
+	if drafting:
+		return  # o rascunho ainda não é um cadastro
 	if not painting_territory:
 		return
 	var owners := PackedInt32Array()
@@ -387,6 +574,8 @@ func territory_grow(all: bool) -> void:
 
 ## Assenta as fronteiras do país pintado com os vizinhos na crista ou no rio grande mais perto.
 func territory_snap() -> void:
+	if drafting:
+		return  # o rascunho ainda não é um cadastro
 	if painting_territory:
 		_natural_done(territory.Snap(territory_owner, SNAP_BAND_KM), "Assentar fronteiras",
 			"Nada mudou: o país não faz fronteira com outro, ou ela já está no relevo.")
@@ -402,12 +591,13 @@ func _natural_done(edit, name: String, nothing: String) -> void:
 
 
 ## "Nova província" / "Novo município": cria o cadastro de baixo, liga ao aberto e já pinta (só dentro dele).
-func _on_subdivide() -> void:
+func _on_subdivide(child_kind := "") -> void:
 	var parent: int = hub.current()
 	var i := HIERARCHY.find(registry.Kind(parent))
 	if parent == 0 or i < 0 or i + 1 >= HIERARCHY.size():
 		return
-	var child_kind: String = HIERARCHY[i + 1]
+	if child_kind == "":
+		child_kind = HIERARCHY[i + 1]
 	var made = registry.Create(child_kind, "%s de %s" % [{"provincia": "Nova província", "municipio": "Novo município"}[child_kind], registry.Name(parent)])
 	if made == null:
 		return
@@ -439,6 +629,9 @@ func _record_edit(title: String, edit, level := "") -> void:
 			parent_edit = parent_edit.TrimSubdivisions(child, registry)
 			if parent_edit == null:
 				break
+		var direct = levels.get("municipio") if HIERARCHY[i] == "pais" else null  # os municípios ligados direto ao país
+		if direct != null:
+			edit.TrimDirectSubdivisions(direct, registry)
 	commands.push(title, edit)
 
 
@@ -466,18 +659,51 @@ func refresh_palette() -> void:
 	if not hub.usable:
 		return
 	var entries: Array = []
-	var shown_levels: Array = HIERARCHY if territory_level in HIERARCHY else [territory_level]
+	var shown_levels: Array = HIERARCHY if (territory_level in HIERARCHY or territory_level == "rascunho") else [territory_level]
+	if area_active():  # a área sobreposta vai por uma paleta própria
+		var area_entries: Array = []
+		for p in registry.Palette(overlay_level):
+			area_entries.append({"id": int(p.id), "rgb": int(_live_colors.get(int(p.id), p.rgb))})
+		var area_key: int = area_entries.hash()
+		if area_key != _area_palette_hash:
+			_area_palette_hash = area_key
+			area_palette_changed.emit(area_entries)
 	var colors := {}
 	for level in shown_levels:
 		for p in registry.Palette(level):
 			colors[int(p.id)] = int(_live_colors.get(int(p.id), p.rgb))
+	var focus := _selected_top if subdivisions_view and territory_level in HIERARCHY else 0
 	for id in colors:
 		var top := _top(id)
-		entries.append({"id": id, "rgb": colors.get(top, colors[id]), "top": top})
+		var rgb: int = colors.get(top, colors[id])
+		if focus != 0:
+			rgb = _subdivision_color(id, colors) if top == focus else _gray_of(rgb)
+		entries.append({"id": id, "rgb": rgb, "top": top})
+	if drafting:
+		entries.append({"id": DRAFT, "rgb": DRAFT_COLOR, "top": DRAFT})
 	var key: int = entries.hash()
 	if key != _palette_hash:
 		_palette_hash = key
 		palette_changed.emit(entries)
+
+
+## A cor de uma subdivisão no modo por subdivisões: a própria; o município de uma província leva a cor dela.
+func _subdivision_color(id: int, colors: Dictionary) -> int:
+	var parent: int = registry.TerritoryParent(id)
+	if registry.Kind(id) == "municipio" and parent != 0 and registry.Kind(parent) == "provincia":
+		return colors.get(parent, colors[id])
+	return colors[id]
+
+
+func _gray_of(rgb: int) -> int:
+	var lum := (((rgb >> 16) & 255) * 0.299 + ((rgb >> 8) & 255) * 0.587 + (rgb & 255) * 0.114) / 255.0
+	var g := roundi((0.34 + 0.30 * lum) * 255.0)
+	return (g << 16) | (g << 8) | g
+
+
+func set_subdivisions_view(on: bool) -> void:
+	subdivisions_view = on
+	refresh_palette()
 
 
 ## O topo da hierarquia de um cadastro: o país de uma província ou município (subindo pelos vínculos); o próprio id para os outros.
@@ -499,6 +725,8 @@ func refresh_selection() -> void:
 	if top != _selected_top:
 		_selected_top = top
 		selection_changed.emit(top)
+		if subdivisions_view:
+			refresh_palette()
 
 
 ## A camada política é gravada no banco ~1,5 s depois da última edição (e ao fechar), nunca no meio de uma pincelada.

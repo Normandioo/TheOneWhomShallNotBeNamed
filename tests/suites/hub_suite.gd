@@ -132,7 +132,7 @@ func run() -> void:
 
 	# Nome: a correção chega ao registro e à busca; nome vazio é desfeito.
 	hub.open(pais)
-	var name_edit: LineEdit = sheet._pages["Geral"].get_child(0)
+	var name_edit: LineEdit = sheet._pages["Geral"].find_children("*", "LineEdit", true, false)[0]  # o primeiro campo da aba: o nome (dentro do cartão Identidade)
 	name_edit.text = "Reino de Arên"
 	name_edit.text_submitted.emit("Reino de Arên")
 	if reg.Name(pais) != "Reino de Arên" or not search._list.get_item_text(search._ids.find(pais)).begins_with("Reino de Arên"):
@@ -162,7 +162,7 @@ func run() -> void:
 	# Vínculos: criar o idioma, achá-lo pelo painel de vínculo, vincular, abrir pela relação, apagar o vínculo.
 	var idioma := _create(4, "Arenês antigo")
 	hub.open(pais)
-	if sheet._link_type == null or sheet._link_type.item_count < 5:
+	if sheet._link_type == null or sheet._link_type.item_count < 2:
 		return fail("o país deveria poder criar vários tipos de vínculo")
 	for i in sheet._link_type.item_count:
 		if sheet._types[i].code == "idioma_oficial":
@@ -185,6 +185,57 @@ func run() -> void:
 		return fail("apagar o vínculo")
 	ok("vínculo pela ficha: candidatos filtrados pelo tipo, vincular, abrir pela relação, apagar")
 
+	# Hierarquia política: ligar a província a um país e o município à província pela ficha (um só de cima; trocar e tirar).
+	var UiK = preload("res://scripts/ui/ui_kit.gd")
+	var outro_pais := _create(UiK.all_kinds().find("pais"), "Reino de Brel")
+	var provincia := _create(UiK.all_kinds().find("provincia"), "Marca do Norte")
+	var municipio := _create(UiK.all_kinds().find("municipio"), "Vila Alta")
+	hub.set_parent(provincia, pais)
+	hub.set_parent(municipio, provincia)
+	if reg.TerritoryParent(provincia) != pais or reg.TerritoryParent(municipio) != provincia:
+		return fail("ligar a província ao país e o município à província")
+	hub.set_parent(provincia, outro_pais)
+	if reg.TerritoryParent(provincia) != outro_pais or reg.Sheet(provincia, hub.shown_t).links.filter(func(l): return l.outgoing and l.type == "provincia_de").size() != 1:
+		return fail("trocar de país deve substituir o vínculo, não somar")
+	hub.open(provincia)
+	var pickers: Array = (sheet._pages["Composição"].find_children("*", "VBoxContainer", true, false) + sheet._pages["Mapa"].find_children("*", "VBoxContainer", true, false)).filter(func(n): return n.get_script() == sheet.EntityPicker)
+	if pickers.size() < 2 or sheet._types.any(func(t): return t.code == "provincia_de" or t.code == "municipio_de"):
+		return fail("a ficha da província deve ter dois seletores (de cima e de baixo) e não repetir o vínculo na lista geral: %d" % pickers.size())
+	for aba in ["Geral", "Composição", "Mapa", "População"]:  # nenhuma aba pode alargar o painel (largura fixa): senão a ficha sai da tela
+		sheet._select_tab(aba)
+		if sheet.get_combined_minimum_size().x > SheetPanel.WIDTH:
+			return fail("a aba %s alarga a ficha para %d px (o máximo é %d)" % [aba, sheet.get_combined_minimum_size().x, SheetPanel.WIDTH])
+	sheet._select_tab("Geral")
+	hub.set_parent(provincia, 0)
+	if reg.TerritoryParent(provincia) != 0:
+		return fail("tirar a província do país")
+	hub.set_parent(municipio, pais)  # o município pode ficar direto no país: a província é opcional
+	if reg.TerritoryParent(municipio) != pais or reg.Sheet(municipio, hub.shown_t).links.filter(func(l): return l.outgoing and l.type == "municipio_de").size() != 1:
+		return fail("o município deve poder ligar direto ao país, trocando a província")
+	hub.open(municipio)
+	if sheet._geo.chain.parent.id != pais or sheet._geo.chain.country.id != pais:
+		return fail("a cadeia do município direto no país: %s" % [sheet._geo.chain])
+	hub.set_parent(municipio, provincia)
+	hub.set_parent(provincia, pais)
+	hub.open(municipio)
+	if sheet._geo.chain.parent.id != provincia or sheet._geo.chain.country.id != pais:
+		return fail("a cadeia do município na província herda o país dela: %s" % [sheet._geo.chain])
+	hub.set_parent(provincia, 0)
+	hub.set_parent(municipio, 0)
+	ok("hierarquia: ligar, trocar e tirar pela ficha; a lista geral não repete o vínculo")
+
+	# Povo e cultura: o vínculo de presença aparece na seção própria ("à mão"), não na lista geral.
+	var cultura := _create(UiK.all_kinds().find("cultura"), "Cultura Arenesa")
+	reg.Link(pais, cultura, "cultura_presente")
+	hub.open(pais)
+	var textos: Array = _texts(sheet._pages["Composição"], [])
+	if not sheet._pages["Composição"].find_children("*", "Button", true, false).any(func(bt): return bt.text == "Cultura Arenesa") or not textos.has("à mão") or sheet._types.any(func(t): return t.code == "cultura_presente"):
+		return fail("a cultura presente aparece em Povo e cultura (à mão) e sai da lista geral: %s" % [textos])
+	ok("povo e cultura: presença ligada à mão aparece com a origem, fora da lista geral")
+	for l in reg.Sheet(pais, hub.shown_t).links:
+		if l.type == "cultura_presente":
+			reg.DeleteLink(int(l.id))  # as contas dos vínculos adiante partem de só o idioma
+
 	# Duplicar e excluir (com o aviso dos vínculos).
 	hub.open(pais)
 	sheet.link_added.emit("idioma_oficial", idioma)
@@ -193,11 +244,11 @@ func run() -> void:
 	if copia == pais or reg.Name(copia) != "Cópia de Reino de Arên" or reg.Sheet(copia, hub.shown_t).links.size() != 1:
 		return fail("duplicar com vínculos")
 	sheet.delete_requested.emit()
-	if not sheet._confirm.dialog_text.contains("1 vínculo") or reg.Count("pais") != 2:
+	if not sheet._confirm.dialog_text.contains("1 vínculo") or reg.Count("pais") != 3:
 		return fail("o aviso de exclusão deveria citar 1 vínculo: %s" % sheet._confirm.dialog_text)
 	sheet._confirm.hide()
 	sheet.delete_confirmed.emit()
-	if reg.Count("pais") != 1 or sheet.visible or hub.current() != 0:
+	if reg.Count("pais") != 2 or sheet.visible or hub.current() != 0:
 		return fail("excluir a cópia")
 	if reg.Sheet(pais, hub.shown_t).links.size() != 1:
 		return fail("excluir a cópia não pode mexer nos vínculos da original")
@@ -429,6 +480,32 @@ func _map_and_population(pais: int) -> void:
 	if not sheet._geo_message.text.contains("não pode ser menor") or reg.EstimatesOf(pais, hub.shown_t).size() != 2:
 		return fail("faixa invertida deveria avisar e não gravar")
 	ok("população pela ficha: faixa, só nível, número inválido e faixa invertida avisam sem gravar")
+	# Total exato + cidades: "fora das cidades" é a diferença; passar do total avisa.
+	sheet.total_set.emit("abc")
+	if reg.PopulationOf(pais, hub.shown_t).has_total or not sheet._geo_message.text.begins_with("Informe"):
+		return fail("total inválido deveria avisar e não gravar")
+	sheet.total_set.emit("10000")
+	sheet.estimate_added.emit(valdoria_id, "2500", "2500", "", "alta")
+	var pop: Dictionary = reg.PopulationOf(pais, hub.shown_t)
+	if not pop.has_total or pop.total != 10000.0 or pop.in_cities != 2500.0 or pop.outside != 7500.0 or pop.cities.size() != 1:
+		return fail("população total e cidades: %s" % [pop])
+	sheet.estimate_added.emit(vale_id, "9000", "9000", "", "alta")
+	if reg.PopulationOf(pais, hub.shown_t).outside >= 0.0:
+		return fail("cidades acima do total deveriam dar 'fora' negativo")
+	sheet.total_removed.emit()
+	if reg.PopulationOf(pais, hub.shown_t).has_total:
+		return fail("apagar o total não funcionou")
+	ok("população: total exato, cidades, fora das cidades e excesso")
+	# Só as cidades do país no menu (assentamentos ligados a ele); cidade nova no ponto fixado já com habitantes.
+	var names: Array = hub._geo_info(reg.Sheet(pais, hub.shown_t)).cities.map(func(c): return c.name)
+	if not names.has("Valdória"):
+		return fail("o menu de cidades traz os assentamentos do país: %s" % [names])
+	hub.fixed_dir = EvronGeo.dir(5.0, 15.0)
+	sheet.city_created.emit("Porto Novo", "3.500")
+	var novo: Array = reg.EstimatesOf(pais, hub.shown_t).filter(func(e): return e.place == "Porto Novo")
+	if novo.size() != 1 or novo[0].low != 3500.0 or not reg.PresencesOf(pais, hub.shown_t).any(func(p): return p.place == "Porto Novo"):
+		return fail("cidade nova com habitantes: %s" % [novo])
+	ok("população: o menu só traz cidades do país e cria cidade nova no ponto fixado")
 
 	# A composição aparece na ficha (percentuais, faixa derivada, desconhecido) e o texto não promete o que não sabe.
 	var rel1: int = reg.Create("religiao", "Via do silêncio")
@@ -440,8 +517,8 @@ func _map_and_population(pais: int) -> void:
 	var tudo := "\n".join(linhas)
 	if not tudo.contains("Via do silêncio: 60%  ≈ 720–900 pessoas") or not tudo.contains("desconhecido: 10%") or not tudo.contains("lista incompleta"):
 		return fail("a composição na ficha:\n%s" % tudo)
-	if not tudo.contains("1.200–1.500 habitantes") or not tudo.contains("nível alta (sem número) habitantes"):
-		return fail("as estimativas na ficha (faixa com milhar, nível sem número):\n%s" % tudo)
+	if not tudo.contains("Sem população total") or not tudo.contains("Por cidade") or not tudo.contains("9.000"):
+		return fail("as estimativas na ficha (sem total; cidades exatas com milhar):\n%s" % tudo)
 	ok("a ficha mostra a composição (60% ≈ 720–900 pessoas, 10% desconhecido, lista incompleta) e estimativas sem inventar número")
 
 	if main != null:  # com a cena: o clique de verdade no Main fixa o ponto e consulta o mapa

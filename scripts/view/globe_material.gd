@@ -11,6 +11,8 @@ const EMPTY_MAP_TEXTURE = preload("res://shaders/political_default.tres")
 
 var material: ShaderMaterial
 var river_texture: ImageTexture
+var area_texture: ImageTexture               # a área (cultura, etnia...) por cima do mapa político: donos por pixel (RG8)
+var area_palette_texture: ImageTexture       # 256×256: a cor de cada área por id
 var political_texture: ImageTexture          # os donos de cada pixel (RG8)
 var political_palette_texture: ImageTexture  # 256×256: a cor de cada país por id
 var political_top_texture: ImageTexture      # 256×256 RG8: o país de cada id (a província aponta para o país)
@@ -39,6 +41,36 @@ func refresh_rivers(rivers: Image) -> void:
 func set_political(owners: Image) -> void:
 	political_texture = ImageTexture.create_from_image(owners)
 	RenderingServer.global_shader_parameter_set("political_map", political_texture)
+
+
+## A camada de área (cultura, etnia, raça, religião, idioma) mostrada sobre os países.
+func set_area(owners: Image) -> void:
+	if area_texture == null:
+		area_texture = ImageTexture.create_from_image(owners)
+		RenderingServer.global_shader_parameter_set("area_map", area_texture)
+	else:
+		area_texture.update(owners)
+
+
+## A paleta das áreas: entries = [{id, rgb}].
+func set_area_palette(entries: Array) -> void:
+	var img := Image.create(256, 256, false, Image.FORMAT_RGBA8)
+	for e in entries:
+		var id := int(e.id)
+		var rgb := int(e.rgb)
+		if id > 0 and id <= 65535:
+			img.set_pixel(id & 255, id >> 8, Color8((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, 255))
+	if area_palette_texture == null:
+		area_palette_texture = ImageTexture.create_from_image(img)
+		RenderingServer.global_shader_parameter_set("area_palette", area_palette_texture)
+	else:
+		area_palette_texture.update(img)
+
+
+## gray: o mapa de baixo são os países (ficam cinzas).
+func show_area(on: bool, gray := false) -> void:
+	RenderingServer.global_shader_parameter_set("area_on", 1.0 if on else 0.0)
+	RenderingServer.global_shader_parameter_set("area_gray", 1.0 if gray else 0.0)
 
 
 ## Reenvia os donos editados para a GPU (a imagem inteira, 16 MiB).

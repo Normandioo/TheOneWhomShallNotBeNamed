@@ -315,6 +315,8 @@ public partial class Registry
                     entity, (string)n["type"]!, t));
             case "population":
             {
+                var total = _db.Rows("select total from population_total where subject_id = @0 and t <= @1 order by t desc limit 1", entity, t);
+                if (total.Count > 0) return Convert.ToDouble(total[0][0]);
                 var latest = new System.Collections.Generic.Dictionary<long, double>();
                 foreach (var r in _db.Rows("select place_id, low, high from population_estimate where subject_id = @0 and t <= @1 and low is not null " +
                                            "order by t, id", entity, t))

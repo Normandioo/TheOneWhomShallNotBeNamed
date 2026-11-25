@@ -87,6 +87,7 @@ public partial class Registry : RefCounted
         RulesMigration,  // RegistryRules.cs
         CulturalLayersMigration,  // RegistryTerritory.cs
         TerrainTilesMigration,  // RegistryTerrain.cs
+        PopulationMigration,  // RegistryPlaces.cs
     };
 
     WorldDb _db = new();
@@ -195,7 +196,8 @@ public partial class Registry : RefCounted
         var t = _db.Rows("select src_kind, dst_kind from relation_type where code = @0", type);
         if (t.Count == 0) throw new ArgumentException($"tipo de vínculo desconhecido: {type}");
         if (t[0][0] is string sk && sk != Kind(src)) throw new ArgumentException($"{type} exige origem '{sk}', mas {src} é '{Kind(src)}'");
-        if (t[0][1] is string dk && dk != Kind(dst)) throw new ArgumentException($"{type} exige destino '{dk}', mas {dst} é '{Kind(dst)}'");
+        // "Município de" aceita a província ou, direto, o país (a província é opcional).
+        if (t[0][1] is string dk && dk != Kind(dst) && !(type == "municipio_de" && Kind(dst) == "pais")) throw new ArgumentException($"{type} exige destino '{dk}', mas {dst} é '{Kind(dst)}'");
         long dup = Convert.ToInt64(_db.Scalar(
             "select count(*) from relation where type = @0 and src = @1 and dst = @2 and valid_from < @4 and @3 < valid_to", type, src, dst, from, to));
         if (dup > 0) throw new ArgumentException($"vínculo {type} {src}->{dst} já existe nesse período");

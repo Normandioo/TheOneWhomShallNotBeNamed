@@ -13,6 +13,9 @@ var _material
 var _territories
 var _since_upload := 0.0
 var _since_political := 0.0
+var _area_shown := false
+var _area_gray := false
+var _area_key := ""   # a camada de área e a versão que já estão na GPU
 var _coast_task := -1  # tarefa da thread que calcula a costa (-1 = nenhuma)
 var _coast_started := 0
 var _coast_image: Image
@@ -47,9 +50,29 @@ func tick(delta: float) -> void:
 		PerfMonitor.stop("político->GPU", t_p)
 		_since_political = 0.0
 	_since_political += delta
+	var area_on: bool = _territories.area_active()
+	var area_gray: bool = _territories.area_gray()
+	if area_on != _area_shown or area_gray != _area_gray:
+		_area_shown = area_on
+		_area_gray = area_gray
+		_material.show_area(area_on, area_gray)
+	if area_on:
+		var area_layer = _territories.area_layer()
+		var key := "%d:%d" % [area_layer.get_instance_id(), area_layer.Version]
+		if key != _area_key and (not _territories.territory_stroking or _since_political >= UPLOAD_SECONDS):
+			_area_key = key
+			_material.set_area(_territories.area_image())
 	if _terrain.RiversDirty and not _brush.active:  # os rios só mudam ao soltar o mouse, desfazer ou refazer
 		_material.refresh_rivers(_terrain.RiversImage())
 		_terrain.RiversDirty = false
+
+
+## Espera a thread da costa acabar (ao fechar o programa).
+func finish() -> void:
+	if _coast_task != -1:
+		WorkerThreadPool.wait_for_task_completion(_coast_task)
+		_coast_task = -1
+		_coast_image = null
 
 
 ## A costa de todas as camadas leva ~1 s: calculada numa thread, fora da pincelada. Uma edição durante o cálculo pede outro depois.

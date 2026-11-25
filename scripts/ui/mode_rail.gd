@@ -15,7 +15,7 @@ signal overlays_toggled(open: bool)
 const WIDTH := 52
 const ICON := 20
 # Nível territorial (mundo): [nível, ícone, dica, sigla embaixo do ícone]
-const WORLD := [["pais", "politics", "Política: países", "Pol"], ["religiao", "religion", "Religião", "Rel"], ["cultura", "culture", "Cultura", "Cul"],
+const WORLD := [["pais", "politics", "Política: países", "Pol"], ["subdivisoes", "organization", "Política: subdivisões do país aberto (províncias na cor própria, os outros países em cinza)", "Sub"], ["religiao", "religion", "Religião", "Rel"], ["cultura", "culture", "Cultura", "Cul"],
 	["etnia", "ethnicity", "Etnia", "Etn"], ["raca", "race", "Raça", "Raç"], ["idioma", "language", "Idioma", "Idi"]]
 # Grupo de camadas (planeta): [grupo em MapLayers, ícone]
 const PLANET := [["Relevo", "relief"], ["Clima", "climate"], ["Ecologia", "ecology"], ["Solos", "soils"], ["Hidrologia", "hydrology"],
@@ -28,6 +28,7 @@ var _items := {}          # grupo -> {id do item no popup: índice em MapLayers.
 var _overlays: Button
 var _layer := 0
 var _level := "pais"
+var _subs := false
 
 
 func _init() -> void:
@@ -116,9 +117,10 @@ func show_layer(index: int) -> void:
 	_refresh()
 
 
-## Marca o nível mostrado, sem repetir o evento.
-func show_level(level: String) -> void:
+## Marca o nível mostrado, sem repetir o evento. subdivisions: o mapa político está no modo por subdivisões.
+func show_level(level: String, subdivisions := false) -> void:
 	_level = level
+	_subs = subdivisions
 	_refresh()
 
 
@@ -126,7 +128,7 @@ func _refresh() -> void:
 	var data: Dictionary = MapLayers.LAYERS[_layer]
 	var political: bool = data["kind"] == "political"
 	for level in _level_buttons:
-		_mark(_level_buttons[level], political and level == _level)  # o botão plano não desenha o "pressed": o destaque vai no "normal"
+		_mark(_level_buttons[level], political and (level == "subdivisoes" if _subs else level == _level))  # o botão plano não desenha o "pressed": o destaque vai no "normal"
 	for group in _group_buttons:
 		var b: MenuButton = _group_buttons[group]
 		var active: bool = not political and data["group"] == group

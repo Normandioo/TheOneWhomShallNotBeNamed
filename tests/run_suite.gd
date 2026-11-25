@@ -23,6 +23,12 @@ func _initialize() -> void:
 
 func _run() -> void:
 	var args := OS.get_cmdline_user_args()
+	if DisplayServer.get_name() != "headless" and not "visivel" in args:  # a janela desenha fora da tela e sem pegar o foco
+		root.mode = Window.MODE_WINDOWED
+		root.unfocusable = true
+		await process_frame  # sair do maximizado leva um quadro: antes disso a posição é ignorada
+		root.position = Vector2i(-20000, -20000)
+	root.content_scale_mode = Window.CONTENT_SCALE_MODE_DISABLED  # os testes mandam o mouse em pixels da janela: sem a escala do projeto (canvas_items)
 	var script := load("res://" + args[0]) as GDScript
 	if script == null or not script.can_instantiate():
 		push_error("não consegui carregar a suíte " + args[0])  # sem isto o executor ficaria parado para sempre

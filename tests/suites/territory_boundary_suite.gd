@@ -237,6 +237,38 @@ func _subdivisions_after_reload(terrain: Terrain, db_path: String) -> void:
 	registry.Close()
 	DirAccess.remove_absolute(db_path)
 	ok("remodelagem após reabrir restaura província e município e preserva a pintura na faixa retida")
+	_direct_town(terrain, db_path)
+
+
+## Município ligado direto ao país (sem província): quando o país perde um pedaço, o município também é aparado, e o desfazer devolve.
+func _direct_town(terrain: Terrain, db_path: String) -> void:
+	var registry := Registry.new()
+	registry.Open(db_path)
+	var source: int = registry.Create("pais", "Origem")
+	var target: int = registry.Create("pais", "Destino")
+	var town: int = registry.Create("municipio", "Vila direta")
+	registry.Link(town, source, "municipio_de")
+	if registry.TerritoryParent(town) != source:
+		return fail("o município deve poder ligar direto ao país")
+	var countries := Territory.new()
+	var towns := Territory.new()
+	countries.Setup(terrain)
+	towns.Setup(terrain)
+	_rectangle(countries, terrain, Rect2i(80, 56, 20, 47), target)
+	_rectangle(countries, terrain, Rect2i(100, 56, 60, 47), source)
+	_rectangle(towns, terrain, Rect2i(100, 56, 60, 47), town)
+	var returned := _at(terrain, 138, 80)
+	var plan = countries.PlanBoundaryClaim(target, _line(terrain, 145), 0).plan
+	var take = countries.ApplyBoundary(plan)
+	take.TrimDirectSubdivisions(towns, registry)
+	if countries.OwnerAt(returned) != target or towns.OwnerAt(returned) != 0:
+		return fail("a conquista deve recortar o município ligado direto ao país")
+	take.Undo()
+	if countries.OwnerAt(returned) != source or towns.OwnerAt(returned) != town:
+		return fail("desfazer deve devolver o município")
+	registry.Close()
+	DirAccess.remove_absolute(db_path)
+	ok("município direto no país: aparado com o país e devolvido pelo desfazer")
 
 
 func _screen(lat: float, lon: float) -> Vector2:

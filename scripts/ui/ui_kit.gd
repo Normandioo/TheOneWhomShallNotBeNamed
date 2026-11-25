@@ -104,6 +104,20 @@ static func _surface(fill: Color, border: Color, horizontal: int, vertical: int)
 
 
 ## Um painel solto (janelas, menus): borda de destaque e a linha mais forte em cima.
+## O cartão de uma seção da ficha (Pertence a, Divisões, Povo e cultura): um bloco um pouco mais claro que o painel, com borda, para as seções se distinguirem.
+static func card_style() -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color("#1b2f35")
+	s.border_color = Color("#34505a")
+	s.set_border_width_all(1)
+	s.set_corner_radius_all(4)
+	s.content_margin_left = 14
+	s.content_margin_right = 14
+	s.content_margin_top = 12
+	s.content_margin_bottom = 12
+	return s
+
+
 static func panel_style() -> StyleBoxFlat:
 	var panel := _surface(Color("#142328f5"), FRAME, 12, 10)
 	panel.border_width_top = 2

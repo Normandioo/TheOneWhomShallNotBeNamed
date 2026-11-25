@@ -166,6 +166,64 @@ public partial class Territory : RefCounted
         return Apply(all, 0);
     }
 
+    /// Rascunho -> cadastro novo: os pixels de `draft` com dono `draftOwner` passam a ser de `owner` nesta camada (só onde a máscara do nível de cima
+    /// deixa). Edição para desfazer, ou null se não sobrou nada.
+    public TerritoryEdit? TakeFrom(Territory draft, int draftOwner, int owner)
+    {
+        if (owner < 1 || owner > MaxOwner) throw new ArgumentException($"dono fora de 1..{MaxOwner}: {owner}");
+        if (draft.Size != Size) throw new ArgumentException("o rascunho tem outra grade");
+        var all = new List<int>();
+        for (int i = 0; i < Size.X * Size.Y; i++)
+            if (draft.Get(i) == draftOwner && Allowed(i)) all.Add(i);
+        return Apply(all, owner);
+    }
+
+    /// Onde o território de `owner` (nesta camada) cai sobre `other`: dono em `other` -> km² (0 = terra sem dono). Para sugerir a quem o rascunho pertence.
+    public Godot.Collections.Dictionary OverlapKm2(Territory other, int owner)
+    {
+        var sums = new System.Collections.Generic.Dictionary<int, double>();
+        int w = Size.X, h = Size.Y;
+        for (int y = 0; y < h; y++)
+        {
+            double cell = RowCellKm2(y, w, h);
+            for (int x = 0; x < w; x++)
+            {
+                int i = y * w + x;
+                if (Get(i) != owner) continue;
+                int o = other.Get(i);
+                sums[o] = sums.GetValueOrDefault(o) + cell;
+            }
+        }
+        var result = new Godot.Collections.Dictionary();
+        foreach (var (o, km) in sums) result[o] = km;
+        return result;
+    }
+
+    /// O centro de cada dono: dono -> [direção unitária (Vector3), área km², raio equivalente km]. Uma varredura só; para pôr o nome de cada área no globo.
+    public Godot.Collections.Dictionary Centroids()
+    {
+        int w = Size.X, h = Size.Y;
+        var sx = new System.Collections.Generic.Dictionary<int, Vector3>();
+        var area = new System.Collections.Generic.Dictionary<int, double>();
+        for (int y = 0; y < h; y++)
+        {
+            double lat = Math.PI * (0.5 - (y + 0.5) / h), cell = RowCellKm2(y, w, h), cl = Math.Cos(lat), sl = Math.Sin(lat);
+            for (int x = 0; x < w; x++)
+            {
+                int o = Get(y * w + x);
+                if (o == 0) continue;
+                double lon = ((x + 0.5) / w - 0.5) * 2.0 * Math.PI;
+                var v = new Vector3((float)(cl * Math.Sin(lon) * cell), (float)(sl * cell), (float)(cl * Math.Cos(lon) * cell));
+                sx[o] = sx.GetValueOrDefault(o) + v;
+                area[o] = area.GetValueOrDefault(o) + cell;
+            }
+        }
+        var result = new Godot.Collections.Dictionary();
+        foreach (var (o, sum) in sx)
+            if (sum.Length() > 0.0f) result[o] = new Godot.Collections.Array { sum.Normalized(), area[o] };
+        return result;
+    }
+
     /// Unir: todo o território de `from` passa a ser de `to` (um gesto só para desfazer). Edição ou null se `from` não tinha nada.
     public TerritoryEdit? ReplaceOwner(int from, int to)
     {

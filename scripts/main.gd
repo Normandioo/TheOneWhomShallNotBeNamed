@@ -35,6 +35,9 @@ const CalendarPanel = preload("res://scripts/ui/calendar_panel.gd")
 const PresencePanel = preload("res://scripts/ui/presence_panel.gd")
 const DrawPanel = preload("res://scripts/ui/draw_panel.gd")
 const TerritoryPanel = preload("res://scripts/ui/territory_panel.gd")
+const NewRegionCard = preload("res://scripts/ui/new_region_card.gd")
+const AreaBar = preload("res://scripts/ui/area_bar.gd")
+const AreaLabels = preload("res://scripts/view/area_labels.gd")
 const Territory = preload("res://scripts/world/Territory.cs")
 const TerrainEdit = preload("res://scripts/edit/TerrainEdit.cs")
 const DomainHub = preload("res://scripts/app/domain_hub.gd")
@@ -68,6 +71,7 @@ var status_bar: StatusBar
 var _dock := {}  # os painéis que o _layout() posiciona: search, sheet, presence
 var _help: AcceptDialog
 var legend: LegendPanel
+var _country_names := true  # a sobreposição "Nomes dos países"
 var domains: DomainHub                # as fichas (busca, ficha, calendários) e o contexto dos outros controladores
 var territories: TerritoryEditor      # pintar território, camadas, paleta e seleção do mapa
 var place_drawing: PlaceDrawing       # desenhar o contorno de um lugar
@@ -105,6 +109,8 @@ const TIP_WIDTH := 48  # caracteres por linha das dicas
 
 
 func _ready() -> void:
+	if domains_db != ":memory:":  # o jogo abre maximizado; os testes não (a janela deles nasce fora da tela, e maximizar a traria de volta)
+		get_window().mode = Window.MODE_MAXIMIZED
 	get_tree().node_added.connect(func(n: Node) -> void:
 		if n is BaseButton or n is Range:
 			_name_on_hover.call_deferred(n))
@@ -193,16 +199,64 @@ func _ready() -> void:
 	for bar in [territory_panel, tool_panel.edit_bar]:
 		bar.resized.connect(_layout)
 		bar.visibility_changed.connect(_layout)
+	var region_card := NewRegionCard.new()  # "Nova região": o cartão que aparece depois de pintar sem cadastro aberto
+	hud.add_child(region_card)
+	_dock["region_card"] = region_card
+	region_card.resized.connect(_layout)
+	region_card.visibility_changed.connect(_layout)
+	region_card.lookup = func(text: String, kind: String) -> Array: return domains.sheet.lookup.call(text, kind)
 	territories = TerritoryEditor.new()
+	var area_bar := AreaBar.new()  # com um mapa de área na tela: criar uma nova e a dica de clicar para editar
+	hud.add_child(area_bar)
+	_dock["area_bar"] = area_bar
+	area_bar.resized.connect(_layout)
+	area_bar.new_requested.connect(func(kind: String) -> void:
+		if not territories.painting_territory:
+			territories.start_draft(kind))
+	territories.territory_level_shown.connect(func(level: String, _layer) -> void:
+		area_bar.show_kind(level if level in TerritoryEditor.AREA_LEVELS else "")
+		presence_panel.set_area_level(territories.overlay_level)
+		_layout())
+	presence_panel.area_overlay_changed.connect(func(level: String) -> void:  # uma área sobre o mapa que está na tela (não troca de mapa, a não ser para o político)
+		if level != "" and MapLayers.LAYERS[layer]["kind"] != "political":
+			for i in MapLayers.LAYERS.size():
+				if MapLayers.LAYERS[i]["kind"] == "political":
+					set_layer(i)
+					break
+		territories.set_overlay(level))
+	territories.painting_changed.connect(func(on: bool) -> void: area_bar.visible = not on and territories.territory_level in TerritoryEditor.AREA_LEVELS)
+	territories.draft_ready.connect(region_card.show_draft)
+	territories.draft_closed.connect(region_card.hide)
+	region_card.create_requested.connect(territories.draft_create)
+	region_card.discard_requested.connect(territories.discard_draft)
+	region_card.more_requested.connect(func() -> void:
+		region_card.hide()
+		territories.start_draft())
 	territories.palette_changed.connect(material.set_political_palette)
 	territories.selection_changed.connect(material.set_political_selected)
 	territories.painting_changed.connect(_on_painting_changed)
 	territories.setup(domains, territory, commands, territory_panel, {}, _new_layer)  # lê a camada dos países e manda a paleta; as outras sob demanda
+	territories.area_palette_changed.connect(material.set_area_palette)
+	var area_labels := AreaLabels.new()
+	hud.add_child(area_labels)  # rótulos da interface sobre o globo, por baixo dos painéis
+	hud.move_child(area_labels, 0)
+	area_labels.setup(territories, domains, globe)
+	var country_labels := AreaLabels.new()  # os nomes dos países no mapa político (a caixa das sobreposições)
+	country_labels.source_level = "pais"
+	country_labels.font_size = 17
+	country_labels.size_factor = 0.035  # os países são muitos e pequenos: aparecem com menos zoom
+	country_labels.active_when = func() -> bool: return _country_names and MapLayers.LAYERS[layer]["kind"] == "political"
+	hud.add_child(country_labels)
+	hud.move_child(country_labels, 0)
+	country_labels.setup(territories, domains, globe)
+	presence_panel.country_names_changed.connect(func(on: bool) -> void: _country_names = on)
 	material.set_political(territory.OwnersImage())
 	territories.territory_level_shown.connect(func(level: String, _layer) -> void:
 		material.set_political(territories.political_image())
 		layer_panel.show_level(level)
-		mode_rail.show_level(level))
+		if not level in TerritoryEditor.HIERARCHY:
+			territories.set_subdivisions_view(false)
+		mode_rail.show_level(level, territories.subdivisions_view))
 	layer_panel.level_selected.connect(territories.show_level)
 	territories.boundary_tool.preview_changed.connect(func(img) -> void:
 		material.set_political(img if img != null else territories.political_image()))
@@ -252,7 +306,10 @@ func _ready() -> void:
 			if MapLayers.LAYERS[i]["kind"] == "political":
 				set_layer(i)
 				break
-		territories.show_level(level))
+		var subs := level == "subdivisoes"  # o mapa político por subdivisões: os países, com o aberto repartido em províncias
+		territories.set_subdivisions_view(subs)
+		territories.show_level("pais" if subs else level)  # o mapa de área sozinho, sem as fronteiras políticas
+		mode_rail.show_level(territories.territory_level, subs))
 	tool_panel.tool_selected.connect(set_tool)
 	tool_panel.territory_requested.connect(_start_territory)
 	tool_panel.radius_changed.connect(func(km: float) -> void: brush.radius_km = km)
@@ -275,8 +332,7 @@ func _name_on_hover(c: Control) -> void:
 	if c.tooltip_text == "" and c is BaseButton:
 		var label: String = c.text.strip_edges()
 		c.tooltip_text = "Fechar" if label == "✕" else label
-	if c.tooltip_text.length() > TIP_WIDTH and not c.tooltip_text.contains("
-"):
+	if c.tooltip_text.length() > TIP_WIDTH and not c.tooltip_text.contains("\n"):
 		var lines: PackedStringArray = []
 		var line := ""
 		for word in c.tooltip_text.split(" "):
@@ -286,11 +342,12 @@ func _name_on_hover(c: Control) -> void:
 			else:
 				line = word if line == "" else line + " " + word
 		lines.append(line)
-		c.tooltip_text = "
-".join(lines)
+		c.tooltip_text = "\n".join(lines)
 
 
 func _exit_tree() -> void:
+	if gpu_sync != null:
+		gpu_sync.finish()  # a thread da costa lê o relevo: terminar antes de gravar e de fechar (fechar com ela rodando derrubava o programa)
 	if domains != null:
 		save_terrain(true)
 		domains.close()
@@ -417,7 +474,7 @@ func _layout() -> void:
 		left += SearchPanel.WIDTH
 	var free_right: float = width - SheetPanel.WIDTH if _dock["sheet"].visible else width
 	var lift := 0.0  # a barra de edição de baixo (relevo ou território) fica no meio do espaço livre; a legenda sobe acima dela
-	for bar in [_dock.get("territory"), tool_panel.edit_bar]:
+	for bar in [_dock.get("territory"), tool_panel.edit_bar, _dock.get("region_card")]:
 		if bar != null and bar.visible:
 			bar.size = bar.get_combined_minimum_size()
 			bar.position = Vector2(clampf((left + free_right) / 2.0 - bar.size.x / 2.0, left + 8.0, maxf(left + 8.0, free_right - bar.size.x - 8.0)),
@@ -428,6 +485,9 @@ func _layout() -> void:
 	if overlays != null and overlays.visible:
 		overlays.position = Vector2(left + 12.0, (legend.position.y if legend.visible else bottom - 12.0 - lift) - overlays.size.y - 10.0)
 	layer_panel.position = Vector2(left + 12.0, top + 12.0)  # o ponto fixado, em cima do globo
+	var area_bar: Control = _dock.get("area_bar")
+	if area_bar != null:
+		area_bar.position = Vector2(left + 12.0, top + 12.0 + (layer_panel.size.y + 8.0 if layer_panel.visible else 0.0))
 	var sheet: Control = _dock["sheet"]
 	if sheet.visible:
 		sheet.position = Vector2(width - SheetPanel.WIDTH, top)
@@ -447,10 +507,13 @@ func _open_config(which: String) -> void:
 
 ## O modo Território: pinta o cadastro aberto na ficha (T ou o botão da barra de cima).
 func _start_territory() -> void:
-	territories.start_painting(domains.current())
-	if not territories.painting_territory:  # nada aberto na ficha, ou um tipo sem área pintável
+	if domains.current() == 0:
+		territories.start_draft()  # nada aberto: pinta uma região nova e o cartão pergunta o que é
+	else:
+		territories.start_painting(domains.current())
+	if not territories.painting_territory:  # um tipo sem área pintável
 		tool_panel.show_territory_editing(false)
-		time_bar.show_message("Abra um país ou uma província na ficha para pintar o território dele.")
+		time_bar.show_message("Este cadastro não tem área pintável.")
 
 
 ## F1: os atalhos que existem.
@@ -459,7 +522,7 @@ func _show_help() -> void:
 		_help = UiKit.themed(AcceptDialog.new())
 		_help.title = "Atalhos"
 		_help.dialog_text = "V  Navegar
-T  Território: pintar o cadastro aberto na ficha
+T  Território: pintar o cadastro aberto na ficha (sem ficha aberta, cria uma região nova)
 R  Relevo
 O  Recolher ou abrir o Índice
 " 			+ "Ctrl+F  Buscar

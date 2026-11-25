@@ -59,13 +59,19 @@ public partial class TerritoryEdit : RefCounted
     }
 
     /// Ajusta os filhos nas células alteradas pelo pai, respeitando a ocupação e os vínculos atuais.
-    public TerritoryEdit? TrimSubdivisions(Territory child, Registry registry)
+    public TerritoryEdit? TrimSubdivisions(Territory child, Registry registry) => Trim(child, registry, 0);
+
+    /// Para o filho de DUAS camadas abaixo (o município ligado direto ao país): usa os recortes e a profundidade desse nível. (O Godot não aceita argumento opcional.)
+    public TerritoryEdit? TrimDirectSubdivisions(Territory child, Registry registry) => Trim(child, registry, 1);
+
+    private TerritoryEdit? Trim(Territory child, Registry registry, int skip)
     {
+        int depth = _depth + skip;
         if (_territory == null || child.Size != _territory.Size) return null;
         var boundary = _parentBoundary;
         if (_newBoundary != null) boundary = (_territory, _oldBoundary, _newBoundary);
-        var oldClipped = boundary?.Old?.Subdivisions[_depth];
-        var newClipped = boundary?.New.Subdivisions[_depth];
+        var oldClipped = boundary?.Old?.Subdivisions[depth];
+        var newClipped = boundary?.New.Subdivisions[depth];
         bool recorded = false;
         var parents = new Dictionary<int, long>();
         var pixels = new List<int>();
@@ -109,7 +115,7 @@ public partial class TerritoryEdit : RefCounted
         var edit = new TerritoryEdit(child, pixels.ToArray(), previous.ToArray())
         {
             _parentBoundary = boundary,
-            _depth = _depth + 1
+            _depth = depth + 1
         };
         _subdivisions.Add(edit);
         return edit;

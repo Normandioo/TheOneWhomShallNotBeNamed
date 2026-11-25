@@ -168,6 +168,22 @@ func run() -> void:
 		return fail("com a máscara a província pinta só dentro de Aren")
 	ok("tela do modo província: países por baixo; província só pinta dentro do seu país")
 
+	# Rascunho -> cadastro: a sobreposição acha o país por baixo e TakeFrom passa a área para a camada do tipo, só dentro do cadastro de cima.
+	var rough = _layer(terrain)
+	_paint(rough, 0, 55, 900, 65535)
+	var over: Dictionary = rough.OverlapKm2(countries, 65535)
+	if not over.has(a) or float(over[a]) < 0.9 * (float(over[a]) + float(over.get(0, 0.0)) + float(over.get(b, 0.0))):
+		return fail("a sobreposição do rascunho acha o país por baixo: %s" % [over])
+	var took = _layer(terrain)
+	took.SetMask(countries, a)
+	var take_edit = took.TakeFrom(rough, 65535, p2)
+	if take_edit == null or took.OwnerAt(EvronGeo.dir(0, 55)) != p2:
+		return fail("TakeFrom passa a área do rascunho para o cadastro novo")
+	take_edit.Undo()
+	if took.OwnerAt(EvronGeo.dir(0, 55)) != 0:
+		return fail("desfazer o TakeFrom")
+	ok("rascunho: sobreposição por país e TakeFrom com máscara e desfazer")
+
 	# Contorno fechado em terra vazia: o mundo começa sem dono.
 	var empty_world = _layer(terrain)
 	var loop := PackedVector3Array([EvronGeo.dir(10, -60), EvronGeo.dir(10, -40), EvronGeo.dir(-10, -40), EvronGeo.dir(-10, -60)])

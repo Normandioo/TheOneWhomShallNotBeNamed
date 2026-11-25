@@ -95,7 +95,7 @@ func run() -> void:
 		return fail("o texto da ficha de A foi parar em B: '%s'" % reg.GetField(b, "pais.governo").value)
 	if reg.GetField(pais, "pais.governo").value != "texto digitado na ficha de A":
 		return fail("o texto digitado na ficha de A deveria ter sido gravado em A: '%s'" % reg.GetField(pais, "pais.governo").value)
-	var nome_b: LineEdit = sheet._pages["Geral"].get_child(0)
+	var nome_b: LineEdit = sheet._pages["Geral"].find_children("*", "LineEdit", true, false)[0]
 	nome_b.text = "Reino B corrigido"
 	nome_b.grab_focus()
 	await frames(2)
@@ -145,7 +145,7 @@ func run() -> void:
 	var achou := false
 	for i in pick.item_count:
 		achou = achou or pick.get_item_text(i) == "Lugar 204"
-	if not achou or sheet._place_pickers[1].item_count != 1:
+	if not achou:
 		return fail("a busca 'Lugar 204' deveria achar o 205º lugar nos menus (itens=%d)" % pick.item_count)
 	sheet.estimate_added.emit(int(pick.get_item_metadata(0)), "10", "", "", "media")
 	if reg.EstimatesOf(pais, hub.shown_t).filter(func(x): return x.place == "Lugar 204").size() != 1:

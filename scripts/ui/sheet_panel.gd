@@ -18,6 +18,8 @@ signal link_added(type: String, other_id: int)
 signal link_removed(link_id: int)
 signal link_search(text: String, dst_kind: String)
 signal open_entity(id: int)
+signal paint_kind_requested(kind: String)   # "pintar no mapa": abre uma região nova já deste tipo (cultura, etnia, raça, religião ou idioma)
+signal hierarchy_set(child_id: int, parent_id: int)  # ligar um município a uma província, ou uma província a um país (parent_id 0 = tirar do de cima)
 signal duplicate_requested(copy_links: bool)
 signal delete_requested
 signal delete_confirmed
@@ -29,7 +31,7 @@ signal border_draw_requested(name: String, role: String)   # desenhar uma fronte
 signal border_redraw_requested(place_id: int, role: String)  # refazer o contorno de um lugar que já é contorno
 signal territory_paint_requested                              # entrar no modo pintar território para este país
 signal territory_boundary_requested                           # entrar direto no pincel de fronteira do país selecionado
-signal subdivision_requested                                # criar uma província (ou município) dentro deste cadastro e pintá-la
+signal subdivision_requested(child_kind: String)            # criar uma província (ou município) dentro deste cadastro e pintá-la
 signal territory_clear_requested                              # apagar todo o território deste país (desfaz com Ctrl+Z)
 signal entity_color_changed(entity_id: int, rgb: int, final: bool)  # final = o usuário fechou o seletor (grava); senão, prévia na paleta
 signal place_search(text: String)  # buscar lugares para os menus (o hub responde com show_place_candidates)
@@ -38,8 +40,18 @@ signal presence_removed(presence_id: int)
 signal place_created(name: String, kind: String, radius_km: float, role: String)  # no ponto fixado no mapa
 signal estimate_added(place_id: int, low: String, high: String, level: String, certainty: String)
 signal estimate_removed(estimate_id: int)
+signal total_set(text: String)
+signal total_removed
+signal city_created(name: String, count: String)  # uma cidade nova no ponto fixado, já com habitantes
 
+const EntityPicker = preload("res://scripts/ui/entity_picker.gd")
 const WIDTH := 420
+const CATEGORY_COLORS := {"cultura": Color("#7fb8a8"), "etnia": Color("#e0907f"), "raca": Color("#b5c070"), "religiao": Color("#dfb868"), "idioma": Color("#8fa9e0")}
+const PRESENCE_TYPES := ["cultura_presente", "etnia_presente", "raca_presente", "religiao_presente", "idioma_falado"]
+const CATEGORIES := [["cultura", "Culturas", "cultura_presente"], ["etnia", "Etnias", "etnia_presente"], ["raca", "Raças", "raca_presente"],
+	["religiao", "Religiões", "religiao_presente"], ["idioma", "Idiomas", "idioma_falado"]]
+const PARENT_OF := {"provincia": "pais", "municipio": "provincia"}  # a hierarquia política: o cadastro de cima de cada nível
+const CHILD_OF := {"pais": ["provincia", "municipio"], "provincia": ["municipio"]}
 const FOREVER := 9223372036854775807
 const STATES := ["known", "unknown", "na"]
 const STATE_LABELS := ["Valor", "Desconhecido", "Não se aplica"]
@@ -55,7 +67,7 @@ var _banner: PanelContainer
 var _crest: Control
 var _name_label: Label
 var _subtitle: Label
-var _actions: HBoxContainer      # Pintar território e a subdivisão, logo abaixo do cabeçalho (só para quem tem território)
+var _actions: HFlowContainer     # Pintar território e a subdivisão, logo abaixo do cabeçalho (só para quem tem território)
 var _actions_wrap: Control
 var _boundary_brush: Button
 var _scroll: ScrollContainer
@@ -71,6 +83,9 @@ var _sheet := {}
 var _fields := {}          # código -> {row, state, editor, type, last_state, last_value}
 var _add_menu: OptionButton
 var _types: Array = []     # tipos de vínculo que esta ficha pode criar
+var _division_open := {}     # província -> aberta na lista de divisões
+var _category_open := {}     # categoria vazia -> expandida (para ligar a primeira)
+var lookup: Callable        # (texto, tipo) -> [{id, kind, name}]: a busca dos seletores de cadastro (quem liga é o DomainHub)
 var _link_type: OptionButton
 var _link_query: LineEdit
 var _link_candidates: OptionButton
@@ -141,8 +156,9 @@ func _init() -> void:
 		visible = false
 		closed.emit())
 	head.add_child(close)
-	_actions = HBoxContainer.new()
-	_actions.add_theme_constant_override("separation", 6)
+	_actions = HFlowContainer.new()  # quebra a linha: país tem três botões (pintar, ＋ Província, ＋ Município) e não cabem nos 420 px lado a lado
+	_actions.add_theme_constant_override("h_separation", 6)
+	_actions.add_theme_constant_override("v_separation", 6)
 	_actions_wrap = _margin(_actions, 14, 12, 4)
 	_actions_wrap.hide()
 	root.add_child(_actions_wrap)
@@ -184,7 +200,8 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	else:
 		_tab_scroll.clear()
 	_sheet = sheet
-	_types = link_types
+	var covered: bool = String(sheet.kind) in ["pais", "provincia", "municipio"]  # nestes, a presença de povo e cultura vai na seção Povo e cultura
+	_types = link_types.filter(func(t: Dictionary) -> bool: return not String(t.code) in ["provincia_de", "municipio_de"] and not (covered and String(t.code) in PRESENCE_TYPES))  # estes vão nas seções Hierarquia e Povo e cultura
 	_calendars = calendars
 	_geo = geo
 	visible = true
@@ -209,11 +226,13 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	_build_names()
 	_build_content()
 	_build_footer()
-	_add_tab("Relações")
+	_add_tab("Composição" if String(sheet.kind) in ["pais", "provincia", "municipio"] else "Relações")
 	_build_links()
 	if not _geo.is_empty():
 		_add_tab("Mapa")
 	_build_territory()
+	if not _geo.is_empty() and CHILD_OF.has(String(_sheet.kind)):
+		_build_divisions(int(_sheet.id), String(_sheet.kind))
 	_build_places()
 	if not _geo.is_empty():
 		_add_tab("População")
@@ -242,7 +261,7 @@ func _add_tab(label: String) -> void:
 	button.text = label
 	button.toggle_mode = true
 	button.clip_text = true  # cinco abas cabem nos 420 px do painel
-	button.add_theme_font_size_override("font_size", 12)
+	button.add_theme_font_size_override("font_size", 11)
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.pressed.connect(_select_tab.bind(label))
 	_tab_bar.add_child(button)
@@ -284,11 +303,13 @@ func show_fixed_point(text: String, enabled: bool) -> void:
 func show_territory_message(text: String) -> void:
 	if _territory_msg != null:
 		_territory_msg.text = text
+		_territory_msg.visible = text != ""
 
 
 func show_border_message(text: String) -> void:
 	if _border_msg != null:
 		_border_msg.text = text
+		_border_msg.visible = text != ""
 
 
 func show_geo_message(text: String) -> void:
@@ -344,6 +365,7 @@ func confirm_delete(name: String, links: int) -> void:
 # --- seções -------------------------------------------------------------------------------------------------------
 
 func _build_identity() -> void:
+	var id_box := _card("Identidade")
 	var name_edit := LineEdit.new()
 	var eid := int(_sheet.id)  # a entidade desta ficha: capturado agora, porque o foco pode sair quando outra ficha já abriu
 	name_edit.text = _sheet.name
@@ -359,9 +381,12 @@ func _build_identity() -> void:
 			name_changed.emit(eid, t)
 	name_edit.text_submitted.connect(func(_t: String) -> void: commit.call())
 	name_edit.focus_exited.connect(commit)
-	_page.add_child(name_edit)
+	id_box.add_child(name_edit)
 
-	_label("Resumo")
+	var summary_label := Label.new()
+	summary_label.text = "Resumo"
+	summary_label.modulate = Color(1, 1, 1, 0.7)
+	id_box.add_child(summary_label)
 	var summary := TextEdit.new()
 	summary.text = _sheet.summary
 	summary.custom_minimum_size = Vector2(0, 64)
@@ -372,10 +397,10 @@ func _build_identity() -> void:
 		if summary.text != last_summary[0]:
 			last_summary[0] = summary.text
 			summary_changed.emit(eid, summary.text))
-	_page.add_child(summary)
+	id_box.add_child(summary)
 
 	var tags := HFlowContainer.new()
-	_page.add_child(tags)
+	id_box.add_child(tags)
 	for t in _sheet.tags:
 		var b := Button.new()
 		b.text = "%s ✕" % t
@@ -550,11 +575,343 @@ func _write_editor(entry: Dictionary, value: String) -> void:
 		e.text = value
 
 
+## "Pertence a" (província e município): a cadeia em uma linha e a linha de cada cima. "Divisões" (país e província): as divisões com as de baixo, recolhíveis.
+func _build_hierarchy() -> void:
+	var kind := String(_sheet.kind)
+	if not PARENT_OF.has(kind) and not CHILD_OF.has(kind):
+		return
+	var me := int(_sheet.id)
+	var chain: Dictionary = _geo.get("chain", {"parent": {}, "country": {}})
+	var parent: Dictionary = chain.parent
+	if PARENT_OF.has(kind):
+		var box := _card("Pertence a")
+		var trail := HFlowContainer.new()
+		trail.add_theme_constant_override("h_separation", 6)
+		box.add_child(trail)
+		var parts: Array = []
+		if not chain.country.is_empty():
+			parts.append([String(chain.country.name), int(chain.country.id), false])
+		else:
+			parts.append(["sem país", 0, true])
+		if kind == "municipio":
+			if not parent.is_empty() and String(parent.kind) == "provincia":
+				parts.append([String(parent.name), int(parent.id), false])
+			else:
+				parts.append(["sem província", 0, true])
+		parts.append([String(_sheet.name), me, false])
+		for i in parts.size():
+			if i > 0:
+				var arrow := Label.new()
+				arrow.text = "›"
+				arrow.modulate = Color(1, 1, 1, 0.6)
+				trail.add_child(arrow)
+			var p: Array = parts[i]
+			var b := Button.new()
+			b.text = p[0]
+			b.flat = true
+			b.disabled = p[1] == 0 or p[1] == me
+			if p[2]:
+				b.modulate = Color(1, 1, 1, 0.55)
+			if p[1] != 0 and p[1] != me:
+				b.pressed.connect(func() -> void: open_entity.emit(int(p[1])))
+			trail.add_child(b)
+		var direct_in_country := not parent.is_empty() and String(parent.kind) == "pais"
+		_parent_line(box, "País", "pais", me, chain.country, direct_in_country)
+		if kind == "municipio":
+			var in_province := not parent.is_empty() and String(parent.kind) == "provincia"
+			_parent_line(box, "Província", "provincia", me, parent if in_province else {}, in_province)
+	# As divisões (o que está dentro deste cadastro) ficam na aba Mapa: ver show_sheet.
+
+
+## As divisões: cada província com o resumo "província · N municípios" e, abertas (▾), os municípios dela; os municípios direto no país embaixo.
+## Os botões: pintar uma divisão nova (abre o rascunho já deste tipo) e ligar uma existente (um campo de busca que aparece no clique).
+func _build_divisions(me: int, kind: String) -> void:
+	var box := _card("Divisões")
+	var tree: Array = _geo.get("division", [])
+	var have: Array = [me]
+	if tree.is_empty():
+		box.add_child(_note("Nenhuma divisão ainda."))
+	for d in tree:
+		have.append(int(d.id))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		row.custom_minimum_size.y = 32
+		box.add_child(row)
+		var kids: Array = d.children
+		var is_province: bool = String(d.kind) == "provincia"
+		var is_open: bool = _division_open.get(int(d.id), false)
+		var fold := Button.new()
+		fold.text = ("▾" if is_open else "▸") if not kids.is_empty() else ""
+		fold.flat = true
+		fold.disabled = kids.is_empty()
+		fold.custom_minimum_size.x = 28
+		fold.pressed.connect(func() -> void:
+			_division_open[int(d.id)] = not is_open
+			show_sheet(_sheet, _types, _calendars, _geo))
+		row.add_child(fold)
+		var open := Button.new()
+		open.text = String(d.name)
+		open.flat = true
+		open.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		open.clip_text = true
+		open.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		open.add_theme_font_size_override("font_size", 16)
+		open.pressed.connect(func() -> void: open_entity.emit(int(d.id)))
+		row.add_child(open)
+		if is_province:
+			if not kids.is_empty():
+				row.add_child(_pill("%d município%s" % [kids.size(), "" if kids.size() == 1 else "s"], Color("#8fa9e0")))
+		else:
+			row.add_child(_pill("município, direto no país", Color("#b5c070")))
+		var del := Button.new()
+		del.text = "✕"
+		del.flat = true
+		del.tooltip_text = "Tirar %s daqui (o território pintado continua)" % d.name
+		del.pressed.connect(func() -> void: hierarchy_set.emit(int(d.id), 0))
+		row.add_child(del)
+		if is_open:
+			for c in kids:
+				have.append(int(c.id))
+				var sub := HBoxContainer.new()
+				sub.custom_minimum_size.y = 28
+				box.add_child(sub)
+				var spacer := Control.new()
+				spacer.custom_minimum_size.x = 34
+				sub.add_child(spacer)
+				var branch := Label.new()
+				branch.text = "└"
+				branch.modulate = Color(1, 1, 1, 0.4)
+				sub.add_child(branch)
+				var sub_open := Button.new()
+				sub_open.text = String(c.name)
+				sub_open.flat = true
+				sub_open.alignment = HORIZONTAL_ALIGNMENT_LEFT
+				sub_open.clip_text = true
+				sub_open.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				sub_open.modulate = Color(1, 1, 1, 0.85)
+				sub_open.pressed.connect(func() -> void: open_entity.emit(int(c.id)))
+				sub.add_child(sub_open)
+				var sub_del := Button.new()
+				sub_del.text = "✕"
+				sub_del.flat = true
+				sub_del.tooltip_text = "Tirar %s daqui (o território pintado continua)" % c.name
+				sub_del.pressed.connect(func() -> void: hierarchy_set.emit(int(c.id), 0))
+				sub.add_child(sub_del)
+		_rule(box)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 8)
+	box.add_child(actions)
+	var paint := Button.new()
+	paint.text = "＋ Pintar divisão"
+	paint.add_theme_stylebox_override("normal", UiKit.active_style())
+	paint.tooltip_text = "Pinta a área de uma província nova (ou de um município, dentro de uma província): o cartão pergunta o nome."
+	paint.pressed.connect(func() -> void: paint_kind_requested.emit("provincia" if kind == "pais" else "municipio"))
+	actions.add_child(paint)
+	var link := Button.new()
+	link.text = "Ligar existente…"
+	actions.add_child(link)
+	var picker := EntityPicker.new("digite o nome", "" if kind == "pais" else "municipio", _division_lookup(kind), have)
+	picker.visible = false
+	picker.picked.connect(func(id: int) -> void: hierarchy_set.emit(id, me))
+	box.add_child(picker)
+	link.pressed.connect(func() -> void: picker.visible = not picker.visible)
+
+
+## A busca do "Ligar existente…" de um país: só províncias e municípios.
+func _division_lookup(kind: String) -> Callable:
+	if kind != "pais":
+		return lookup
+	return func(text: String, _kind: String) -> Array:
+		var found: Array = lookup.call(text, "") if lookup.is_valid() else []
+		return found.filter(func(it) -> bool: return String(it.kind) in ["provincia", "municipio"])
+
+
+## Uma linha "País: Drikhor ✕" com o campo para trocar. `shown` é o cadastro mostrado (vazio = nenhum); `removable` diz se o ✕ tira o vínculo daqui.
+func _parent_line(box: VBoxContainer, label_text: String, parent_kind: String, me: int, shown: Dictionary, removable: bool) -> void:
+	var row := HBoxContainer.new()
+	box.add_child(row)
+	var label := Label.new()
+	label.text = label_text + ":"
+	label.custom_minimum_size.x = 84
+	row.add_child(label)
+	if shown.is_empty():
+		var none := Label.new()
+		none.text = "nenhum" if parent_kind == "pais" else "nenhuma (opcional)"
+		none.modulate = Color(1, 1, 1, 0.6)
+		row.add_child(none)
+	else:
+		var open := Button.new()
+		open.text = String(shown.name)
+		open.flat = true
+		open.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		open.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		open.pressed.connect(func() -> void: open_entity.emit(int(shown.id)))
+		row.add_child(open)
+		if removable:
+			var del := Button.new()
+			del.text = "✕"
+			del.flat = true
+			del.tooltip_text = "Tirar de %s (o território pintado continua)" % shown.name
+			del.pressed.connect(func() -> void: hierarchy_set.emit(me, 0))
+			row.add_child(del)
+	var article := "a província" if parent_kind == "provincia" else "o país"
+	var picker := EntityPicker.new(("trocar %s: digite o nome" if not shown.is_empty() else "escolher %s: digite o nome") % article, parent_kind, lookup, [me])
+	picker.picked.connect(func(id: int) -> void: hierarchy_set.emit(me, id))
+	box.add_child(picker)
+
+
+## "Povo e cultura": para país, província e município, cada categoria com algo lista o que está presente e a origem do número: "pelo mapa" (a fração da área
+## coberta pela camada pintada) ou "à mão" (um vínculo feito pela ficha, sem porcentagem). As vazias ficam numa linha de títulos recolhidos no fim.
+func _build_composition() -> void:
+	if not String(_sheet.kind) in ["pais", "provincia", "municipio"]:
+		return
+	var me := int(_sheet.id)
+	var from_map: Dictionary = _geo.get("composition", {})
+	var box := _card("Povo e cultura")
+	var empty: Array = []
+	for cat in CATEGORIES:
+		var shown := {}
+		var rows: Array = []
+		for r in from_map.get(cat[0], []):
+			shown[int(r.id)] = true
+			rows.append([String(r.name), float(r.share), "pelo mapa", int(r.id), 0])
+		var have: Array = [me]
+		for l in _sheet.links:
+			if l.outgoing and l.type == cat[2]:
+				have.append(int(l.other_id))
+				if not shown.has(int(l.other_id)):
+					rows.append([String(l.other_name), -1.0, "à mão", int(l.other_id), int(l.id)])
+		var expanded: bool = _category_open.get(String(cat[0]), false)
+		if rows.is_empty() and not expanded:
+			empty.append([cat, have])
+			continue
+		var caption := Button.new()
+		caption.text = "● %s%s" % [("▾ " if rows.is_empty() else ""), String(cat[1]).to_upper()]
+		caption.flat = true
+		caption.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		caption.add_theme_font_size_override("font_size", 13)
+		caption.add_theme_color_override("font_color", CATEGORY_COLORS[cat[0]])
+		caption.add_theme_color_override("font_disabled_color", CATEGORY_COLORS[cat[0]])
+		caption.disabled = not rows.is_empty()
+		caption.pressed.connect(func() -> void:
+			_category_open[String(cat[0])] = false
+			show_sheet(_sheet, _types, _calendars, _geo))
+		box.add_child(caption)
+		for r in rows:
+			_composition_row(box, r[0], r[1], r[2], r[3], r[4], CATEGORY_COLORS[cat[0]])
+			_rule(box)
+		_category_actions(box, cat, have, me)
+	if not empty.is_empty():
+		var line := HFlowContainer.new()
+		line.add_theme_constant_override("h_separation", 6)
+		box.add_child(line)
+		for e in empty:
+			var cat: Array = e[0]
+			var fold := Button.new()
+			fold.text = "%s (0) ▸" % cat[1]
+			fold.flat = true
+			fold.add_theme_font_size_override("font_size", 13)
+			fold.modulate = Color(1, 1, 1, 0.7)
+			fold.pressed.connect(func() -> void:
+				_category_open[String(cat[0])] = true
+				show_sheet(_sheet, _types, _calendars, _geo))
+			line.add_child(fold)
+
+
+## As duas formas de ligar numa categoria, em texto pequeno: escolher na lista (abre o campo de busca) e pintar no mapa (abre o rascunho já deste tipo).
+func _category_actions(box: VBoxContainer, cat: Array, have: Array, me: int) -> void:
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 8)
+	box.add_child(actions)
+	var pick := Button.new()
+	pick.text = "＋ Escolher na lista"
+	pick.tooltip_text = "Liga um cadastro que já existe: abre um campo de busca."
+	actions.add_child(pick)
+	var paint := Button.new()
+	paint.text = "Pintar no mapa"
+	paint.tooltip_text = "Pinta a área onde isto predomina; a porcentagem sai da sobreposição com este território."
+	paint.pressed.connect(func() -> void: paint_kind_requested.emit(String(cat[0])))
+	actions.add_child(paint)
+	var picker := EntityPicker.new("digite o nome", cat[0], lookup, have)
+	picker.visible = false
+	picker.picked.connect(func(id: int) -> void: link_added.emit(String(cat[2]), id))
+	box.add_child(picker)
+	pick.pressed.connect(func() -> void: picker.visible = not picker.visible)
+
+
+func _composition_row(box: VBoxContainer, entry_name: String, share: float, origin: String, entry_id: int, link_id: int, color: Color) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	row.custom_minimum_size.y = 32
+	box.add_child(row)
+	var open := Button.new()
+	open.text = entry_name
+	open.flat = true
+	open.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	open.custom_minimum_size.x = 120
+	open.clip_text = true
+	open.add_theme_font_size_override("font_size", 16)
+	open.pressed.connect(func() -> void: open_entity.emit(entry_id))
+	row.add_child(open)
+	var bar := ProgressBar.new()
+	bar.show_percentage = false
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.value = maxf(share, 0.0)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar.custom_minimum_size = Vector2(50, 10)
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color(0, 0, 0, 0.35)
+	track.set_corner_radius_all(5)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = color
+	fill.set_corner_radius_all(5)
+	bar.add_theme_stylebox_override("background", track)
+	bar.add_theme_stylebox_override("fill", fill)
+	row.add_child(bar)
+	var pct := Label.new()
+	pct.text = "%d%%" % roundi(share * 100.0) if share >= 0.0 else "—"
+	pct.add_theme_font_size_override("font_size", 16)
+	pct.custom_minimum_size.x = 44
+	pct.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(pct)
+	row.add_child(_pill(origin, Color("#7fb8a8") if origin == "pelo mapa" else Color("#dfb868")))
+	if link_id != 0:
+		var del := Button.new()
+		del.text = "✕"
+		del.flat = true
+		del.tooltip_text = "Tirar este vínculo"
+		del.pressed.connect(func() -> void: link_removed.emit(link_id))
+		row.add_child(del)
+
+
 func _build_links() -> void:
-	var box := _section("Relações")
-	if _sheet.links.is_empty():
+	_build_hierarchy()
+	_build_composition()
+	var covered := String(_sheet.kind) in ["pais", "provincia", "municipio"]
+	var others: Array = _sheet.links.filter(func(l: Dictionary) -> bool: return not String(l.type) in ["provincia_de", "municipio_de"] and not (covered and l.outgoing and String(l.type) in PRESENCE_TYPES))  # estes estão em Hierarquia e Povo e cultura
+	var collapsed := covered and others.is_empty()  # nada a mostrar: o bloco de ligar fica atrás de um clique (os controles existem, só escondidos)
+	var toggle: Button = null
+	if collapsed:
+		toggle = Button.new()
+		toggle.text = "Outras relações ▸"
+		toggle.flat = true
+		toggle.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		_page.add_child(toggle)
+	var box := _card("Outras relações") if covered else _section("Relações")
+	if collapsed:
+		var hidden: Array = [box.get_parent().get_parent() if box.get_parent() is PanelContainer else box]  # o cartão (com a margem) inteiro
+		for n in hidden:
+			n.visible = false
+		toggle.pressed.connect(func() -> void:
+			var on: bool = not hidden[0].visible
+			for n in hidden:
+				n.visible = on
+			toggle.text = "Outras relações ▾" if on else "Outras relações ▸")
+	elif others.is_empty():
 		box.add_child(_note("Nenhuma relação ainda."))
-	for l in _sheet.links:
+	for l in others:
 		var row := HBoxContainer.new()
 		box.add_child(row)
 		var label := Label.new()
@@ -616,23 +973,25 @@ func _build_territory() -> void:
 	var info: Dictionary = _geo.territory
 	var eid := int(_sheet.id)
 	var box := _section("Território" if _sheet.kind in ["pais", "provincia", "municipio"] else "Área no mapa")
-	box.add_child(_note("≈ %s km² pintados no mapa." % LayerPanel._thousands(roundi(info.area_km2)) if info.area_km2 > 0.0 else "Ainda sem território pintado."))
-	var color_row := HBoxContainer.new()
-	box.add_child(color_row)
-	var color_label := Label.new()
-	color_label.text = "Cor no mapa:"
-	color_row.add_child(color_label)
+	var row := HBoxContainer.new()  # uma linha: a área, a cor e apagar
+	row.add_theme_constant_override("separation", 10)
+	box.add_child(row)
+	var area := Label.new()
+	area.text = "%s km²" % LayerPanel._thousands(roundi(info.area_km2)) if info.area_km2 > 0.0 else "Sem território"
+	area.add_theme_font_size_override("font_size", 18)
+	area.modulate = Color(1, 1, 1, 1.0 if info.area_km2 > 0.0 else 0.6)
+	area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(area)
 	var picker := ColorPickerButton.new()
 	picker.edit_alpha = false
-	picker.custom_minimum_size = Vector2(70, 0)
+	picker.custom_minimum_size = Vector2(46, 30)
+	picker.tooltip_text = "Cor no mapa"
 	picker.color = Color8((info.color >> 16) & 255, (info.color >> 8) & 255, info.color & 255)
 	var rgb_of := func(c: Color) -> int:
 		return (roundi(c.r * 255.0) << 16) | (roundi(c.g * 255.0) << 8) | roundi(c.b * 255.0)
 	picker.color_changed.connect(func(c: Color) -> void: entity_color_changed.emit(eid, rgb_of.call(c), false))
 	picker.popup_closed.connect(func() -> void: entity_color_changed.emit(eid, rgb_of.call(picker.color), true))
-	color_row.add_child(picker)
-	var row := HBoxContainer.new()
-	box.add_child(row)
+	row.add_child(picker)
 	var paint := Button.new()  # a ação principal vai para a barra de ações, abaixo do cabeçalho
 	paint.text = "Pintar território"
 	paint.icon = UiIcons.get_icon("territory", 16)
@@ -644,20 +1003,20 @@ func _build_territory() -> void:
 	_actions.add_child(paint)
 	_actions_wrap.show()
 	var clear := Button.new()
-	clear.text = "Apagar território"
+	clear.text = "Apagar"
 	clear.disabled = info.area_km2 <= 0.0
 	clear.tooltip_text = "Apaga todo o território pintado deste cadastro (Ctrl+Z desfaz)"
 	clear.pressed.connect(func() -> void: territory_clear_requested.emit())
 	row.add_child(clear)
-	var child_label: String = {"pais": "＋ Província", "provincia": "＋ Município"}.get(_sheet.kind, "")
-	if child_label != "":
+	for child_kind in {"pais": ["provincia", "municipio"], "provincia": ["municipio"]}.get(_sheet.kind, []):
 		var sub := Button.new()
-		sub.text = child_label
+		sub.text = "＋ " + UiKit.kind_label(child_kind)
 		sub.tooltip_text = "Cria, liga a este cadastro e já abre o pincel: a pintura fica dentro do território dele."
 		sub.disabled = not info.ok or info.area_km2 <= 0.0
-		sub.pressed.connect(func() -> void: subdivision_requested.emit())
+		sub.pressed.connect(func() -> void: subdivision_requested.emit(child_kind))
 		_actions.add_child(sub)
 	_territory_msg = _note("")
+	_territory_msg.visible = false
 	box.add_child(_territory_msg)
 
 
@@ -668,11 +1027,16 @@ func _build_places() -> void:
 	_create_place_btn = null
 	if _geo.is_empty():
 		return
-	var box := _section("Presença no mapa")
+	var box := _section("Lugares")
 	if _sheet.presences.is_empty():
-		box.add_child(_note("Em nenhum lugar ainda."))
+		var none := Label.new()
+		none.text = "Em nenhum lugar ainda"
+		none.modulate = Color(1, 1, 1, 0.55)
+		box.add_child(none)
 	for p in _sheet.presences:
 		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		row.custom_minimum_size.y = 32
 		box.add_child(row)
 		var is_border: bool = p.vertices.size() >= 6
 		var what := "ponto"
@@ -680,18 +1044,25 @@ func _build_places() -> void:
 			what = "contorno de %d pontos · ≈ %s km²" % [p.vertices.size() / 2, LayerPanel._thousands(roundi(p.area_km2))]
 		elif p.radius_km > 0.0:
 			what = "área de %s km" % LayerPanel._thousands(roundi(p.radius_km))
-		var label := Label.new()
-		label.text = "%s · %s (%s)" % [UiKit.role_label(p.role), p.place, what]
-		label.tooltip_text = "%s · certeza %s" % [UiKit.layer_label.get(p.layer, p.layer), UiKit.CERTAINTY_LABEL.get(p.certainty, p.certainty)]
-		label.modulate = UiKit.layer_color.get(p.layer, Color.WHITE).lightened(0.3)
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(label)
-		var focus := Button.new()
-		focus.text = "Ver"
-		focus.flat = true
-		focus.tooltip_text = "Centralizar o mapa neste lugar"
-		focus.pressed.connect(func() -> void: place_focus_requested.emit(int(p.place_id)))
-		row.add_child(focus)
+		var color: Color = UiKit.layer_color.get(p.layer, Color.WHITE)
+		var open := Button.new()
+		open.text = String(p.place)
+		open.flat = true
+		open.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		open.clip_text = true
+		open.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		open.add_theme_font_size_override("font_size", 16)
+		open.add_theme_color_override("font_color", color.lightened(0.3))
+		open.tooltip_text = "Centralizar o mapa neste lugar · %s · %s · certeza %s" % [what, UiKit.layer_label.get(p.layer, p.layer), UiKit.CERTAINTY_LABEL.get(p.certainty, p.certainty)]
+		open.pressed.connect(func() -> void: place_focus_requested.emit(int(p.place_id)))
+		row.add_child(open)
+		if what != "ponto":
+			var detail := Label.new()
+			detail.text = what
+			detail.add_theme_font_size_override("font_size", 12)
+			detail.modulate = Color(1, 1, 1, 0.6)
+			row.add_child(detail)
+		row.add_child(_pill(UiKit.role_label(p.role), color))
 		if is_border:
 			var redraw := Button.new()
 			redraw.text = "Redesenhar"
@@ -705,24 +1076,58 @@ func _build_places() -> void:
 		del.tooltip_text = "Apagar esta presença (criada por engano)"
 		del.pressed.connect(func() -> void: presence_removed.emit(int(p.id)))
 		row.add_child(del)
+		_rule(box)
 	var role_keys: Array = UiKit.ROLE_LABEL.keys()
-	box.add_child(_note("Vincular a um lugar que já existe:"))
-	var place := _place_picker(box)
-	var existing := HBoxContainer.new()
-	box.add_child(existing)
+
+	# Três jeitos de pôr um lugar, um formulário de cada vez.
+	var choices := HFlowContainer.new()
+	choices.add_theme_constant_override("h_separation", 8)
+	choices.add_theme_constant_override("v_separation", 6)
+	box.add_child(choices)
+	var forms: Array = []
+	var group := ButtonGroup.new()
+	group.allow_unpress = true
+	var add_form := func(title: String, tip: String) -> VBoxContainer:
+		var button := Button.new()
+		button.text = title
+		button.tooltip_text = tip
+		button.toggle_mode = true
+		button.button_group = group
+		choices.add_child(button)
+		var form := VBoxContainer.new()
+		form.visible = false
+		form.add_theme_constant_override("separation", 6)
+		box.add_child(form)
+		forms.append(form)
+		button.toggled.connect(func(on: bool) -> void: form.visible = on)
+		return form
+
+	# 1. Ligar a um lugar que já existe.
+	var existing: VBoxContainer = add_form.call("＋ Existente", "Liga um lugar que já existe no mundo.")
+	var place := _place_picker(existing)
+	var existing_row := HBoxContainer.new()
+	existing_row.add_theme_constant_override("separation", 8)
+	existing.add_child(existing_row)
 	var role_a := _option(role_keys, func(k): return UiKit.ROLE_LABEL[k])
-	existing.add_child(role_a)
+	role_a.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	existing_row.add_child(role_a)
 	var link := Button.new()
 	link.text = "Vincular"
 	link.pressed.connect(func() -> void:
 		if place.item_count > 0 and place.selected >= 0:
 			presence_added.emit(int(place.get_item_metadata(place.selected)), role_keys[role_a.selected]))
-	existing.add_child(link)
-	box.add_child(_note("Ou crie um lugar no ponto fixado no mapa (clique no globo):"))
-	_fixed_label = _note(_geo.fixed_text)
-	box.add_child(_fixed_label)
+	existing_row.add_child(link)
+
+	# 2. Criar um lugar no ponto fixado no globo.
+	var created: VBoxContainer = add_form.call("＋ No ponto fixado", "Cria um lugar onde você clicou no globo.")
+	_fixed_label = Label.new()
+	_fixed_label.text = _geo.fixed_text
+	_fixed_label.add_theme_font_size_override("font_size", 13)
+	_fixed_label.modulate = Color(1, 1, 1, 0.7)
+	created.add_child(_fixed_label)
 	var new_row := HBoxContainer.new()
-	box.add_child(new_row)
+	new_row.add_theme_constant_override("separation", 8)
+	created.add_child(new_row)
 	var name_edit := LineEdit.new()
 	name_edit.placeholder_text = "nome do lugar"
 	name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -734,8 +1139,8 @@ func _build_places() -> void:
 	radius.suffix = "km"
 	radius.tooltip_text = "Raio da área aproximada; 0 = um ponto"
 	new_row.add_child(radius)
-	var new_row2 := HFlowContainer.new()  # quebra a linha quando não cabe nos 420 px
-	box.add_child(new_row2)
+	var new_row2 := HFlowContainer.new()
+	created.add_child(new_row2)
 	var kind_keys: Array = UiKit.PLACE_KIND_LABEL.keys()
 	var kind := _option(kind_keys, func(k): return UiKit.PLACE_KIND_LABEL[k])
 	new_row2.add_child(kind)
@@ -748,9 +1153,11 @@ func _build_places() -> void:
 		if name_edit.text.strip_edges() != "":
 			place_created.emit(name_edit.text.strip_edges(), kind_keys[kind.selected], radius.value, role_keys[role.selected]))
 	new_row2.add_child(_create_place_btn)
-	box.add_child(_note("Ou desenhe uma fronteira à mão no globo (clicando ponto a ponto):"))
+
+	# 3. Desenhar um contorno à mão.
+	var drawn: VBoxContainer = add_form.call("＋ Contorno", "Desenha uma fronteira à mão no globo, ponto a ponto.")
 	var draw_row := HFlowContainer.new()
-	box.add_child(draw_row)
+	drawn.add_child(draw_row)
 	var border_name := LineEdit.new()
 	border_name.placeholder_text = "nome da região"
 	border_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -763,7 +1170,8 @@ func _build_places() -> void:
 	draw_btn.pressed.connect(func() -> void: border_draw_requested.emit(border_name.text.strip_edges(), role_keys[border_role.selected]))
 	draw_row.add_child(draw_btn)
 	_border_msg = _note("")
-	box.add_child(_border_msg)
+	_border_msg.visible = false
+	drawn.add_child(_border_msg)
 
 
 func _build_population() -> void:
@@ -771,23 +1179,66 @@ func _build_population() -> void:
 	if _geo.is_empty():
 		return
 	var box := _section("População")
-	for e in _sheet.estimates:
+	var pop: Dictionary = _sheet.population
+	var fmt := func(v: float) -> String: return LayerPanel._thousands(roundi(v))
+	var total_row := HBoxContainer.new()
+	total_row.add_theme_constant_override("separation", 8)
+	box.add_child(total_row)
+	var total_label := Label.new()
+	total_label.text = "Total: %s" % fmt.call(pop.total) if pop.has_total else "Sem população total"
+	total_label.add_theme_font_size_override("font_size", 18)
+	total_label.modulate = Color(1, 1, 1, 1.0 if pop.has_total else 0.6)
+	total_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	total_row.add_child(total_label)
+	if pop.has_total:
+		var del_total := Button.new()
+		del_total.text = "✕"
+		del_total.flat = true
+		del_total.tooltip_text = "Apagar a população total"
+		del_total.pressed.connect(func() -> void: total_removed.emit())
+		total_row.add_child(del_total)
+	var set_row := HBoxContainer.new()
+	set_row.add_theme_constant_override("separation", 8)
+	box.add_child(set_row)
+	var total_edit := LineEdit.new()
+	total_edit.placeholder_text = "número exato de habitantes"
+	total_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	set_row.add_child(total_edit)
+	var set_total := Button.new()
+	set_total.text = "Definir"
+	set_total.tooltip_text = "Vale para a data mostrada pelo relógio"
+	set_total.pressed.connect(func() -> void: total_set.emit(total_edit.text.strip_edges()))
+	set_row.add_child(set_total)
+	if pop.has_total or not pop.cities.is_empty():
+		_rule(box)
+		var head := Label.new()
+		head.text = "Por cidade"
+		head.modulate = Color(1, 1, 1, 0.7)
+		box.add_child(head)
+	for e in pop.cities:
 		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
 		box.add_child(row)
-		var when: String = _geo.dates_e.get(int(e.id), "")
-		var what := "nível %s (sem número)" % e.level if e.level != "" else _range(float(e.low), float(e.high))
-		var label := Label.new()
-		label.text = "%s · %s %s%s" % [e.place, what, e.basis, "  ·  " + when if when != "" else ""]
-		label.tooltip_text = "Certeza %s%s" % [UiKit.CERTAINTY_LABEL.get(e.certainty, e.certainty), " · fonte: " + e.source if e.source != "" else ""]
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(label)
+		var name_label := Label.new()
+		name_label.text = String(e.place)
+		name_label.clip_text = true
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(name_label)
+		var num := Label.new()
+		num.text = fmt.call(e.low)
+		row.add_child(num)
 		var del := Button.new()
 		del.text = "✕"
 		del.flat = true
-		del.tooltip_text = "Apagar esta estimativa (criada por engano)"
+		del.tooltip_text = "Tirar esta cidade da distribuição"
 		del.pressed.connect(func() -> void: estimate_removed.emit(int(e.id)))
 		row.add_child(del)
+	if pop.has_total and pop.outside >= 0.0:
+		box.add_child(_note("Fora das cidades: %s" % fmt.call(pop.outside)))
+	elif pop.has_total:
+		var over := _note("As cidades passam do total em %s" % fmt.call(-pop.outside))
+		over.modulate = Color(1.0, 0.6, 0.5)
+		box.add_child(over)
 	for c in _sheet.compositions:
 		var when2: String = _geo.dates_d.get(int(c.id), "")
 		var head := "%s em %s%s (%s, %s)" % [UiKit.kind_label(c.dimension), c.place, "  ·  " + when2 if when2 != "" else "",
@@ -802,42 +1253,51 @@ func _build_population() -> void:
 			box.add_child(_note("     desconhecido: %s%%" % _pct(c.unknown_pct)))
 		if c.denominator.is_empty():
 			box.add_child(_note("     (sem população de referência: só percentuais)"))
-	if _sheet.estimates.is_empty() and _sheet.compositions.is_empty():
-		box.add_child(_note("Nenhuma estimativa ainda."))
-	if _geo.places.is_empty():
-		box.add_child(_note("Crie ou vincule um lugar acima para registrar uma estimativa."))
-		return
-	var place := _place_picker(box)
+	_rule(box)
+	# Só as cidades desta ficha (assentamentos ligados a ela); sem nenhuma, ou para outra, "Nova cidade" no ponto fixado no globo.
+	var cities: Array = _geo.get("cities", [])
+	var place := OptionButton.new()
+	place.fit_to_longest_item = false
+	place.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	place.clip_text = true
+	for c in cities:
+		place.add_item(c.name)
+		place.set_item_metadata(place.item_count - 1, int(c.id))
+	place.add_item("＋ Nova cidade…")
+	place.set_item_metadata(place.item_count - 1, -1)
+	place.select(0)
+	box.add_child(place)
+	var fresh := VBoxContainer.new()
+	fresh.visible = place.get_item_metadata(place.selected) == -1
+	box.add_child(fresh)
+	var new_name := LineEdit.new()
+	new_name.placeholder_text = "nome da cidade nova"
+	fresh.add_child(new_name)
+	var where := _note(_geo.fixed_text if _geo.has_fixed else "Clique no globo para fixar onde fica a cidade.")
+	fresh.add_child(where)
+	place.item_selected.connect(func(i: int) -> void: fresh.visible = place.get_item_metadata(i) == -1)
 	var add := HBoxContainer.new()
+	add.add_theme_constant_override("separation", 8)
 	box.add_child(add)
-	var low := LineEdit.new()
-	low.placeholder_text = "de"
-	low.custom_minimum_size = Vector2(70, 0)
-	add.add_child(low)
-	var high := LineEdit.new()
-	high.placeholder_text = "até"
-	high.custom_minimum_size = Vector2(70, 0)
-	add.add_child(high)
-	var add2 := HBoxContainer.new()
-	box.add_child(add2)
-	var level := OptionButton.new()
-	level.add_item("com número")
-	for lv in ["só nível: baixa", "só nível: média", "só nível: alta"]:
-		level.add_item(lv)
-	add2.add_child(level)
-	var cert_keys: Array = UiKit.CERTAINTY_LABEL.keys()
-	var certainty := _option(cert_keys, func(k): return "certeza " + UiKit.CERTAINTY_LABEL[k])
-	certainty.select(1)
-	add2.add_child(certainty)
+	var count := LineEdit.new()
+	count.placeholder_text = "habitantes da cidade"
+	count.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	add.add_child(count)
 	var go := Button.new()
-	go.text = "Registrar"
+	go.text = "Adicionar cidade"
 	go.tooltip_text = "Vale para a data mostrada pelo relógio"
 	go.pressed.connect(func() -> void:
-		if place.item_count == 0 or place.selected < 0:
-			return
-		estimate_added.emit(int(place.get_item_metadata(place.selected)), low.text.strip_edges(), high.text.strip_edges(),
-			["", "baixa", "media", "alta"][level.selected], cert_keys[certainty.selected]))
-	add2.add_child(go)
+		var n := count.text.strip_edges()
+		var pid: int = place.get_item_metadata(place.selected)
+		if pid != -1:
+			estimate_added.emit(pid, n, n, "", "alta")
+		elif new_name.text.strip_edges() == "":
+			_geo_message.text = "Dê um nome à cidade nova."
+		elif not _geo.has_fixed:
+			_geo_message.text = "Clique no globo para fixar onde fica a cidade."
+		else:
+			city_created.emit(new_name.text.strip_edges(), n))
+	add.add_child(go)
 	_geo_message = _note("")
 	box.add_child(_geo_message)
 
@@ -853,6 +1313,8 @@ func _place_picker(box: VBoxContainer) -> OptionButton:
 	row.add_child(query)
 	var pick := OptionButton.new()
 	pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pick.fit_to_longest_item = false  # o nome mais comprido não alarga o painel (largura fixa)
+	pick.custom_minimum_size.x = 90
 	row.add_child(pick)
 	_fill_places(pick, _geo.places, _geo.get("places_more", false))
 	_place_pickers.append(pick)
@@ -880,6 +1342,7 @@ func show_place_candidates(items: Array, more: bool) -> void:
 
 func _option(keys: Array, label_of: Callable) -> OptionButton:
 	var o := OptionButton.new()
+	o.fit_to_longest_item = false  # a largura é a do item escolhido, não a do mais comprido
 	for k in keys:
 		o.add_item(label_of.call(k))
 	return o
@@ -945,9 +1408,9 @@ func _build_calendars() -> void:
 
 
 func _build_footer() -> void:
-	_page.add_child(HSeparator.new())
+	var footer := _card("Ações")
 	var row := HBoxContainer.new()
-	_page.add_child(row)
+	footer.add_child(row)
 	var with_links := CheckBox.new()
 	with_links.text = "com vínculos"
 	row.add_child(with_links)
@@ -966,15 +1429,58 @@ func _build_footer() -> void:
 
 # --- peças -----------------------------------------------------------------------------------------------------------
 
-func _section(title: String) -> VBoxContainer:
-	_page.add_child(HSeparator.new())
+## Uma seção em cartão: um bloco com borda, o título em Cinzel e o conteúdo logo abaixo (devolve onde pôr o conteúdo).
+func _card(title: String) -> VBoxContainer:
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", UiKit.card_style())
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var margin := MarginContainer.new()  # um respiro entre os cartões
+	margin.add_theme_constant_override("margin_top", 8)
+	margin.add_child(card)
+	_page.add_child(margin)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	card.add_child(box)
 	var l := Label.new()
 	l.text = title
-	l.add_theme_font_size_override("font_size", 16)
-	_page.add_child(l)
-	var box := VBoxContainer.new()
-	_page.add_child(box)
+	l.add_theme_font_size_override("font_size", 19)
+	UiKit.style_heading(l)
+	box.add_child(l)
 	return box
+
+
+## Um filete fino entre linhas de uma lista.
+func _rule(box: VBoxContainer) -> void:
+	var line := ColorRect.new()
+	line.color = Color(1, 1, 1, 0.08)
+	line.custom_minimum_size = Vector2(0, 1)
+	box.add_child(line)
+
+
+## Uma etiqueta arredondada (a origem do número, o resumo de uma divisão).
+func _pill(text: String, color: Color) -> PanelContainer:
+	var pill := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(color.r, color.g, color.b, 0.16)
+	style.border_color = Color(color.r, color.g, color.b, 0.7)
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(9)
+	style.content_margin_left = 8
+	style.content_margin_right = 8
+	style.content_margin_top = 1
+	style.content_margin_bottom = 1
+	pill.add_theme_stylebox_override("panel", style)
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", color.lightened(0.25))
+	pill.add_child(label)
+	pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return pill
+
+
+func _section(title: String) -> VBoxContainer:
+	return _card(title)
 
 
 func _label(text: String) -> void:

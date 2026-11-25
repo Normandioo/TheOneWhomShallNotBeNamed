@@ -131,7 +131,7 @@ func run() -> void:
 	if palettes.is_empty() or palettes.back().map(func(e): return e.id).has(povo) or palettes.back().size() < 2:
 		return fail("a paleta deveria ter só os países: %s" % [palettes.back() if not palettes.is_empty() else []])
 	var botao := _button("Pintar território")
-	if botao == null or botao.disabled or _button("Apagar território") == null or not _button("Apagar território").disabled:
+	if botao == null or botao.disabled or _button("Apagar") == null or not _button("Apagar").disabled:
 		return fail("a ficha do país tem 'Pintar território' e 'Apagar território' (desligado sem território)")
 	hub.open(povo)
 	if _button("Pintar território") != null:
@@ -235,11 +235,11 @@ func run() -> void:
 	if terr.painting_territory or tpanel.visible or painting_events.back() != false:
 		return fail("Esc termina o modo pintar")
 	hub.open(aren)
-	if not "\n".join(_texts(sheet._body, [])).contains("km² pintados"):
+	if not "\n".join(_texts(sheet._body, [])).contains("km²"):
 		return fail("a ficha mostra a área pintada")
-	if _button("Apagar território").disabled:
+	if _button("Apagar").disabled:
 		return fail("com território, 'Apagar território' liga")
-	_button("Apagar território").pressed.emit()
+	_button("Apagar").pressed.emit()
 	if territory.AreaKm2(aren) != 0.0 or not stack.undo_name().begins_with("Apagar território"):
 		return fail("apagar o território do país é um comando")
 	stack.undo()
@@ -283,6 +283,51 @@ func run() -> void:
 		return fail("sem a camada política o clique não acha o território")
 	presence._checks["politica"].button_pressed = true
 	ok("o clique no território abre o país dono do pixel; sem a camada, não")
+
+	# Pintar primeiro: sem cadastro aberto, o rascunho vira um cadastro novo com o tipo, o nome e o "pertence a" do cartão; o cartão sugere o país por onde se pintou.
+	terr.layer_factory = func() -> Object:
+		var fresh = load("res://scripts/world/Territory.cs").new()
+		fresh.Setup(terrain)
+		return fresh
+	var antes_municipios: int = reg.Count("municipio")
+	var info := {}
+	terr.draft_ready.connect(func(i: Dictionary) -> void: info.assign(i))
+	terr.territory_radius = 300.0
+	terr.start_draft()
+	if not terr.drafting or not terr.painting_territory:
+		return fail("sem cadastro aberto o modo Território deve abrir um rascunho")
+	_stroke(0, 72, 2, 2.0)
+	terr.stop_painting()
+	if info.is_empty() or float(info.area_km2) <= 0.0 or int(info.country.get("id", 0)) != aren or terr.painting_territory:
+		return fail("terminar o rascunho abre o cartão com o país sugerido (%s)" % [info])
+	terr.draft_create("municipio", "Vila Nova", int(info.country.id))
+	var vila: int = hub.current()
+	if reg.Kind(vila) != "municipio" or reg.Name(vila) != "Vila Nova" or reg.TerritoryParent(vila) != aren or terr.drafting:
+		return fail("criar pelo cartão faz o cadastro, liga ao país e encerra o rascunho")
+	var vila_km: float = terr.layer("municipio").AreaKm2(vila)
+	if vila_km <= 0.0 or terr.draft.AreaKm2(terr.DRAFT) != 0.0 or terr.territory_level != "municipio":
+		return fail("a área do rascunho passa para a camada do município (%.0f km²)" % vila_km)
+	stack.undo()
+	if terr.layer("municipio").AreaKm2(vila) != 0.0:
+		return fail("desfazer tira a área criada")
+	terr.start_draft()
+	_stroke(0, 74, 2, 2.0)
+	terr.stop_painting()
+	terr.discard_draft()
+	if terr.drafting or reg.Count("municipio") != antes_municipios + 1 or terr.draft.AreaKm2(terr.DRAFT) != 0.0:
+		return fail("descartar o rascunho não cria cadastro e limpa a camada")
+	terr.show_level("etnia")  # o mapa de etnia na tela; a sobreposição de cultura vai por cima dele, sem trocar de mapa
+	terr.set_overlay("cultura")
+	if not terr.area_active() or terr.territory_level != "etnia" or terr.area_gray() or terr.area_image() == null:
+		return fail("a sobreposição de cultura não troca o mapa de etnia nem cinza nada")
+	terr.show_level("pais")
+	if not terr.area_gray() or terr.overlay_level != "cultura":
+		return fail("sobre os países a sobreposição os deixa cinzas e continua ligada ao trocar de mapa")
+	terr.set_overlay("")
+	if terr.area_active():
+		return fail("tirar a sobreposição")
+	terr.show_level("pais")
+	ok("pintar primeiro: rascunho, cartão com sugestão, criar (cadastro + vínculo + área), desfazer a área e descartar")
 
 	# Gravar: com atraso (~1,5 s) e ao fechar; reabrir lê a camada e a cor.
 	if territory.Version == terr._territory_saved["pais"]:

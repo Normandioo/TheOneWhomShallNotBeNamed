@@ -81,6 +81,17 @@ public partial class Registry
             primary key (distribution_id, category_id));
         """;
 
+    /// População total exata por data; as cidades são estimativas exatas (low = high) em lugares. As estimativas antigas (faixas, níveis) foram descartadas.
+    const string PopulationMigration = """
+        create table population_total(
+            subject_id integer not null references entity(id),
+            t integer not null,
+            total real not null check (total >= 0),
+            primary key (subject_id, t));
+        update distribution set denominator_id = null;
+        delete from population_estimate;
+        """;
+
     System.Collections.Generic.Dictionary<string, string>? _layerOf;  // tipo -> camada do mapa (entity_type.layer); null = reler
 
     /// A camada do mapa de uma entidade, pelo tipo dela ("" = o tipo não está em nenhuma camada: não aparece no mapa de presenças).
@@ -297,6 +308,29 @@ public partial class Registry
         var latest = new System.Collections.Generic.Dictionary<long, object?[]>();
         foreach (var r in _db.Rows(EstimateSelect + " where x.subject_id = @0 and x.t <= @1 order by x.t, x.id", subjectId, t)) latest[Convert.ToInt64(r[3])] = r;
         return new(latest.Values.OrderBy(r => Str(r[4]), StringComparer.CurrentCultureIgnoreCase).Select(EstimateDict));
+    }
+
+    /// Define (ou troca) a população total exata da entidade na data t.
+    public void SetTotal(long subjectId, long t, double total)
+    {
+        if (!double.IsFinite(total) || total < 0) throw new ArgumentException("a população total precisa ser um número de 0 para cima");
+        _db.Run("insert or replace into population_total(subject_id, t, total) values (@0, @1, @2)", subjectId, t, total);
+    }
+
+    public void DeleteTotal(long subjectId, long t) => _db.Run("delete from population_total where subject_id = @0 and t = @1", subjectId, t);
+
+    /// O total vigente em t (o mais recente até t) e a distribuição por cidades: {has_total, total, t, cities (as estimativas exatas vigentes), in_cities, outside}.
+    /// outside = total − soma das cidades (negativo = as cidades passam do total).
+    public Dictionary PopulationOf(long subjectId, long t)
+    {
+        var row = _db.Rows("select total, t from population_total where subject_id = @0 and t <= @1 order by t desc limit 1", subjectId, t);
+        var cities = new GArray();
+        double sum = 0;
+        foreach (var e in EstimatesOf(subjectId, t))
+            if (e["level"].AsString() == "" && e["low"].AsDouble() == e["high"].AsDouble()) { cities.Add(e); sum += e["low"].AsDouble(); }
+        bool has = row.Count > 0;
+        double total = has ? Convert.ToDouble(row[0][0]) : 0;
+        return new Dictionary { ["has_total"] = has, ["total"] = total, ["t"] = has ? Convert.ToInt64(row[0][1]) : 0L, ["cities"] = cities, ["in_cities"] = sum, ["outside"] = total - sum };
     }
 
     /// Pode somar essas estimativas? Devolve {ok: true, low, high} ou {ok: false, reason}. Só soma o que é a mesma base (habitantes com

@@ -87,6 +87,10 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 		registry.DeleteLink(id)
 		_reload())
 	sheet.link_search.connect(_on_link_search)
+	sheet.lookup = func(text: String, kind: String) -> Array:
+		var found = registry.Search(text, kind, "", 0, shown_t)
+		return found if found != null else []
+	sheet.hierarchy_set.connect(set_parent)
 	sheet.open_entity.connect(open)
 	sheet.duplicate_requested.connect(func(copy_links: bool) -> void:
 		open(_id(registry.Duplicate(_current, copy_links, ""))))
@@ -114,6 +118,31 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 	sheet.place_created.connect(_on_place_created)
 	sheet.place_search.connect(_on_place_search)
 	sheet.estimate_added.connect(_on_estimate_added)
+	sheet.city_created.connect(func(city_name: String, count: String) -> void:
+		var n := parse_number(count)
+		if is_nan(n) or n < 0.0:
+			sheet.show_geo_message("Informe o número de habitantes (0 ou mais).")
+			return
+		if fixed_dir == Vector3.ZERO:
+			return
+		var ll := EvronGeo.lat_lon(fixed_dir)
+		var place := _id(registry.AddPlace(city_name, "assentamento", ll.x, ll.y, 0.0, ""))
+		if place != 0:
+			registry.AddPresence(_current, place, "presenca", "media")
+			registry.AddEstimate(_current, place, shown_t, n, n, "alta", "")
+		_reload())
+	sheet.total_set.connect(func(text: String) -> void:
+		var v := parse_number(text)
+		if is_nan(v) or v < 0.0:
+			sheet.show_geo_message("Informe o número de habitantes (0 ou mais).")
+			return
+		registry.SetTotal(_current, shown_t, roundf(v))
+		_reload())
+	sheet.total_removed.connect(func() -> void:
+		var p: Dictionary = registry.PopulationOf(_current, shown_t)
+		if p.has_total:
+			registry.DeleteTotal(_current, int(p.t))
+			_reload())
 	sheet.estimate_removed.connect(func(id: int) -> void:
 		registry.DeleteEstimate(id)
 		_reload())
@@ -186,6 +215,80 @@ func open(id: int) -> void:
 	_reload()
 
 
+## Liga uma província a um país ou um município a uma província (parent = 0 tira do de cima). Cada cadastro tem um só de cima: o vínculo anterior sai.
+## O território que já foi pintado não muda.
+func set_parent(child: int, parent: int) -> void:
+	var kind := String(registry.Kind(child))
+	if not kind in ["provincia", "municipio"]:
+		return
+	if parent > 0:
+		var parent_kind := String(registry.Kind(parent))
+		if not parent_kind in (["pais"] if kind == "provincia" else ["pais", "provincia"]):  # o município pode ficar direto no país: a província é opcional
+			return
+	var code := kind + "_de"
+	var s = registry.Sheet(child, shown_t)
+	if s != null:
+		for l in s.links:
+			if l.outgoing and l.type == code:
+				registry.DeleteLink(int(l.id))
+	if parent > 0:
+		registry.Link(child, parent, code)
+	if territories != null:
+		territories.refresh_palette()  # a cor da província segue a do país
+	_reload()
+
+
+const PRESENCE := {"cultura": "cultura_presente", "etnia": "etnia_presente", "raca": "raca_presente", "religiao": "religiao_presente", "idioma": "idioma_falado"}
+var _composition_cache := {}   # "id:versões" -> {categoria: [{id, name, share}]}
+
+
+## O "pelo mapa" da aba Composição: para país, província ou município com território, quanto da área dele cada cultura, etnia, raça, religião e idioma
+## pintados cobrem (cada categoria é uma camada). Guardado por versão das camadas: a ficha é refeita a cada edição e a conta varre o mapa.
+func _map_composition(s: Dictionary) -> Dictionary:
+	var out := {}
+	if territories == null or not String(s.kind) in ["pais", "provincia", "municipio"]:
+		return out
+	var base = territories.layer(String(s.kind))
+	if base == null or int(s.id) > 65535 or base.AreaKm2(int(s.id)) <= 0.0:
+		return out
+	var key := "%d:%d" % [int(s.id), base.Version]
+	var layers := {}
+	for category in PRESENCE:
+		var layer = territories.layer(category)
+		if layer != null:
+			layers[category] = layer
+			key += ":%d" % layer.Version
+	if _composition_cache.has(key):
+		return _composition_cache[key]
+	var area: float = base.AreaKm2(int(s.id))
+	for category in layers:
+		var over: Dictionary = base.OverlapKm2(layers[category], int(s.id))
+		var rows: Array = []
+		for o in over:
+			var share: float = float(over[o]) / area
+			if int(o) != 0 and share >= 0.01:
+				rows.append({"id": int(o), "name": registry.Name(int(o)), "share": share})
+		rows.sort_custom(func(a, b) -> bool: return a.share > b.share)
+		out[category] = rows
+	if _composition_cache.size() > 64:
+		_composition_cache.clear()
+	_composition_cache[key] = out
+	return out
+
+
+## A cadeia de cima de um cadastro: {"parent": {id, name, kind}, "country": {id, name}} (vazios quando não há). O país de um município que está numa província é o da província.
+func _chain_of(id: int) -> Dictionary:
+	var out := {"parent": {}, "country": {}}
+	var parent: int = registry.TerritoryParent(id)
+	if parent == 0:
+		return out
+	out.parent = {"id": parent, "name": registry.Name(parent), "kind": registry.Kind(parent)}
+	var top: int = parent if String(registry.Kind(parent)) == "pais" else int(registry.TerritoryParent(parent))
+	if top != 0 and String(registry.Kind(top)) == "pais":
+		out.country = {"id": top, "name": registry.Name(top)}
+	return out
+
+
 ## A lista de busca só é refeita se o resultado mudou (refazer a lista a cada relógio perderia a seleção e a rolagem).
 func refresh_search() -> void:
 	if not usable:
@@ -201,7 +304,7 @@ func refresh_search() -> void:
 
 
 ## A árvore do Índice: todos os cadastros por tipo; província e município ficam sob o cadastro de nível acima (TerritoryParent).
-func _refresh_hierarchy() -> void:
+func _hierarchy_rows() -> Array:
 	var rows := []
 	for kind in UiKit.all_kinds():
 		var found = registry.Search("", kind, "", 0, shown_t)
@@ -213,6 +316,34 @@ func _refresh_hierarchy() -> void:
 				var p = registry.TerritoryParent(int(e.id))
 				parent = int(p) if p != null else 0
 			rows.append({"id": int(e.id), "kind": kind, "name": String(e.name), "parent": parent})
+	return rows
+
+
+## As divisões de um país ou de uma província, para a aba Composição: [{id, name, kind, children: [{id, name}]}] (as províncias com os municípios delas; os
+## municípios direto no país sem filhos).
+func _division_of(id: int, kind: String) -> Array:
+	if not kind in ["pais", "provincia"]:
+		return []
+	var rows := _hierarchy_rows()
+	var out: Array = []
+	for r in rows:
+		if int(r.parent) != id:
+			continue
+		var children: Array = []
+		if String(r.kind) == "provincia":
+			for c in rows:
+				if int(c.parent) == int(r.id) and String(c.kind) == "municipio":
+					children.append({"id": int(c.id), "name": String(c.name)})
+		out.append({"id": int(r.id), "name": String(r.name), "kind": String(r.kind), "children": children})
+	out.sort_custom(func(x, y) -> bool:
+		if x.kind != y.kind:
+			return x.kind == "provincia"
+		return String(x.name) < String(y.name))
+	return out
+
+
+func _refresh_hierarchy() -> void:
+	var rows := _hierarchy_rows()
 	var key: int = rows.hash()  # sem o país aberto: trocar de ficha só move a seleção, a árvore não é refeita
 	if key != _outline_key:
 		_outline_key = key
@@ -494,7 +625,18 @@ func _geo_info(s: Dictionary) -> Dictionary:
 	var dates_d := {}
 	for comp in s.compositions:
 		dates_d[int(comp.id)] = Calendar.format(int(comp.t), false) if has_clock else ""
-	var geo := {"places": c.items, "places_more": c.more, "fixed_text": _fixed_text(), "has_fixed": fixed_dir != Vector3.ZERO, "dates_e": dates_e, "dates_d": dates_d}
+	var cities: Array = []
+	var seen := {}
+	for p in s.presences:
+		if not seen.has(int(p.place_id)) and registry.Place(int(p.place_id)).kind == "assentamento":
+			seen[int(p.place_id)] = true
+			cities.append({"id": int(p.place_id), "name": p.place})
+	for e in s.estimates:
+		if not seen.has(int(e.place_id)):
+			seen[int(e.place_id)] = true
+			cities.append({"id": int(e.place_id), "name": e.place})
+	var geo := {"cities": cities, "places": c.items, "places_more": c.more, "fixed_text": _fixed_text(), "has_fixed": fixed_dir != Vector3.ZERO, "dates_e": dates_e, "dates_d": dates_d,
+			"chain": _chain_of(int(s.id)), "composition": _map_composition(s), "division": _division_of(int(s.id), String(s.kind))}
 	var territory_info: Dictionary = territories.sheet_info(s) if territories != null else {}
 	if not territory_info.is_empty():
 		geo["territory"] = territory_info
