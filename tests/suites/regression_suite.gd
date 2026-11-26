@@ -95,7 +95,7 @@ func run() -> void:
 		return fail("o texto da ficha de A foi parar em B: '%s'" % reg.GetField(b, "pais.governo").value)
 	if reg.GetField(pais, "pais.governo").value != "texto digitado na ficha de A":
 		return fail("o texto digitado na ficha de A deveria ter sido gravado em A: '%s'" % reg.GetField(pais, "pais.governo").value)
-	var nome_b: LineEdit = sheet._pages["Geral"].find_children("*", "LineEdit", true, false)[0]
+	var nome_b: LineEdit = sheet._pages["Ficha"].find_children("*", "LineEdit", true, false)[0]
 	nome_b.text = "Reino B corrigido"
 	nome_b.grab_focus()
 	await frames(2)

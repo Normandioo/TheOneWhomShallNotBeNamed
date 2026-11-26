@@ -24,7 +24,25 @@ public partial class Territory
         _maskOwner = owner;
     }
 
-    private bool Allowed(int i) => _maskLayer == null || _maskLayer.Get(i) == _maskOwner;
+    private Territory? _takenLayer;
+    private int _takenSelf;
+
+    /// Além da máscara, não pintar onde `taken` já é de outro (quem pinta não toma o território de ninguém); self: o dono que está sendo
+    /// pintado, quando `taken` é a própria camada (0 num rascunho). null tira.
+    public void SetTaken(Territory? taken, int self)
+    {
+        _takenLayer = taken;
+        _takenSelf = self;
+    }
+
+    private bool Limited => _maskLayer != null || _takenLayer != null;
+
+    /// Para as recusas por falta de terra: lembra que "Não invadir" pode ser o motivo.
+    private string TakenHint => _takenLayer != null ? " Para tomar dos outros, desligue “Não invadir” na barra." : "";
+
+    private bool Allowed(int i) =>
+        (_maskLayer == null || _maskLayer.Get(i) == _maskOwner) &&
+        (_takenLayer == null || _takenLayer.Get(i) is var owner && (owner == 0 || owner == _takenSelf));
 
     /// A camada como a tela mostra: onde esta não tem dono, vale a primeira de `below` que tem (a mais próxima primeiro).
     /// Sem camadas embaixo, é OwnersImage(). A mesma imagem é reaproveitada.
@@ -179,7 +197,7 @@ public partial class Territory
             int p = Global(i);
             if (OwnerBefore(p) == 0 && Allowed(p) && (!landOnly || terrain.H[p] >= 0f)) region.Add(p);
         }
-        if (region.Count == 0) return RefuseBoundary("Dentro do contorno não há terra sem dono (nem dentro do limite permitido).");
+        if (region.Count == 0) return RefuseBoundary("Dentro do contorno não há terra sem dono (nem dentro do limite permitido)." + TakenHint);
 
         var pixels = region.ToArray();
         Array.Sort(pixels);

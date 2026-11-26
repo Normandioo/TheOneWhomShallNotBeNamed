@@ -436,3 +436,48 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>                         
 - O ponto fixado mostra valor, condição (**estimado**), data, origem e incerteza; uma referência cortada em −20 °C vira um limite
   ("≤ −X °C"). A leitura tem `CONSULTA` e o presente preservado ao lado quando se consulta outra data.
 - Fora do plano desta etapa: chuva, umidade, vento, ondas (etapa 5). Comparar com o Average Rainfall só faz sentido com o modelo de chuva.
+
+## Subdivisões (26/11/2026)
+
+Para o autor há um tipo só, "subdivisão", em dois níveis, com o nome que ele der (estado, condado, ducado…). Por dentro os níveis
+continuam sendo os tipos `provincia` (1º) e `municipio` (2º), cada um na sua camada pintada: nenhum cadastro nem pixel foi convertido.
+O nome mostrado vem de `division_name` (`RegistryDivisions.cs`): o próprio da divisão; sem ele, o que o país dá ao nível; sem isso,
+"Província" e "Município". Três ou mais níveis exigiriam camadas pintadas novas. Mudar uma divisão de nível ainda não existe.
+
+As subdivisões se editam na lista da página Território do país (nome, nome do tipo, população, cor, pintar, excluir); a ficha própria
+fica atrás de "Ficha completa". Escolher uma nos Registros, criá-la ou clicar nela na vista de subdivisões abre o país com a linha
+aberta (`DomainHub.show_division`), e o mapa a destaca enquanto a linha está à vista.
+
+**Não invadir** (caixa na barra do pincel, ligada por padrão): a pintura não toma o que é de outro do mesmo tipo, em país, subdivisão,
+área ou recurso, novo ou existente (`Territory.SetTaken(camada, quem pinta)`), no pincel, no balde e no pincel de fronteira. Desligada,
+pintar por cima conquista, como antes. Unir, importar PNG e assentar fronteiras são ações explícitas e não olham a caixa.
+
+Uma subdivisão NOVA além disso não passa de quem a contém (`SetMask`). Sem lugar pedido, o primeiro traço decide (o país dali;
+começando sobre uma divisão do 1º nível, dentro dela).
+
+A árvore dos Registros, a lista de Divisões e as Regras usam `Registry.Outline` (todos os cadastros); `Search` continua em 200.
+
+## Linhas de fronteira exatas (26/11/2026, etapa 1)
+
+O mapa continua em 4096×2048 (~10 km por pixel), mas perto de uma linha do pincel de fronteira a TELA decide pelo lado da linha: só votam
+os pixels do mapa do mesmo lado dela (`political.gdshaderinc`). Assim a borda sai em cima do traço, com cantos e bicos. As linhas já eram
+gravadas com cada camada; `Territory.Walls` (`TerritoryWalls.cs`) as manda à GPU, simplificadas (tolerância ~300 m), num índice por
+célula de 4×4 pixels, e `gpu_sync` refaz quando a pintura, as camadas à vista ou a prévia mudam. Só vale o trecho em que a linha ainda
+separa o país de quem não é ele (de um lado há pixel dele, do outro nenhum, não importa quem pintou): pintar por cima, apagar e
+desfazer cuidam disso sozinhos. Um país criado a partir do rascunho
+recebe as linhas dele (`AdoptBoundaries`). Só de perto (menos de 0,6 pixel do mapa por pixel de tela).
+
+Onde duas linhas correm juntas (a menos de 1,5 pixel e quase paralelas), vale só a mais nova: cruzar as duas daria "mesmo lado" e elas
+se anulariam. Vale entre camadas também (país e subdivisão sobre o mesmo rio).
+
+**O traço vira a fronteira** (`TerritoryRedraw.cs`, `PlanStroke`): um traço aberto cujas duas pontas ficam a até 3 pixels (~30 km) do
+território passa a ser a borda dele naquele trecho. Entram todos os bolsões de terra livre entre o território e o traço; o que o
+território tinha do outro lado sai e fica sem dono; o lado do território é o lado em que os bolsões fecham (sem bolsão, fica o pedaço
+maior, e "Outro lado" troca). Uma ponta dentro do território a até 4 pixels (~40 km) da borda é completada até ela; mais para dentro, o
+traço só corta onde cruza. Não vale quando "Não invadir" está desligado e o traço passa por outro dono: aí é o corte de vizinho de
+antes (conquista). Um redesenho passado inteiro sobre um traço guardado aposenta o antigo (o desfazer devolve).
+
+O traço guarda até 4.096 pontos.
+
+Falta (próximas etapas): o clique, o balde e a área ainda são por pixel do mapa; não há "grudar no rio". O pincel redondo continua
+preciso só até o pixel do mapa.

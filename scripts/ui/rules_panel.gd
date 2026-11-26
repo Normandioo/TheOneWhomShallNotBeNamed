@@ -18,6 +18,7 @@ const LEAVES := ["const", "field", "links", "population", "area", "distance"]
 const NODE_COLOR := {"input": Color("#1b3a48"), "calc": Color("#4a2e30"), "result": Color("#25402f")}
 const INPUTS := {"math": ["a", "b"], "if": ["A", "B", "então", "senão"], "result": ["valor"]}
 
+signal tutorial_requested  # o botão "?" do alto da janela
 signal kind_selected(kind: String)
 signal save_requested(rule_id: int, name: String, definition: String)
 signal run_requested(rule_id: int)
@@ -56,6 +57,11 @@ func _ready() -> void:
 	_dialog.min_size = Vector2i(1180, 700)
 	var box := VBoxContainer.new()
 	_dialog.add_child(box)
+	var help := Button.new()
+	help.text = "?  Como usar esta janela"
+	help.size_flags_horizontal = Control.SIZE_SHRINK_END
+	help.pressed.connect(func() -> void: tutorial_requested.emit())
+	box.add_child(help)
 	_message = Label.new()
 	_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_message.custom_minimum_size = Vector2(600, 0)

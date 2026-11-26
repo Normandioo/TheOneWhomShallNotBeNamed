@@ -18,19 +18,19 @@ signal link_added(type: String, other_id: int)
 signal link_removed(link_id: int)
 signal link_search(text: String, dst_kind: String)
 signal open_entity(id: int)
-signal paint_kind_requested(kind: String)   # "pintar no mapa": abre uma região nova já deste tipo (cultura, etnia, raça, religião ou idioma)
+signal paint_kind_requested(kind: String, parent_id: int)  # "pintar no mapa": uma região nova deste tipo (parent_id: dentro de quem; 0 = livre)
 signal hierarchy_set(child_id: int, parent_id: int)  # ligar um município a uma província, ou uma província a um país (parent_id 0 = tirar do de cima)
 signal duplicate_requested(copy_links: bool)
 signal delete_requested
 signal delete_confirmed
 signal closed
+signal tutorial_requested  # o botão "?" do cabeçalho: o tutorial da página aberta
 signal calendar_use_added(calendar_id: int, purpose: String)
 signal calendar_use_removed(use_id: int)
 signal place_focus_requested(place_id: int)
 
 signal territory_paint_requested                              # entrar no modo pintar território para este país
 signal territory_boundary_requested                           # entrar direto no pincel de fronteira do país selecionado
-signal subdivision_requested(child_kind: String)            # criar uma província (ou município) dentro deste cadastro e pintá-la
 signal territory_clear_requested                              # apagar todo o território deste país (desfaz com Ctrl+Z)
 signal entity_color_changed(entity_id: int, rgb: int, final: bool)  # final = o usuário fechou o seletor (grava); senão, prévia na paleta
 signal place_search(text: String)  # buscar lugares para os menus (o hub responde com show_place_candidates)
@@ -41,9 +41,19 @@ signal estimate_added(place_id: int, low: String, high: String, level: String, c
 signal estimate_removed(estimate_id: int)
 signal total_set(text: String)
 signal total_removed
+signal division_named(id: int, name: String)                  # como esta divisão se chama
+signal level_named(country: int, level: int, name: String)    # como o país chama o 1º ou o 2º nível
+# A lista de subdivisões edita cada uma sem sair do país (nome, tipo do nome e cor usam os sinais de sempre, com o id dela).
+signal division_focused(id: int)                              # a divisão aberta na lista, à vista (0 = nenhuma): o mapa a destaca
+signal division_paint_requested(id: int, mode: String)
+signal division_total_set(id: int, text: String)              # "" tira o total
+signal division_delete_requested(id: int)
+signal division_view_requested(id: int)                       # leva o mapa até ela
+signal division_back_requested(id: int)                       # da ficha completa, de volta à lista do país
 signal city_created(name: String, count: String)  # uma cidade nova no ponto fixado, já com habitantes
 
 const EntityPicker = preload("res://scripts/ui/entity_picker.gd")
+const DivisionNamePicker = preload("res://scripts/ui/division_name_picker.gd")
 const WIDTH := 420
 const CATEGORY_COLORS := {"cultura": Color("#7fb8a8"), "etnia": Color("#e0907f"), "raca": Color("#b5c070"), "religiao": Color("#dfb868"), "idioma": Color("#8fa9e0")}
 const PRESENCE_TYPES := ["cultura_presente", "etnia_presente", "raca_presente", "religiao_presente", "idioma_falado"]
@@ -66,6 +76,21 @@ var _banner: PanelContainer
 var _crest: Control
 var _name_label: Label
 var _subtitle: Label
+var _division_row: HBoxContainer  # "Como se chama:" no alto da ficha de uma subdivisão
+var division_picker: Control
+var level_pickers: Array = []     # na ficha do país: como se chamam o 1º e o 2º nível
+var division_detail := Callable()  # (id) -> {name, label, area_km2, color, ok, has_total, total}, ligado pelo DomainHub
+var open_division := 0             # a linha aberta na lista de subdivisões
+var division_rows := {}            # id -> o botão do nome na lista
+var division_editor := {}          # os controles da linha aberta
+var back_button: Button            # "‹ Voltar a <país>", na ficha completa de uma subdivisão
+var level_toggle: Button
+var division_search: LineEdit
+var _queued_division := 0
+var _focused_division := 0
+var _level_names_open := false
+var _division_filter := ""
+var _division_groups: Array = []   # [{box, name, kids: [{box, name}], expanded}] para o filtro
 var _actions: HFlowContainer     # Pintar território e a subdivisão, logo abaixo do cabeçalho (só para quem tem território)
 var _actions_wrap: Control
 var _boundary_brush: Button
@@ -77,12 +102,17 @@ var _pages := {}
 var _tab_buttons := {}
 var _tab_scroll := {}
 var _active_tab := ""
+var wanted_page := "Ficha"   # a categoria escolhida no alto: a janela continua nela ao trocar de cadastro
+var keep_closed := false     # o usuário fechou a janela: reler a ficha (o relógio andou) não a reabre
+var _has_actions := false
+var _has_boundary := false
 var _confirm: ConfirmationDialog
 var _sheet := {}
 var _fields := {}          # código -> {row, state, editor, type, last_state, last_value}
 var _add_menu: OptionButton
 var _types: Array = []     # tipos de vínculo que esta ficha pode criar
 var _division_open := {}     # província -> aberta na lista de divisões
+signal page_changed(page: String)  # a página (categoria) mostrada passou a ser outra
 var _category_open := {}     # categoria vazia -> expandida (para ligar a primeira)
 var lookup: Callable        # (texto, tipo) -> [{id, kind, name}]: a busca dos seletores de cadastro (quem liga é o DomainHub)
 var _link_type: OptionButton
@@ -101,17 +131,9 @@ var _date_labels := {}     # id do uso -> Label com a data local
 
 func _init() -> void:
 	visible = false
-	add_theme_stylebox_override("panel", UiKit.dock_style(SIDE_LEFT, 0, 0))
-	anchor_left = 1.0  # acoplada à direita, da barra de cima à de estado
-	anchor_right = 1.0
-	anchor_top = 0.0
-	anchor_bottom = 1.0
-	grow_horizontal = Control.GROW_DIRECTION_BEGIN  # se o conteúdo não coube, cresce para a esquerda, nunca para fora da tela
-	offset_left = -WIDTH
-	offset_right = 0
+	add_theme_stylebox_override("panel", UiKit.dock_style(SIDE_RIGHT, 0, 0))
+	custom_minimum_size = Vector2(WIDTH, 0)  # a janela da esquerda: o Main a põe abaixo do alto da tela
 	clip_contents = true
-	offset_top = 48
-	offset_bottom = -30
 	var root := VBoxContainer.new()
 	add_child(root)
 	_banner = PanelContainer.new()
@@ -121,6 +143,7 @@ func _init() -> void:
 	banner_row.add_theme_constant_override("separation", 12)
 	_banner.add_child(banner_row)
 	_crest = SunCrest.new()
+	_crest.visible = false  # o emblema do selecionado fica no alto da tela
 	banner_row.add_child(_crest)
 	var banner_text := VBoxContainer.new()
 	banner_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -129,7 +152,9 @@ func _init() -> void:
 	banner_text.add_child(head)
 	_title = Label.new()
 	_title.clip_text = true  # o painel tem largura fixa: o título recorta em vez de alargá-lo
-	_title.add_theme_color_override("font_color", Color("#c8b5b0"))
+	UiKit.style_heading(_title)
+	_title.add_theme_font_size_override("font_size", 20)
+	_title.add_theme_color_override("font_color", Color("#f4ebd3"))
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
 	_name_label = Label.new()
@@ -137,21 +162,33 @@ func _init() -> void:
 	UiKit.style_heading(_name_label)
 	_name_label.add_theme_color_override("font_color", Color("#f4ebd3"))
 	_name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_name_label.visible = false  # o nome vai no subtítulo (e no emblema, no alto da tela): o cabeçalho fica baixo
 	banner_text.add_child(_name_label)
 	_subtitle = Label.new()
-	_subtitle.add_theme_color_override("font_color", Color("#c8b5b0"))
+	_subtitle.add_theme_color_override("font_color", Color("#e6d3c8"))
+	_subtitle.clip_text = true
 	banner_text.add_child(_subtitle)
+	_division_row = HBoxContainer.new()
+	_division_row.hide()
+	banner_text.add_child(_division_row)
 	_boundary_brush = Button.new()
 	_boundary_brush.text = "Pincel de fronteira"
 	_boundary_brush.visible = false
 	_boundary_brush.pressed.connect(func() -> void: territory_boundary_requested.emit())
 	_boundary_brush.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	banner_text.add_child(_boundary_brush)  # sob o nome: na linha do título faltava espaço nos 420 px
+	var help := Button.new()
+	help.text = "?"
+	help.custom_minimum_size.x = 30
+	help.tooltip_text = "Ver o que cada botão desta página faz"
+	help.pressed.connect(func() -> void: tutorial_requested.emit())
+	head.add_child(help)
 	var close := Button.new()
 	close.text = "✕"
 	close.flat = true
+	close.tooltip_text = "Fechar a janela (o selecionado continua)"
 	close.pressed.connect(func() -> void:
-		visible = false
+		dismiss()
 		closed.emit())
 	head.add_child(close)
 	_actions = HFlowContainer.new()  # quebra a linha: país tem três botões (pintar, ＋ Província, ＋ Município) e não cabem nos 420 px lado a lado
@@ -160,8 +197,10 @@ func _init() -> void:
 	_actions_wrap = _margin(_actions, 14, 12, 4)
 	_actions_wrap.hide()
 	root.add_child(_actions_wrap)
-	_tab_bar = HBoxContainer.new()
-	root.add_child(_margin(_tab_bar, 6, 8, 0))
+	_tab_bar = HBoxContainer.new()  # escondida: quem troca de página são os botões de categoria do alto
+	var tabs := _margin(_tab_bar, 6, 8, 0)
+	tabs.visible = false
+	root.add_child(tabs)
 	root.add_child(HSeparator.new())
 	_scroll = ScrollContainer.new()
 	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -191,8 +230,14 @@ func current_id() -> int:
 
 ## Mostra a ficha (o Dictionary de Registry.Sheet) e os tipos de vínculo que ela pode criar (Registry.LinkTypesFor).
 func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}) -> void:
-	var keep := "Geral"
-	if int(sheet.id) == current_id():
+	if _queued_division != 0:
+		open_division = _queued_division
+		_queued_division = 0
+	elif int(sheet.id) != current_id():
+		open_division = 0
+		_division_filter = ""
+	var keep := wanted_page
+	if int(sheet.id) == current_id() and _active_tab != "":
 		keep = _active_tab
 		_tab_scroll[keep] = _scroll.scroll_vertical
 	else:
@@ -202,9 +247,8 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	_types = link_types.filter(func(t: Dictionary) -> bool: return not String(t.code) in ["provincia_de", "municipio_de"] and not (covered and String(t.code) in PRESENCE_TYPES))  # estes vão nas seções Hierarquia e Povo e cultura
 	_calendars = calendars
 	_geo = geo
-	visible = true
-	_title.text = "Ficha · " + UiKit.kind_label(sheet.kind)
-	_boundary_brush.visible = geo.get("territory", {}).get("ok", false)
+	visible = not keep_closed
+	_has_boundary = geo.get("territory", {}).get("ok", false)
 	_show_banner(sheet, geo.get("territory", {}))
 	if _body != null:
 		_scroll.remove_child(_body)
@@ -219,17 +263,25 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	_body = VBoxContainer.new()
 	_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll.add_child(_body)
-	_add_tab("Geral")
+	_add_tab("Ficha")
 	_build_identity()
 	_build_names()
 	_build_content()
 	_build_footer()
-	_add_tab("Composição" if String(sheet.kind) in ["pais", "provincia", "municipio"] else "Relações")
+	_add_tab("Governo")  # nos cadastros sem território político, esta página é a das relações
+	if covered:
+		_build_hierarchy()
 	_build_links()
+	if covered:
+		_add_tab("Povo")
+		_build_composition()
 	if not _geo.is_empty():
-		_add_tab("Mapa")
+		_add_tab("Território")
 	_build_territory()
-	if not _geo.is_empty() and CHILD_OF.has(String(_sheet.kind)):
+	division_rows.clear()
+	division_editor = {}
+	level_pickers.clear()
+	if covered and not _geo.is_empty() and CHILD_OF.has(String(_sheet.kind)):
 		_build_divisions(int(_sheet.id), String(_sheet.kind))
 	_build_places()
 	if not _geo.is_empty():
@@ -238,7 +290,8 @@ func show_sheet(sheet: Dictionary, link_types: Array, calendars := {}, geo := {}
 	if not _calendars.is_empty():
 		_add_tab("Calendários")
 	_build_calendars()
-	_select_tab(keep if _pages.has(keep) else "Geral")
+	_select_tab(keep if _pages.has(keep) else "Ficha")
+	_sync_focus()
 
 
 ## O cabeçalho: o brasão e o fundo na cor do cadastro (a do território, se tiver), o nome e "tipo · área".
@@ -251,7 +304,35 @@ func _show_banner(sheet: Dictionary, territory: Dictionary) -> void:
 	_banner.add_theme_stylebox_override("panel", UiKit.banner_style(rgb))
 	_name_label.text = String(sheet.name)
 	var area := float(territory.get("area_km2", 0.0))
-	_subtitle.text = UiKit.kind_label(sheet.kind) + ("  ·  ≈ %s km²" % LayerPanel._thousands(roundi(area)) if area > 0.0 else "")
+	_subtitle.text = String(sheet.name) + ("  ·  ≈ %s km²" % LayerPanel._thousands(roundi(area)) if area > 0.0 else "")
+	for child in _division_row.get_children():
+		_division_row.remove_child(child)
+		child.queue_free()
+	division_picker = null
+	var label := String(sheet.get("label", ""))
+	_division_row.visible = label != ""
+	back_button = null
+	var country: Dictionary = _geo.get("chain", {}).get("country", {})
+	if label != "":
+		var caption := Label.new()
+		caption.text = "Como se chama:"
+		caption.add_theme_color_override("font_color", Color("#e6d3c8"))
+		_division_row.add_child(caption)
+		var me := int(sheet.id)
+		division_picker = DivisionNamePicker.new(label, _geo.get("suggestions", []), "Como se chama esta divisão")
+		division_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		division_picker.chosen.connect(func(n: String) -> void: division_named.emit(me, n))
+		_division_row.add_child(division_picker)
+		if not country.is_empty():
+			back_button = Button.new()
+			back_button.text = "‹ %s" % country.name
+			back_button.tooltip_text = "Voltar para a lista de subdivisões de %s" % country.name
+			back_button.clip_text = true
+			back_button.custom_minimum_size.x = 96
+			back_button.pressed.connect(func() -> void: division_back_requested.emit(me))
+			_division_row.add_child(back_button)
+			_division_row.move_child(back_button, 0)
+			caption.hide()  # com o botão de voltar, o menu fala por si na linha estreita
 
 
 func _add_tab(label: String) -> void:
@@ -261,7 +342,9 @@ func _add_tab(label: String) -> void:
 	button.clip_text = true  # cinco abas cabem nos 420 px do painel
 	button.add_theme_font_size_override("font_size", 11)
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	button.pressed.connect(_select_tab.bind(label))
+	button.pressed.connect(func() -> void:
+		wanted_page = label
+		_select_tab(label))
 	_tab_bar.add_child(button)
 	_tab_buttons[label] = button
 	_page = VBoxContainer.new()
@@ -279,7 +362,43 @@ func _select_tab(label: String) -> void:
 	for key in _pages:
 		_pages[key].visible = key == label
 		_tab_buttons[key].set_pressed_no_signal(key == label)
+	_title.text = "%s · %s" % [page_title(label), UiKit.entry_label(String(_sheet.get("kind", "")), String(_sheet.get("label", "")))]
+	_actions_wrap.visible = _has_actions and label in ["Governo", "Território"]
+	_boundary_brush.visible = _has_boundary and label == "Território"
 	_scroll.set_deferred("scroll_vertical", _tab_scroll.get(label, 0))
+	page_changed.emit(label)
+	_sync_focus()
+
+
+## O nome da página como o cabeçalho a mostra: nos cadastros sem hierarquia, "Governo" é a página das relações.
+func page_title(label: String) -> String:
+	return "Relações" if label == "Governo" and not String(_sheet.get("kind", "")) in ["pais", "provincia", "municipio"] else label
+
+
+func active_page() -> String:
+	return _active_tab
+
+
+func has_page(label: String) -> bool:
+	return _pages.has(label)
+
+
+## Abre a janela na página pedida (ela continua nessa categoria ao trocar de cadastro).
+func show_page(label: String) -> void:
+	wanted_page = label
+	keep_closed = false
+	if _sheet.is_empty():
+		return
+	visible = true
+	if _pages.has(label):
+		_select_tab(label)
+
+
+## Fecha a janela sem tirar a seleção: ela só volta quando pedida.
+func dismiss() -> void:
+	keep_closed = true
+	visible = false
+	_sync_focus()
 
 
 ## Atualiza só as datas (universal e locais) quando o relógio anda, sem refazer a ficha. texts: id do uso -> texto.
@@ -321,7 +440,23 @@ func is_editing() -> bool:
 
 func hide_sheet() -> void:
 	visible = false
+	keep_closed = false
 	_sheet = {}
+	open_division = 0
+	_sync_focus()
+
+
+## A próxima ficha mostrada abre com esta subdivisão aberta na lista.
+func queue_division(id: int) -> void:
+	_queued_division = id
+
+
+## O mapa só destaca a divisão enquanto a linha dela está à vista.
+func _sync_focus() -> void:
+	var now := open_division if visible and _active_tab == "Território" else 0
+	if now != _focused_division:
+		_focused_division = now
+		division_focused.emit(now)
 
 
 ## O que ficou gravado num campo depois de uma edição (corrige o que o usuário digitou se foi recusado ou normalizado).
@@ -344,7 +479,7 @@ func show_link_candidates(items: Array) -> void:
 	for it in items:
 		if int(it.id) == current_id():
 			continue
-		_link_candidates.add_item("%s · %s" % [it.name, UiKit.kind_label(it.kind)])
+		_link_candidates.add_item("%s · %s" % [it.name, UiKit.entry_label(String(it.kind), String(it.get("label", "")))])
 		_link_candidates.set_item_metadata(_link_candidates.item_count - 1, int(it.id))
 
 
@@ -567,7 +702,7 @@ func _write_editor(entry: Dictionary, value: String) -> void:
 		e.text = value
 
 
-## "Pertence a" (província e município): a cadeia em uma linha e a linha de cada cima. "Divisões" (país e província): as divisões com as de baixo, recolhíveis.
+## "Pertence a" (as subdivisões): a cadeia em uma linha e a linha de cada cima. "Divisões" (país e 1º nível): as de dentro, recolhíveis.
 func _build_hierarchy() -> void:
 	var kind := String(_sheet.kind)
 	if not PARENT_OF.has(kind) and not CHILD_OF.has(kind):
@@ -585,11 +720,8 @@ func _build_hierarchy() -> void:
 			parts.append([String(chain.country.name), int(chain.country.id), false])
 		else:
 			parts.append(["sem país", 0, true])
-		if kind == "municipio":
-			if not parent.is_empty() and String(parent.kind) == "provincia":
-				parts.append([String(parent.name), int(parent.id), false])
-			else:
-				parts.append(["sem província", 0, true])
+		if kind == "municipio" and not parent.is_empty() and String(parent.kind) == "provincia":
+			parts.append([String(parent.name), int(parent.id), false])
 		parts.append([String(_sheet.name), me, false])
 		for i in parts.size():
 			if i > 0:
@@ -611,93 +743,73 @@ func _build_hierarchy() -> void:
 		_parent_line(box, "País", "pais", me, chain.country, direct_in_country)
 		if kind == "municipio":
 			var in_province := not parent.is_empty() and String(parent.kind) == "provincia"
-			_parent_line(box, "Província", "provincia", me, parent if in_province else {}, in_province)
+			_parent_line(box, "Dentro de", "provincia", me, parent if in_province else {}, in_province)
 	# As divisões (o que está dentro deste cadastro) ficam na aba Mapa: ver show_sheet.
 
 
-## As divisões: cada província com o resumo "província · N municípios" e, abertas (▾), os municípios dela; os municípios direto no país embaixo.
-## Os botões: pintar uma divisão nova (abre o rascunho já deste tipo) e ligar uma existente (um campo de busca que aparece no clique).
+## As subdivisões deste cadastro, na página Território. Cada linha abre ali mesmo para editar, sem sair do país: uma de cada vez. As do 2º
+## nível aparecem quando a de cima está aberta (ou uma delas). Na ficha do país, a linha dos nomes diz como os dois níveis se chamam nele.
 func _build_divisions(me: int, kind: String) -> void:
-	var box := _card("Divisões")
+	var box := _card("Subdivisões")
+	_division_groups.clear()
+	level_toggle = null
 	var tree: Array = _geo.get("division", [])
 	var have: Array = [me]
-	if tree.is_empty():
-		box.add_child(_note("Nenhuma divisão ainda."))
+	var total := 0
 	for d in tree:
 		have.append(int(d.id))
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6)
-		row.custom_minimum_size.y = 32
-		box.add_child(row)
+		for c in d.children:
+			have.append(int(c.id))
+		total += 1 + d.children.size()
+	var head := HBoxContainer.new()
+	box.add_child(head)
+	var count := Label.new()
+	count.text = "Nenhuma ainda." if total == 0 else "%d no total" % total
+	count.modulate = Color(1, 1, 1, 0.65)
+	count.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(count)
+	var names: Array = _geo.get("level_names", [])
+	if kind == "pais" and names.size() == 2:
+		level_toggle = Button.new()
+		level_toggle.flat = true
+		level_toggle.text = "1º %s · 2º %s %s" % [names[0], names[1], "▾" if _level_names_open else "▸"]
+		level_toggle.tooltip_text = "Como as subdivisões se chamam neste país"
+		level_toggle.add_theme_font_size_override("font_size", 12)
+		level_toggle.pressed.connect(func() -> void:
+			_level_names_open = not _level_names_open
+			_rebuild())
+		head.add_child(level_toggle)
+		if _level_names_open:
+			_build_level_names(box, me)
+	if not tree.is_empty():
+		division_search = LineEdit.new()
+		division_search.placeholder_text = "filtrar pelo nome"
+		division_search.text = _division_filter
+		division_search.clear_button_enabled = true
+		division_search.text_changed.connect(func(t: String) -> void:
+			_division_filter = t
+			_filter_divisions())
+		box.add_child(division_search)
+	for d in tree:
+		var group := VBoxContainer.new()
+		box.add_child(group)
 		var kids: Array = d.children
-		var is_province: bool = String(d.kind) == "provincia"
-		var is_open: bool = _division_open.get(int(d.id), false)
-		var fold := Button.new()
-		fold.text = ("▾" if is_open else "▸") if not kids.is_empty() else ""
-		fold.flat = true
-		fold.disabled = kids.is_empty()
-		fold.custom_minimum_size.x = 28
-		fold.pressed.connect(func() -> void:
-			_division_open[int(d.id)] = not is_open
-			show_sheet(_sheet, _types, _calendars, _geo))
-		row.add_child(fold)
-		var open := Button.new()
-		open.text = String(d.name)
-		open.flat = true
-		open.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		open.clip_text = true
-		open.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		open.add_theme_font_size_override("font_size", 16)
-		open.pressed.connect(func() -> void: open_entity.emit(int(d.id)))
-		row.add_child(open)
-		if is_province:
-			if not kids.is_empty():
-				row.add_child(_pill("%d município%s" % [kids.size(), "" if kids.size() == 1 else "s"], Color("#8fa9e0")))
-		else:
-			row.add_child(_pill("município, direto no país", Color("#b5c070")))
-		var del := Button.new()
-		del.text = "✕"
-		del.flat = true
-		del.tooltip_text = "Tirar %s daqui (o território pintado continua)" % d.name
-		del.pressed.connect(func() -> void: hierarchy_set.emit(int(d.id), 0))
-		row.add_child(del)
-		if is_open:
-			for c in kids:
-				have.append(int(c.id))
-				var sub := HBoxContainer.new()
-				sub.custom_minimum_size.y = 28
-				box.add_child(sub)
-				var spacer := Control.new()
-				spacer.custom_minimum_size.x = 34
-				sub.add_child(spacer)
-				var branch := Label.new()
-				branch.text = "└"
-				branch.modulate = Color(1, 1, 1, 0.4)
-				sub.add_child(branch)
-				var sub_open := Button.new()
-				sub_open.text = String(c.name)
-				sub_open.flat = true
-				sub_open.alignment = HORIZONTAL_ALIGNMENT_LEFT
-				sub_open.clip_text = true
-				sub_open.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				sub_open.modulate = Color(1, 1, 1, 0.85)
-				sub_open.pressed.connect(func() -> void: open_entity.emit(int(c.id)))
-				sub.add_child(sub_open)
-				var sub_del := Button.new()
-				sub_del.text = "✕"
-				sub_del.flat = true
-				sub_del.tooltip_text = "Tirar %s daqui (o território pintado continua)" % c.name
-				sub_del.pressed.connect(func() -> void: hierarchy_set.emit(int(c.id), 0))
-				sub.add_child(sub_del)
-		_rule(box)
+		var expanded: bool = open_division == int(d.id) or kids.any(func(c): return int(c.id) == open_division)
+		var entry := {"box": group, "name": String(d.name), "kids": [], "expanded": expanded}
+		_division_line(group, d, 0, ("▾" if expanded else "▸") if not kids.is_empty() else "")
+		for c in kids:
+			var row := _division_line(group, c, 24, "")
+			entry.kids.append({"box": row, "name": String(c.name)})
+		_division_groups.append(entry)
+	_filter_divisions()
 	var actions := HBoxContainer.new()
 	actions.add_theme_constant_override("separation", 8)
 	box.add_child(actions)
 	var paint := Button.new()
 	paint.text = "＋ Pintar divisão"
 	paint.add_theme_stylebox_override("normal", UiKit.active_style())
-	paint.tooltip_text = "Pinta a área de uma província nova (ou de um município, dentro de uma província): o cartão pergunta o nome."
-	paint.pressed.connect(func() -> void: paint_kind_requested.emit("provincia" if kind == "pais" else "municipio"))
+	paint.tooltip_text = "Pinta a área de uma subdivisão nova aqui dentro: o cartão pergunta o nome e como ela se chama."
+	paint.pressed.connect(func() -> void: paint_kind_requested.emit("provincia" if kind == "pais" else "municipio", me))
 	actions.add_child(paint)
 	var link := Button.new()
 	link.text = "Ligar existente…"
@@ -707,6 +819,222 @@ func _build_divisions(me: int, kind: String) -> void:
 	picker.picked.connect(func(id: int) -> void: hierarchy_set.emit(id, me))
 	box.add_child(picker)
 	link.pressed.connect(func() -> void: picker.visible = not picker.visible)
+
+
+## Com texto no filtro, ficam as linhas cujo nome o contém (e a de cima delas).
+func _filter_divisions() -> void:
+	var text := _division_filter.strip_edges().to_lower()
+	for group in _division_groups:
+		var any_kid := false
+		for kid in group.kids:
+			var matches: bool = text != "" and String(kid.name).to_lower().contains(text)
+			kid.box.visible = group.expanded if text == "" else matches
+			any_kid = any_kid or matches
+		group.box.visible = text == "" or any_kid or String(group.name).to_lower().contains(text)
+
+
+## Uma linha da lista: a seta, a cor, o nome (abre e fecha o editor ali) e o nome do tipo.
+func _division_line(parent: VBoxContainer, d: Dictionary, indent: int, arrow_text: String) -> Control:
+	var id := int(d.id)
+	var is_open := open_division == id
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", indent)
+	parent.add_child(margin)
+	var card := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(1, 1, 1, 0.05) if is_open else Color(0, 0, 0, 0)
+	style.border_color = Color("#f2c46d") if is_open else Color(1, 1, 1, 0.14)
+	style.set_border_width_all(1)
+	style.content_margin_left = 6
+	style.content_margin_right = 6
+	style.content_margin_top = 2
+	style.content_margin_bottom = 8 if is_open else 2
+	card.add_theme_stylebox_override("panel", style)
+	margin.add_child(card)
+	var inner := VBoxContainer.new()
+	inner.add_theme_constant_override("separation", 7)
+	card.add_child(inner)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	row.custom_minimum_size.y = 30
+	inner.add_child(row)
+	var arrow := Label.new()
+	arrow.text = arrow_text
+	arrow.custom_minimum_size.x = 12
+	arrow.add_theme_color_override("font_color", Color("#f2c46d"))
+	row.add_child(arrow)
+	var swatch := ColorRect.new()
+	swatch.custom_minimum_size = Vector2(13, 13)
+	swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	swatch.color = _rgb(int(d.get("color", 0)))
+	row.add_child(swatch)
+	var name_button := Button.new()
+	name_button.text = String(d.name)
+	name_button.flat = true
+	name_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	name_button.clip_text = true
+	name_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_button.tooltip_text = "Fechar" if is_open else "Ver e editar aqui"
+	name_button.pressed.connect(func() -> void: toggle_division(id))
+	row.add_child(name_button)
+	division_rows[id] = name_button
+	var text := String(d.label)
+	if indent == 0 and String(d.kind) == "municipio" and String(_sheet.kind) == "pais":
+		text += " · direto no país"
+	var pill := _pill(text, Color("#e0b45c") if d.differs else Color("#8fa9e0"))
+	if d.differs:
+		pill.tooltip_text = "Chamada diferente das outras deste nível"
+		pill.mouse_filter = Control.MOUSE_FILTER_PASS
+	row.add_child(pill)
+	if is_open:
+		_division_edit(inner, d, name_button, swatch)
+	return margin
+
+
+## Abre a linha (ou fecha, se já é a aberta).
+func toggle_division(id: int) -> void:
+	open_division = 0 if open_division == id else id
+	_rebuild()
+
+
+func _rebuild() -> void:
+	show_sheet(_sheet, _types, _calendars, _geo)
+
+
+## O editor de uma subdivisão, dentro da linha dela.
+func _division_edit(box: VBoxContainer, d: Dictionary, name_button: Button, swatch: ColorRect) -> void:
+	var id := int(d.id)
+	var info: Dictionary = division_detail.call(id) if division_detail.is_valid() else {}
+	if info.is_empty():
+		return
+	var name_edit := LineEdit.new()
+	name_edit.text = String(info.name)
+	name_edit.tooltip_text = "Corrige a grafia do nome"
+	var last_name: Array = [name_edit.text]
+	var commit_name := func() -> void:
+		var t := name_edit.text.strip_edges()
+		if t != "" and t != last_name[0]:
+			last_name[0] = t
+			name_button.text = t
+			name_changed.emit(id, t)
+	name_edit.focus_exited.connect(commit_name)
+	name_edit.text_submitted.connect(func(_t: String) -> void: commit_name.call())
+	_edit_row(box, "Nome", name_edit)
+	var called := DivisionNamePicker.new(String(info.label), _geo.get("suggestions", []), "Como se chama esta divisão")
+	called.chosen.connect(func(n: String) -> void: division_named.emit(id, n))
+	_edit_row(box, "Como se chama", called)
+	var total := LineEdit.new()
+	total.placeholder_text = "sem total"
+	total.text = LayerPanel._thousands(roundi(info.total)) if info.has_total else ""
+	total.tooltip_text = "Habitantes na data mostrada. Apagar o número tira o total."
+	var last_total: Array = [total.text]
+	var commit_total := func() -> void:
+		var t := total.text.strip_edges()
+		if t != last_total[0]:
+			last_total[0] = t
+			division_total_set.emit(id, t)
+	total.focus_exited.connect(commit_total)
+	total.text_submitted.connect(func(_t: String) -> void: commit_total.call())
+	_edit_row(box, "População", total)
+	var area_row := HBoxContainer.new()
+	var area := Label.new()
+	area.text = "%s km²" % LayerPanel._thousands(roundi(info.area_km2)) if info.area_km2 > 0.0 else "Sem território"
+	area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	area_row.add_child(area)
+	var color := ColorPickerButton.new()
+	color.edit_alpha = false
+	color.custom_minimum_size = Vector2(46, 26)
+	color.tooltip_text = "Cor no mapa"
+	color.color = _rgb(int(info.color))
+	var rgb_of := func(c: Color) -> int:
+		return (roundi(c.r * 255.0) << 16) | (roundi(c.g * 255.0) << 8) | roundi(c.b * 255.0)
+	color.color_changed.connect(func(c: Color) -> void:
+		swatch.color = c
+		entity_color_changed.emit(id, rgb_of.call(c), false))
+	color.popup_closed.connect(func() -> void: entity_color_changed.emit(id, rgb_of.call(color.color), true))
+	area_row.add_child(color)
+	_edit_row(box, "Área e cor", area_row)
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	box.add_child(grid)
+	var paint := _grid_button(grid, "Pintar área", "Abre o pincel no globo, só dentro de quem está acima", func() -> void: division_paint_requested.emit(id, "pincel"))
+	paint.add_theme_stylebox_override("normal", UiKit.active_style())
+	paint.disabled = not info.ok
+	var boundary := _grid_button(grid, "Pincel de fronteira", "Desenha o limite dela à mão", func() -> void: division_paint_requested.emit(id, "fronteira"))
+	boundary.disabled = not info.ok or info.area_km2 <= 0.0
+	var inside: Button = null
+	if String(d.kind) == "provincia":
+		inside = _grid_button(grid, "＋ Pintar dentro", "Uma subdivisão nova dentro desta", func() -> void: paint_kind_requested.emit("municipio", id))
+		inside.disabled = not info.ok or info.area_km2 <= 0.0
+	var view := _grid_button(grid, "Ver no mapa", "Leva o mapa até ela", func() -> void: division_view_requested.emit(id))
+	view.disabled = info.area_km2 <= 0.0
+	var bottom := HBoxContainer.new()
+	box.add_child(bottom)
+	var full := Button.new()
+	full.text = "Ficha completa ›"
+	full.flat = true
+	full.tooltip_text = "Povo, lugares, outros nomes, calendários e o resto"
+	full.pressed.connect(func() -> void: open_entity.emit(id))
+	bottom.add_child(full)
+	var gap := Control.new()
+	gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bottom.add_child(gap)
+	var remove := Button.new()
+	remove.text = "Excluir divisão…"
+	remove.pressed.connect(func() -> void: division_delete_requested.emit(id))
+	bottom.add_child(remove)
+	var message := _note("")
+	message.visible = false
+	box.add_child(message)
+	division_editor = {"id": id, "name": name_edit, "called": called, "total": total, "color": color, "paint": paint, "boundary": boundary,
+		"inside": inside, "view": view, "full": full, "remove": remove, "message": message}
+
+
+## Um aviso na linha aberta (um número de habitantes que não vale, por exemplo).
+func show_division_message(text: String) -> void:
+	var label: Label = division_editor.get("message")
+	if label != null:
+		label.text = text
+		label.visible = text != ""
+
+
+func _edit_row(box: VBoxContainer, text: String, control: Control) -> void:
+	var row := HBoxContainer.new()
+	box.add_child(row)
+	var label := Label.new()
+	label.text = text
+	label.custom_minimum_size.x = 116
+	label.modulate = Color(1, 1, 1, 0.7)
+	row.add_child(label)
+	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(control)
+
+
+func _grid_button(grid: GridContainer, text: String, tip: String, on_press: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.tooltip_text = tip
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.pressed.connect(on_press)
+	grid.add_child(b)
+	return b
+
+
+static func _rgb(c: int) -> Color:
+	return Color8((c >> 16) & 255, (c >> 8) & 255, c & 255)
+
+
+func _build_level_names(box: VBoxContainer, country: int) -> void:
+	var names: Array = _geo.get("level_names", [])
+	box.add_child(_note("Trocar muda todas as que não têm um nome próprio."))
+	for i in 2:
+		var picker := DivisionNamePicker.new(String(names[i]), _geo.get("suggestions", []), "Nome do %dº nível" % (i + 1))
+		var level := i + 1
+		picker.chosen.connect(func(n: String) -> void: level_named.emit(country, level, n))
+		_edit_row(box, ["1º nível", "2º nível"][i], picker)
+		level_pickers.append(picker)
 
 
 ## A busca do "Ligar existente…" de um país: só províncias e municípios.
@@ -728,7 +1056,7 @@ func _parent_line(box: VBoxContainer, label_text: String, parent_kind: String, m
 	row.add_child(label)
 	if shown.is_empty():
 		var none := Label.new()
-		none.text = "nenhum" if parent_kind == "pais" else "nenhuma (opcional)"
+		none.text = "nenhum" if parent_kind == "pais" else "direto no país"
 		none.modulate = Color(1, 1, 1, 0.6)
 		row.add_child(none)
 	else:
@@ -746,7 +1074,7 @@ func _parent_line(box: VBoxContainer, label_text: String, parent_kind: String, m
 			del.tooltip_text = "Tirar de %s (o território pintado continua)" % shown.name
 			del.pressed.connect(func() -> void: hierarchy_set.emit(me, 0))
 			row.add_child(del)
-	var article := "a província" if parent_kind == "provincia" else "o país"
+	var article := "a subdivisão" if parent_kind == "provincia" else "o país"
 	var picker := EntityPicker.new(("trocar %s: digite o nome" if not shown.is_empty() else "escolher %s: digite o nome") % article, parent_kind, lookup, [me])
 	picker.picked.connect(func(id: int) -> void: hierarchy_set.emit(me, id))
 	box.add_child(picker)
@@ -822,7 +1150,7 @@ func _category_actions(box: VBoxContainer, cat: Array, have: Array, me: int) -> 
 	var paint := Button.new()
 	paint.text = "Pintar no mapa"
 	paint.tooltip_text = "Pinta a área onde isto predomina; a porcentagem sai da sobreposição com este território."
-	paint.pressed.connect(func() -> void: paint_kind_requested.emit(String(cat[0])))
+	paint.pressed.connect(func() -> void: paint_kind_requested.emit(String(cat[0]), 0))
 	actions.add_child(paint)
 	var picker := EntityPicker.new("digite o nome", cat[0], lookup, have)
 	picker.visible = false
@@ -840,9 +1168,11 @@ func _composition_row(box: VBoxContainer, entry_name: String, share: float, orig
 	open.text = entry_name
 	open.flat = true
 	open.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	open.custom_minimum_size.x = 120
+	open.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	open.clip_text = true
+	open.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	open.add_theme_font_size_override("font_size", 16)
+	open.tooltip_text = entry_name
 	open.pressed.connect(func() -> void: open_entity.emit(entry_id))
 	row.add_child(open)
 	var bar := ProgressBar.new()
@@ -850,9 +1180,8 @@ func _composition_row(box: VBoxContainer, entry_name: String, share: float, orig
 	bar.min_value = 0.0
 	bar.max_value = 1.0
 	bar.value = maxf(share, 0.0)
-	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	bar.custom_minimum_size = Vector2(50, 10)
+	bar.custom_minimum_size = Vector2(64, 10)
 	var track := StyleBoxFlat.new()
 	track.bg_color = Color(0, 0, 0, 0.35)
 	track.set_corner_radius_all(5)
@@ -879,8 +1208,6 @@ func _composition_row(box: VBoxContainer, entry_name: String, share: float, orig
 
 
 func _build_links() -> void:
-	_build_hierarchy()
-	_build_composition()
 	var covered := String(_sheet.kind) in ["pais", "provincia", "municipio"]
 	var others: Array = _sheet.links.filter(func(l: Dictionary) -> bool: return not String(l.type) in ["provincia_de", "municipio_de"] and not (covered and l.outgoing and String(l.type) in PRESENCE_TYPES))  # estes estão em Hierarquia e Povo e cultura
 	var collapsed := covered and others.is_empty()  # nada a mostrar: o bloco de ligar fica atrás de um clique (os controles existem, só escondidos)
@@ -910,7 +1237,7 @@ func _build_links() -> void:
 		label.text = l.label + ":"
 		row.add_child(label)
 		var open := Button.new()
-		open.text = "%s · %s" % [l.other_name, UiKit.kind_label(l.other_kind)]
+		open.text = "%s · %s" % [l.other_name, UiKit.entry_label(String(l.other_kind), String(l.get("other_label", "")))]
 		open.flat = true
 		open.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		open.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -960,6 +1287,7 @@ func _build_territory() -> void:
 		_actions.remove_child(b)
 		b.queue_free()
 	_actions_wrap.hide()
+	_has_actions = false
 	if not _geo.has("territory"):
 		return
 	var info: Dictionary = _geo.territory
@@ -993,20 +1321,13 @@ func _build_territory() -> void:
 	paint.add_theme_stylebox_override("normal", UiKit.active_style())
 	paint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_actions.add_child(paint)
-	_actions_wrap.show()
+	_has_actions = true
 	var clear := Button.new()
 	clear.text = "Apagar"
 	clear.disabled = info.area_km2 <= 0.0
 	clear.tooltip_text = "Apaga todo o território pintado deste cadastro (Ctrl+Z desfaz)"
 	clear.pressed.connect(func() -> void: territory_clear_requested.emit())
 	row.add_child(clear)
-	for child_kind in {"pais": ["provincia", "municipio"], "provincia": ["municipio"]}.get(_sheet.kind, []):
-		var sub := Button.new()
-		sub.text = "＋ " + UiKit.kind_label(child_kind)
-		sub.tooltip_text = "Cria, liga a este cadastro e já abre o pincel: a pintura fica dentro do território dele."
-		sub.disabled = not info.ok or info.area_km2 <= 0.0
-		sub.pressed.connect(func() -> void: subdivision_requested.emit(child_kind))
-		_actions.add_child(sub)
 	_territory_msg = _note("")
 	_territory_msg.visible = false
 	box.add_child(_territory_msg)
@@ -1348,7 +1669,7 @@ func _build_calendars() -> void:
 		_date_labels[int(u.use_id)] = date
 		box.add_child(date)
 	if _calendars.choices.is_empty():
-		box.add_child(_note("Nenhum calendário cadastrado: crie um em Calendários… (painel de busca)."))
+		box.add_child(_note("Nenhum calendário cadastrado: crie um em Mundo ▾ → Calendários…"))
 		return
 	var add := HBoxContainer.new()
 	box.add_child(add)

@@ -1,7 +1,7 @@
 ## Peças comuns da interface: o estilo dos painéis e os nomes dos tipos de cadastro.
 
 const KINDS := ["cultura", "pais", "raca", "etnia", "idioma", "religiao", "provincia", "municipio"]  # novos tipos no fim: o menu "Novo" usa o índice
-const KIND_LABEL := {"cultura": "Cultura", "pais": "País", "provincia": "Província", "municipio": "Município", "raca": "Raça", "etnia": "Etnia", "idioma": "Idioma", "religiao": "Religião"}
+const KIND_LABEL := {"cultura": "Cultura", "pais": "País", "provincia": "Subdivisão (1º nível)", "municipio": "Subdivisão (2º nível)", "raca": "Raça", "etnia": "Etnia", "idioma": "Idioma", "religiao": "Religião"}
 
 
 ## As camadas do mapa de presenças (uma por tipo de entidade): chave -> cor e nome.
@@ -71,6 +71,16 @@ static func number_text(v: float) -> String:
 
 static func kind_label(kind: String) -> String:
 	return KIND_LABEL.get(kind, custom_labels.get(kind, kind))
+
+
+## Os dois níveis são um tipo só para quem usa: "Subdivisão".
+static func short_label(kind: String) -> String:
+	return "Subdivisão" if kind in ["provincia", "municipio"] else kind_label(kind)
+
+
+## Como mostrar o tipo de um cadastro: o nome da divisão ("Estado", "Condado"...) quando há um (label); senão o do tipo.
+static func entry_label(kind: String, label: String) -> String:
+	return label if label != "" else kind_label(kind)
 
 
 
@@ -179,6 +189,48 @@ static func tab_style(selected: bool, hovered := false) -> StyleBoxFlat:
 	tab.border_width_bottom = 2
 	tab.set_corner_radius_all(0)
 	return tab
+
+
+## A cor de cada ícone, por assunto: o mesmo assunto tem a mesma cor no alto, nos modos de mapa e nos Registros (cultura, etnia, raça,
+## religião e idioma repetem as das barras da página Povo). O ícone é desenhado em branco e tingido pelo botão.
+const ICON_COLOR := {
+	"culture": Color("#7fb8a8"), "ethnicity": Color("#e0907f"), "race": Color("#b5c070"), "religion": Color("#dfb868"), "language": Color("#8fa9e0"),
+	"file": Color("#e6d5a3"), "government": Color("#e0b45c"), "people": Color("#ee9a8c"), "population": Color("#8fce9c"), "border": Color("#6fc6d6"),
+	"resources": Color("#bd9cf0"), "economy": Color("#e89a58"), "calendar": Color("#8fb6f0"), "area": Color("#6fc6d6"),
+	"politics": Color("#ee8579"), "satellite": Color("#78b4ee"), "relief": Color("#cfa97a"), "climate": Color("#f08c6c"), "ecology": Color("#8ccc72"),
+	"soils": Color("#c99668"), "hydrology": Color("#66bce8"), "geology": Color("#b7a6d8"), "organization": Color("#d9c46a"),
+	"gear": Color("#e0b45c"), "help": Color("#8fce9c"),
+	"world": Color("#78b4ee"), "navigate": Color("#e6d5a3"), "territory": Color("#6fc6d6"), "overlays": Color("#bd9cf0"),
+}
+
+
+## Tinge o ícone do botão com a cor do assunto (desligado: a mesma cor, apagada). Um ícone sem cor própria fica como o tema manda.
+static func tint_icon(button: Button, icon_name: String) -> void:
+	if not ICON_COLOR.has(icon_name):
+		return
+	var color: Color = ICON_COLOR[icon_name]
+	for state in ["icon_normal_color", "icon_hover_color", "icon_pressed_color", "icon_focus_color", "icon_hover_pressed_color"]:
+		button.add_theme_color_override(state, color.lightened(0.15) if state.contains("hover") else color)
+	button.add_theme_color_override("icon_disabled_color", Color(color.lerp(Color("#7f8a84"), 0.7), 0.7))
+
+
+## As peças do alto da tela: um painel com relevo (borda escura, fio claro em cima e sombra), como as barras de jogo de estratégia.
+static func metal_style(color: Color, horizontal := 8, vertical := 6) -> StyleBoxFlat:
+	var plate := _surface(color, Color("#070c0e"), horizontal, vertical)
+	plate.set_corner_radius_all(0)
+	plate.border_width_top = 2
+	plate.border_color = Color("#4a636c")
+	plate.shadow_color = Color(0, 0, 0, 0.45)
+	plate.shadow_size = 5
+	plate.shadow_offset = Vector2(0, 2)
+	return plate
+
+
+## Um mostrador afundado (os números do alto).
+static func inset_style(hovered := false) -> StyleBoxFlat:
+	var slot := _surface(Color("#17262b") if hovered else Color("#0d1619"), Color("#3a5057"), 9, 3)
+	slot.set_corner_radius_all(1)
+	return slot
 
 
 ## A fonte dos títulos (Cinzel, variável) no peso pedido.

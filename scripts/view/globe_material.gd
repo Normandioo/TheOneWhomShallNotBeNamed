@@ -5,6 +5,7 @@ const GLOBE_SHADER = preload("res://shaders/globe.gdshader")
 const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 
 var _satellite_loaded := false
+var _wall_textures: Array = []  # o índice e os trechos das linhas na GPU (precisam continuar vivos)
 var _satellite_optics: ImageTexture
 var _satellite_river_atlas: ImageTexture
 const EMPTY_MAP_TEXTURE = preload("res://shaders/political_default.tres")
@@ -97,6 +98,17 @@ func set_political_palette(entries: Array) -> void:
 	else:
 		political_palette_texture.update(img)
 		political_top_texture.update(tops)
+
+
+## As linhas do pincel de fronteira (Territory.Walls): a borda do mapa sai em cima delas.
+func set_walls(walls: Dictionary) -> void:
+	if int(walls.get("count", 0)) == 0:
+		RenderingServer.global_shader_parameter_set("wall_on", 0.0)
+		return
+	_wall_textures = [ImageTexture.create_from_image(walls.index), ImageTexture.create_from_image(walls.segments)]
+	RenderingServer.global_shader_parameter_set("wall_index", _wall_textures[0])
+	RenderingServer.global_shader_parameter_set("wall_segments", _wall_textures[1])
+	RenderingServer.global_shader_parameter_set("wall_on", 1.0)
 
 
 ## O país (ou o topo) selecionado na ficha fica destacado no mapa; 0 = nenhum.

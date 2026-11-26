@@ -73,6 +73,9 @@ func show_type(type_id: int) -> void:
 	if type_id == 0:
 		_loaded_type = -1
 		return
+	for t in resources.hub.registry.ResourceTypes(""):
+		if int(t.id) == type_id:
+			panel.set_category(String(t.category))
 	if type_id != _loaded_type:
 		_loaded_type = type_id
 		var saved: String = resources.hub.registry.ResourceRuleOf(type_id)
@@ -160,7 +163,7 @@ func _same_rule(a: String, b: String) -> bool:
 	var parts: Array = []
 	for text in [a, b]:
 		var r: Dictionary = panel.complete(JSON.parse_string(text))
-		for key in ["output", "count", "size_km", "seed"]:
+		for key in ["output", "count", "size_km", "seed", "spread"]:
 			r.erase(key)
 		parts.append(JSON.stringify(JSON.parse_string(JSON.stringify(r)), "", true))
 	return parts[0] == parts[1]
@@ -274,6 +277,7 @@ func stability(rule: String) -> void:
 	if maps.size() != needed.size():
 		return
 	var s: Dictionary = resources.hub.registry.RuleStability(rule, terrain, maps, STABILITY_NEAR_KM)
+	s["cover"] = resources.hub.registry.CoversArea(resources.type_id, rule)
 	panel.show_review_result(stability_text(s))
 
 
@@ -283,6 +287,8 @@ static func stability_text(s: Dictionary) -> String:
 	var seeds := roundi(100 * float(s.seed_agreement))
 	var chance := roundi(100 * float(s.random_agreement))
 	var verdict := "A regra aguenta pequenas mudanças." if overlap >= 60 else "Regra frágil: uma mudança de 10% altera muito os lugares aptos."
+	if s.get("cover", false):  # sem sorteio: não há semente para comparar
+		return "Lugares aptos com limites e pesos em ±10%%: ao menos %d%% iguais. %s\nNa cobertura não há sorteio: a mesma regra pinta sempre os mesmos lugares." % [overlap, verdict]
 	var places := "As regiões se repetem mais que num sorteio." if seeds >= 2 * chance else "Com outra semente, as regiões se repetem pouco mais que num sorteio."
 	return "Lugares aptos com limites e pesos em ±10%%: ao menos %d%% iguais. %s\nOutra semente: %d%% das sugestões têm uma a até %d km (num sorteio: %d%%). %s" % [
 		overlap, verdict, seeds, roundi(STABILITY_NEAR_KM), chance, places]

@@ -312,6 +312,8 @@ func _editor() -> void:
 	main.globe.focus(Geo.dir(0, 0), 2.6)
 	await frames(40)
 	await _click(_screen(-1, -10))
+	main.windows.press("territorio")  # o pincel de fronteira fica na janela Território
+	await frames(2)
 	if hub.current() != selected or not hub.sheet._boundary_brush.is_visible_in_tree():
 		return fail("clicar no país deve selecioná-lo e revelar o pincel de fronteira na ficha")
 	await _click(hub.sheet._boundary_brush.get_global_rect().get_center())
@@ -322,6 +324,13 @@ func _editor() -> void:
 		return fail("a barra de fronteiras deve caber na janela")
 	if DisplayServer.get_name() != "headless":
 		await save("evron-fronteira-antes")
+	if not panel.protect_check.is_visible_in_tree():
+		return fail("no pincel de fronteira a opção Não invadir fica à vista")
+	var own_before: float = main.territory.AreaKm2(selected)
+	await _draw_cut(4.0)  # com "Não invadir", o corte no vizinho não toma nada
+	if main.territory.AreaKm2(selected) != own_before:
+		return fail("com Não invadir o contorno não toma do vizinho")
+	panel.protect_check.button_pressed = false
 	await _draw_cut(4.0)
 	if main.territory.OwnerAt(Geo.dir(0, -1)) != selected or main.territory.OwnerAt(Geo.dir(0, 10)) != neighbor or main.territory.OwnerAt(Geo.dir(13, 4)) != third:
 		return fail("soltar o traço deve tomar só a faixa ao lado do país selecionado: " + panel._boundary_status.text)

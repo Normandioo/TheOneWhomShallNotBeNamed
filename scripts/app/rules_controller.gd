@@ -20,7 +20,7 @@ func setup(domain_hub, panel) -> void:
 		_refresh_rules_panel()
 		panel.open_dialog())
 	panel.kind_selected.connect(func(kind: String) -> void:
-		panel.show_inputs(_numeric_fields(kind), registry.LinkTypesFor(kind), registry.Search("", "", "", 0, hub.shown_t)))
+		panel.show_inputs(_numeric_fields(kind), registry.LinkTypesFor(kind), registry.Outline(hub.shown_t)))
 	panel.save_requested.connect(func(rule_id: int, rule_name: String, definition: String) -> void:
 		if rule_name.strip_edges() == "":
 			panel.show_message("Dê um nome à regra.")
@@ -78,7 +78,7 @@ func _refresh_rules_panel() -> void:
 			names[f.code] = f.label
 		for l in registry.LinkTypesFor(def.kind):
 			names[l.code] = l.label
-		for e in registry.Search("", "", "", 0, hub.shown_t):
+		for e in registry.Outline(hub.shown_t):
 			names["#%d" % int(e.id)] = e.name
 		var row: Dictionary = r.duplicate()
 		row["text"] = "%s = %s" % [names.get(def.field, def.field), Rules.describe(def.expr, names)]

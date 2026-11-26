@@ -6,6 +6,7 @@ extends PanelContainer
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 
 signal changed
+signal tutorial_requested  # o botão "?" ao lado do título
 signal political_visibility_changed(on: bool)
 signal rivers_highlight_changed(on: bool)
 signal legend_visibility_changed(on: bool)
@@ -16,6 +17,7 @@ var _scope: OptionButton
 var _checks := {}  # camada -> CheckBox
 var _box: VBoxContainer
 var rivers_check: CheckBox
+var names_check: CheckBox
 var legend_check: CheckBox
 var _presence_box: VBoxContainer   # as presenças por lugar (o sistema antigo de marcadores), recolhidas por padrão
 var _area_checks := {}  # nível -> CheckBox: a sobreposição de área na tela (uma por vez)
@@ -29,7 +31,16 @@ func _init() -> void:
 	var fold := Button.new()
 	fold.text = "Sobreposições do mapa"
 	fold.toggle_mode = true
-	box.add_child(fold)
+	var head := HBoxContainer.new()
+	box.add_child(head)
+	fold.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(fold)
+	var help := Button.new()
+	help.text = "?"
+	help.custom_minimum_size.x = 30
+	help.tooltip_text = "Ver o que cada sobreposição faz"
+	help.pressed.connect(func() -> void: tutorial_requested.emit())
+	head.add_child(help)
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.custom_minimum_size = Vector2(300, 400)
@@ -47,7 +58,7 @@ func _init() -> void:
 	_caption("NO MAPA")
 	legend_check = _check("Legenda do mapa", "Mostra ou esconde a legenda no canto da tela.", legend_visibility_changed.emit)
 	legend_check.button_pressed = true
-	var names_check := _check("Nomes dos países", "Escreve o nome de cada país no mapa político.", country_names_changed.emit)
+	names_check = _check("Nomes dos países", "Escreve o nome de cada país no mapa político.", country_names_changed.emit)
 	names_check.button_pressed = true  # ligado por padrão (o Main começa com os nomes ligados)
 	rivers_check = _check("Rios em destaque", "Realça a rede de rios em azul por cima de qualquer mapa (de longe, só os grandes).", rivers_highlight_changed.emit)
 

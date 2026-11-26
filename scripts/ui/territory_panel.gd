@@ -10,7 +10,9 @@ const LayerPanel = preload("res://scripts/ui/layer_panel.gd")  # só para o sepa
 signal mode_changed(mode: String)   # pincel | balde | borracha
 signal radius_changed(km: float)
 signal land_only_changed(on: bool)
+signal protect_changed(on: bool)   # "Não invadir": poupar o território dos outros
 signal finish_requested
+signal tutorial_requested   # o botão "?" da barra
 signal reach_changed(km: float)  # o alcance do crescimento: sem controle na barra, vale o padrão de 800 km
 signal grow_requested(all: bool)  # crescer pela terra sem dono: só este país (false) ou todos (true)
 signal snap_requested             # assentar as fronteiras deste país na crista ou no rio mais perto
@@ -34,6 +36,7 @@ const TIPS := {
 
 var radius_km := 300.0
 var land_only := true
+var protect_check: CheckBox
 var mode := "pincel"
 
 var _title: Label
@@ -48,6 +51,8 @@ var _boundary_status: Label
 var _reset_boundary: Button
 var _preview_row: HBoxContainer
 var _merge_button: MenuButton
+var help_button: Button
+var done_button: Button
 var _merge_menu: PopupMenu  # a lista de cadastros do botão de unir
 var _merge_ids: Array = []
 var _actions: HBoxContainer  # unir, importar e fronteiras naturais: só para cadastros
@@ -67,7 +72,7 @@ func _init() -> void:
 	box.add_child(row)
 	_title = Label.new()
 	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	_title.custom_minimum_size.x = 90
+	_title.custom_minimum_size.x = 140  # "Nova província" inteiro
 	_title.add_theme_font_size_override("font_size", 15)
 	UiKit.style_heading(_title)
 	_title.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -116,6 +121,12 @@ func _init() -> void:
 		land_only = on
 		land_only_changed.emit(on))
 	_brush_controls.add_child(land)
+	protect_check = CheckBox.new()
+	protect_check.text = "Não invadir"
+	protect_check.tooltip_text = "A pintura para na fronteira dos outros: dá para passar o pincel por cima que ela encosta sem tomar nada. Desligue para conquistar território."
+	protect_check.button_pressed = true
+	protect_check.toggled.connect(func(on: bool) -> void: protect_changed.emit(on))
+	row.add_child(protect_check)
 	_boundary_controls = HBoxContainer.new()  # só na ferramenta Fronteira: a fronteira, o traço e o "Outro lado"
 	_boundary_controls.add_theme_constant_override("separation", 6)
 	row.add_child(_boundary_controls)
@@ -154,7 +165,14 @@ func _init() -> void:
 				sig.emit(arg))
 		_actions.add_child(ab)
 	row.add_child(VSeparator.new())
+	help_button = Button.new()
+	help_button.text = "?"
+	help_button.custom_minimum_size = Vector2(34, 34)
+	help_button.tooltip_text = "Ver como funciona o pincel de território"
+	help_button.pressed.connect(func() -> void: tutorial_requested.emit())
+	row.add_child(help_button)
 	var done := Button.new()
+	done_button = done
 	done.icon = UiIcons.get_icon("check", 20)
 	done.custom_minimum_size = Vector2(38, 34)
 	done.tooltip_text = "Concluir: sai do modo Território (Esc)"

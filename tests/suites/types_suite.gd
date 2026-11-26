@@ -14,7 +14,7 @@ func _ui() -> void:
 	panel._type_name.text = "Fortaleza"
 	panel.type_requested.emit(panel._type_name.text)
 	var kinds: Array = UiKit.all_kinds()
-	if not kinds.has("fortaleza") or hub.search._new_pop.get_item_text(kinds.find("fortaleza")) != "Fortaleza":
+	if not kinds.has("fortaleza") or hub.search._new_pop.get_item_text(hub.search._new_pop.get_item_index(kinds.find("fortaleza"))) != "Fortaleza":
 		return fail("o tipo criado no designer aparece no menu Novo: " + panel._message.text)
 	panel._field_name.text = "Guarnição"
 	panel._field_type.select(1)

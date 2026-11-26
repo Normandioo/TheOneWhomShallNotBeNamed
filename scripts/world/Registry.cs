@@ -93,6 +93,7 @@ public partial class Registry : RefCounted
         GenerationMigration,  // RegistryGeneration.cs
         ProductionMigration,  // RegistryProduction.cs
         DetailsMigration,  // RegistryDetails.cs
+        DivisionNamesMigration,  // RegistryDivisions.cs
     };
 
     WorldDb _db = new();

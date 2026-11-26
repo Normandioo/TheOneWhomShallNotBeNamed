@@ -40,12 +40,18 @@ func run() -> void:
 		main.territory.Begin()
 		main.territory.Dab(_d(0, pair[1] - 40.0), 1500, pair[0], true, -1)
 		main.territory.End()
+	# Uma província de Aren, aberta e no pincel: pinta só dentro do país.
+	var new_province := func() -> int:
+		var made: int = reg.Create("provincia", "Divisão")
+		reg.Link(made, aren, "provincia_de")
+		hub.open(made)
+		terr.start_painting(made)
+		return made
 	hub.open(aren)
 	await frames(2)
-	hub.sheet.subdivision_requested.emit()
-	var prov: int = hub.current()
-	if reg.Kind(prov) != "provincia" or reg.TerritoryParent(prov) != aren or not terr.painting_territory or terr.territory_level != "provincia":
-		return fail("Nova província cria, liga ao país e abre o pincel no nível província")
+	var prov: int = new_province.call()
+	if reg.TerritoryParent(prov) != aren or not terr.painting_territory or terr.territory_level != "provincia":
+		return fail("a província ligada ao país abre o pincel no nível dela")
 	var shown: PackedByteArray = terr.political_image().get_data()
 	var aren_px: int = main.terrain.PixelOf(_d(0, -20))
 	if shown.decode_u16(aren_px * 2) != aren:
@@ -62,14 +68,15 @@ func run() -> void:
 		return fail("a tela mostra a província por cima e Dravia por baixo")
 	terr.stop_painting()
 	hub.open(aren)
-	hub.sheet.subdivision_requested.emit()
-	var prov2: int = hub.current()
+	var prov2: int = new_province.call()
+	terr.set_territory_protect(false)  # tomar um pedaço da irmã pede "Não invadir" desligado
 	terr.territory_radius = 700.0
 	terr.territory_begin(_d(3, -14))
 	terr.territory_end()
 	terr.stop_painting()
 	if terr.layer("provincia").OwnerAt(_d(3, -14)) != prov2:
 		return fail("uma segunda província dentro de Aren")
+	terr.set_territory_protect(true)
 	# Estilo Europa Universalis: a província tem a cor do país (a paleta aponta a província para o país).
 	var second = _id_of(hub, "provincia", prov)
 	if terr.selection_changed.get_connections().is_empty() or terr._selected_top != aren:
@@ -94,7 +101,7 @@ func run() -> void:
 		return fail("sem o modo, a província volta à cor do país")
 	if DisplayServer.get_name() != "headless":
 		await _shots(hub, terr, aren)
-	ok("Nova província: criada e ligada pela ficha, pinta só dentro do país, e o mapa mostra os países por baixo")
+	ok("província ligada: pinta só dentro do país, e o mapa mostra os países por baixo")
 
 	# O caso relatado: país novo, contorno fechado em terra vazia com o pincel de fronteira. Parar o mouse mostra a prévia sem mudar
 	# nada; soltar aplica; Terminar mantém (antes a prévia era descartada e o país ficava sem território).

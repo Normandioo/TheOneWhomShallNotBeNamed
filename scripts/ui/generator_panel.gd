@@ -20,11 +20,14 @@ const ROCKS := [["sedimentar_clastica", "Sedimentar (arenito, argilito…)"], ["
 	["metamorfica", "Metamórfica (mármore, xisto…)"]]
 const CLIMATES := [["A", "Tropical"], ["B", "Árido"], ["C", "Temperado"], ["D", "Continental"], ["E", "Polar"]]
 const DEFAULTS := {"surface": "terra", "rocks": [], "climates": [], "elev_min": -13500.0, "elev_max": 9200.0, "slope_max": 90.0,
-	"trees_min": 0.0, "soil_min": 0.0, "output": "area", "count": 8, "size_km": 250.0, "seed": 1, "prefer": [], "min_score": 1, "auto": true, "density": 1000.0}
+	"trees_min": 0.0, "soil_min": 0.0, "output": "area", "count": 8, "size_km": 250.0, "seed": 1, "prefer": [], "min_score": 1, "auto": true, "density": 1000.0,
+	"spread": ""}
+const SPREADS := ["", "manchas", "cobertura"]  # na ordem do menu "Como se espalha"
+const COVER_CATEGORIES := ["vegetal", "animal"]  # o mesmo que Registry.CoversArea decide quando a regra não diz
 ## Modelos sem recurso específico (os recursos com fontes estão em resource_profiles.gd). Saíram "Minério de montanha", "Jazida em rocha
 ## sedimentar" e "Sal em região seca": genéricos demais (o segundo cobria quase metade da terra; o terceiro contava sílex como sal).
 const TEMPLATES := [
-	["Floresta", {"trees_min": 40.0, "output": "area", "count": 12, "size_km": 300.0}],
+	["Floresta", {"trees_min": 40.0, "output": "area", "spread": "cobertura"}],
 	["Solo de cultivo", {"climates": ["A", "C", "D"], "soil_min": 40.0, "slope_max": 2.0, "elev_min": 0.0, "elev_max": 2000.0,
 		"output": "area", "count": 12, "size_km": 250.0, "min_score": 40, "prefer": [
 			{"name": "Planície perto de rio grande", "water": ["rio", "lago"], "water_km": 30.0, "slope_max": 1.0, "weight": 60},
@@ -40,6 +43,9 @@ var tests_toggle: Button
 var _into: Control        # onde _spin e _choice põem o que criam
 var surface: OptionButton
 var output: OptionButton
+var spread: OptionButton
+var category := ""  # a do recurso aberto: decide o jeito de se espalhar quando a regra não diz
+var _cover_note: Label
 var summary: Label
 var apply_button: Button
 var discard_button: Button
@@ -81,9 +87,10 @@ func _init() -> void:
 	add_child(template)
 	auto_check = CheckButton.new()
 	auto_check.text = "Automático"
-	auto_check.tooltip_text = "O programa põe quantas couberem nos lugares que servem, cada mancha do tamanho do lugar, e calcula a quantidade"
+	auto_check.tooltip_text = "O programa põe quantas couberem nos lugares que servem (cada mancha até o tamanho máximo) e calcula a quantidade"
 	auto_check.toggled.connect(func(_on: bool) -> void: _sync_auto())
 	add_child(auto_check)
+	_cover_note = _note(self, "Cobertura: pinta tudo o que serve, seguindo o contorno do mapa, um registro por trecho contínuo. Trechos com menos de 5.000 km² ficam de fora (no máximo 200, os maiores).")
 	_manual.append(_spin("count", "Quantos lugares", 1, 200, 1))
 	_spin("size_km", "Tamanho máximo (km)", 10, 2000, 10)
 	spins.size_km.tooltip_text = "Áreas: raio de cada mancha (no automático, o máximo). Pontos: distância mínima entre eles."
@@ -103,6 +110,10 @@ func _init() -> void:
 	surface = _choice("Onde", ["Em terra", "No mar"])
 	surface.item_selected.connect(func(_i: int) -> void: _sync_surface())
 	output = _choice("Gerar", ["Áreas pintadas", "Pontos"])
+	output.item_selected.connect(func(_i: int) -> void: _sync_auto())
+	spread = _choice("Como se espalha", ["Pela categoria", "Manchas agrupadas", "Cobertura"])
+	spread.tooltip_text = "Pela categoria: vegetação e animal cobrem o que serve; o resto sai em manchas"
+	spread.item_selected.connect(func(_i: int) -> void: _sync_auto())
 	factors_box = VBoxContainer.new()
 	_into.add_child(factors_box)
 	_spin("min_score", "Aptidão mínima", 1, 100, 1)
@@ -189,7 +200,7 @@ func rule() -> Dictionary:
 		"elev_min": spins.elev_min.value, "elev_max": spins.elev_max.value, "slope_max": spins.slope_max.value,
 		"trees_min": 0.0 if sea else spins.trees_min.value, "soil_min": 0.0 if sea else spins.soil_min.value,
 		"count": int(spins.count.value), "size_km": spins.size_km.value, "seed": int(spins.seed.value),
-		"auto": auto_check.button_pressed, "density": spins.density.value}
+		"auto": auto_check.button_pressed, "density": spins.density.value, "spread": SPREADS[spread.selected]}
 	var prefer: Array = [] if sea else _prefer.duplicate(true)
 	for i in prefer.size():
 		prefer[i]["weight"] = int(weights[i].value)
@@ -268,6 +279,7 @@ func load_rule(saved: Dictionary) -> void:
 	r.merge(saved, true)
 	surface.select(1 if r.surface == "mar" else 0)
 	output.select(1 if r.output == "ponto" else 0)
+	spread.select(maxi(SPREADS.find(r.spread), 0))
 	for k in rocks:
 		rocks[k].button_pressed = k in r.rocks
 	for k in climates:
@@ -292,9 +304,27 @@ func show_preview(text: String, can_apply := false) -> void:
 	discard_button.visible = can_apply
 
 
+## O recurso aberto mudou, ou a categoria dele.
+func set_category(value: String) -> void:
+	category = value
+	_sync_auto()
+
+
+## A tela vai gerar cobertura? Só em áreas.
+func covers() -> bool:
+	var chosen: String = SPREADS[spread.selected]
+	return output.selected == 0 and (chosen == "cobertura" or (chosen == "" and category in COVER_CATEGORIES))
+
+
+## Na cobertura não há quantidade, tamanho nem sorteio.
 func _sync_auto() -> void:
+	var cover := covers()
+	_cover_note.visible = cover
+	auto_check.visible = not cover
 	for control in _manual:
-		control.visible = not auto_check.button_pressed
+		control.visible = not cover and not auto_check.button_pressed
+	for key in ["size_km", "seed"]:
+		spins[key].get_parent().visible = not cover
 
 
 func show_suppressions(count: int) -> void:

@@ -1,5 +1,5 @@
 extends VBoxContainer
-## Barra de tempo: uma placa no topo ao centro (a janela do calendário abre embaixo dela): data e hora mostradas, pausa, velocidade e avanços; e a janela do calendário
+## Barra de tempo, no bloco do alto à direita (a janela do calendário abre embaixo dela): data e hora mostradas, pausa, velocidade e avanços; e a janela do calendário
 ## (consultar uma data, avançar até uma data, marcos). Só mostra e pede: avisa por sinais, o relógio decide.
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
@@ -34,46 +34,45 @@ var _markers: Label
 var _go_buttons: Array[Button] = []  # "Avançar até": só vale fora da consulta
 
 
-const TOP := 0.0  # a placa pende da borda de cima, no centro, na linha da barra de ferramentas
-const NARROW := 1500.0  # abaixo disto a placa não cabe entre os grupos da barra: desce para a linha de baixo
-
-
 func _init() -> void:
-	set_anchors_preset(Control.PRESET_CENTER_TOP)
-	grow_horizontal = Control.GROW_DIRECTION_BOTH
-	grow_vertical = Control.GROW_DIRECTION_END
-	offset_top = TOP
 	var bar := PanelContainer.new()
-	bar.add_theme_stylebox_override("panel", UiKit.plate_style())
+	bar.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	add_child(bar)
-	_build_window()  # depois da placa: abre embaixo dela
+	_build_window()  # depois da linha do tempo: abre embaixo dela
 	var box := VBoxContainer.new()
 	bar.add_child(box)
 
 	var top := HBoxContainer.new()
-	top.add_theme_constant_override("separation", 10)
+	top.add_theme_constant_override("separation", 6)
 	box.add_child(top)
 	_play = _button(top, "", func() -> void: play_toggled.emit())  # só o ícone; a dica diz Continuar/Pausar
 	_play.icon = preload("res://assets/ui/play.png")
 	_play.tooltip_text = "Continuar"
-	_play.custom_minimum_size = Vector2(38, 38)
+	_play.custom_minimum_size = Vector2(42, 40)
+	var plate := PanelContainer.new()
+	plate.add_theme_stylebox_override("panel", UiKit.inset_style())
+	plate.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(plate)
 	var when := VBoxContainer.new()
 	when.add_theme_constant_override("separation", 0)
-	top.add_child(when)
+	plate.add_child(when)
 	_date = Label.new()
 	UiKit.style_heading(_date)
-	_date.add_theme_font_size_override("font_size", 16)
+	_date.add_theme_font_size_override("font_size", 15)
+	_date.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	when.add_child(_date)
 	_state = Label.new()
 	_state.add_theme_font_size_override("font_size", 12)
 	_state.add_theme_color_override("font_color", Color("#9fb0a8"))
+	_state.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	when.add_child(_state)
 	_speed = OptionButton.new()
 	for s in SPEEDS:
 		_speed.add_item(s[0])
 	_speed.item_selected.connect(func(i: int) -> void: speed_selected.emit(SPEEDS[i][1]))
-	_speed.fit_to_longest_item = false  # a placa fica estreita; a lista aberta mostra os nomes inteiros
+	_speed.fit_to_longest_item = false  # o bloco fica estreito; a lista aberta mostra os nomes inteiros
 	_speed.custom_minimum_size = Vector2(84, 0)
+	_speed.tooltip_text = "Velocidade do tempo"
 	top.add_child(_speed)
 	var calendar_button := _button(top, "", func() -> void: _window.visible = not _window.visible)
 	calendar_button.icon = preload("res://assets/ui/clock.png")
@@ -93,23 +92,13 @@ func _init() -> void:
 		_advance_buttons.append(b)
 	_present = Label.new()
 	_present.modulate = Color(0.6, 0.85, 1.0)
+	_present.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(_present)
 	_message = Label.new()
 	_message.modulate = Color(1, 0.8, 0.5)
+	_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # um aviso comprido não alarga o bloco
 	_message.hide()
 	box.add_child(_message)
-
-
-func _ready() -> void:
-	var host := get_parent() as Control
-	if host != null:
-		host.resized.connect(_place.bind(host))
-		_place.call_deferred(host)
-
-
-## Larga: na linha da barra de ferramentas; estreita: logo abaixo dela.
-func _place(host: Control) -> void:
-	offset_top = TOP if host.size.x >= NARROW else 52.0
 
 
 ## Mostra o estado do relógio (não guarda tempo próprio).

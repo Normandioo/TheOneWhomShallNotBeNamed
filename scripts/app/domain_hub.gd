@@ -9,6 +9,9 @@ extends RefCounted
 ## Quando o C# lança uma exceção, o GDScript recebe null: por isso os resultados que viram id passam por _id() e a ficha
 ## que não existe mais é fechada, em vez de quebrar a interface.
 
+signal sheet_loaded(sheet: Dictionary, geo: Dictionary)  # a ficha do selecionado foi (re)lida: o alto da tela acompanha
+signal selection_cleared                                   # não há mais cadastro selecionado
+
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 const Calendar = preload("res://scripts/world/calendar.gd")
 const LocalCalendar = preload("res://scripts/world/local_calendar.gd")
@@ -43,6 +46,7 @@ var _outline_selected := 0
 var _outline_key := 0      # o que a árvore do Índice mostra
 var _map_key := -1         # o que o globo desenha
 var _defs := {}            # id do calendário -> definição (as definições não mudam depois de criadas)
+var _delete_target := 0    # o que a confirmação de excluir vai apagar (0 = o aberto)
 
 
 ## db_path: arquivo do banco ("user://..." é traduzido) ou ":memory:" nos testes.
@@ -60,7 +64,7 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 	UiKit.set_layers(registry.MapLayers())
 	search.refresh_kinds()
 	search.query_changed.connect(func(_t: String, _k: String) -> void: refresh_search())
-	search.entity_chosen.connect(open)
+	search.entity_chosen.connect(choose)
 	search.create_requested.connect(_on_create)
 	search.society_requested.connect(_on_society)
 	# O que se edita na ficha vai para a entidade da ficha em que foi digitado (o sinal leva o id), mesmo que a ficha já tenha trocado.
@@ -89,13 +93,26 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 		var found = registry.Search(text, kind, "", 0, shown_t)
 		return found if found != null else []
 	sheet.hierarchy_set.connect(set_parent)
+	sheet.division_named.connect(func(id: int, division_name: String) -> void:
+		registry.SetDivisionName(id, division_name)
+		_reload())
+	sheet.level_named.connect(func(country: int, level: int, level_name: String) -> void:
+		registry.SetLevelName(country, level, level_name)
+		_reload())
 	sheet.open_entity.connect(open)
 	sheet.duplicate_requested.connect(func(copy_links: bool) -> void:
 		open(_id(registry.Duplicate(_current, copy_links, ""))))
 	sheet.delete_requested.connect(func() -> void:
+		_delete_target = _current
 		sheet.confirm_delete(registry.Name(_current), registry.AffectedLinks(_current)))
+	sheet.division_detail = _division_detail
+	sheet.division_total_set.connect(_set_division_total)
+	sheet.division_delete_requested.connect(func(id: int) -> void:
+		_delete_target = id
+		sheet.confirm_delete(registry.Name(id), registry.AffectedLinks(id)))
+	sheet.division_view_requested.connect(_view_division)
+	sheet.division_back_requested.connect(show_division)
 	sheet.delete_confirmed.connect(_on_delete)
-	sheet.closed.connect(func() -> void: _current = 0)
 	sheet.calendar_use_added.connect(func(calendar_id: int, purpose: String) -> void:
 		registry.UseCalendar(_current, calendar_id, purpose, 0)
 		_reload())
@@ -183,6 +200,31 @@ func refresh_sheet() -> void:
 		_reload()
 
 
+## Tira a seleção: fecha a janela e limpa o destaque do mapa.
+func deselect() -> void:
+	if _current == 0:
+		return
+	_current = 0
+	_sheet_hash = 0
+	sheet.hide_sheet()
+	selection_cleared.emit()
+	refresh_search()
+	refresh_map()
+	if territories != null:
+		territories.refresh_selection()
+
+
+## Muitos cadastros mudaram de uma vez (Opções → Cadastros): esquece o que estava guardado e relê a lista e o mapa.
+func forget_cached() -> void:
+	_composition_cache.clear()
+	_defs.clear()
+	_sheet_hash = 0
+	_search_key = 0
+	_outline_key = 0
+	refresh_search()
+	redraw_map()
+
+
 ## Redesenha as presenças do mapa mesmo que pareçam iguais (as camadas mudaram).
 func redraw_map() -> void:
 	_map_key = 0
@@ -199,7 +241,61 @@ func open(id: int) -> void:
 	if territories != null:
 		territories.on_open(id)
 	_current = id
+	sheet.keep_closed = false  # abrir um cadastro mostra a janela, mesmo que ela tenha sido fechada
 	_reload()
+
+
+## Escolher um cadastro numa lista ou no mapa: uma subdivisão abre dentro da lista do país dela; o resto abre a própria ficha.
+func choose(id: int) -> void:
+	if id != 0 and usable and String(registry.Kind(id)) in ["provincia", "municipio"]:
+		show_division(id)
+	else:
+		open(id)
+
+
+## Abre o país da subdivisão, na página Território, com a linha dela aberta. Sem país, abre a ficha dela.
+func show_division(id: int) -> void:
+	var country: int = registry.CountryOf(id)
+	if country == 0:
+		open(id)
+		return
+	sheet.queue_division(id)
+	open(country)
+	sheet.show_page("Território")
+
+
+## O que a linha aberta mostra de uma subdivisão.
+func _division_detail(id: int) -> Dictionary:
+	var s = registry.Sheet(id, shown_t)
+	if s == null:
+		return {}
+	var info: Dictionary = territories.sheet_info(s) if territories != null else {}
+	return {"name": s.name, "label": s.label, "area_km2": float(info.get("area_km2", 0.0)), "color": int(info.get("color", registry.EntityColor(id))),
+		"ok": bool(info.get("ok", false)), "has_total": s.population.has_total, "total": s.population.total if s.population.has_total else 0.0}
+
+
+func _set_division_total(id: int, text: String) -> void:
+	if text == "":
+		var p: Dictionary = registry.PopulationOf(id, shown_t)
+		if p.has_total:
+			registry.DeleteTotal(id, int(p.t))
+	else:
+		var v := parse_number(text)
+		if is_nan(v) or v < 0.0:
+			sheet.show_division_message("Informe o número de habitantes (0 ou mais).")
+			return
+		registry.SetTotal(id, shown_t, roundf(v))
+	_reload()
+
+
+func _view_division(id: int) -> void:
+	var layer = territories.layer(String(registry.Kind(id))) if territories != null else null
+	if layer == null or not focus_map.is_valid():
+		return
+	var centers: Dictionary = layer.Centroids()
+	if centers.has(id):
+		var radius := sqrt(float(centers[id][1]) / PI)
+		focus_map.call(centers[id][0], 1.0 + 5.0 * maxf(radius, 150.0) / EvronGeo.RADIUS_KM)  # com folga: a janela cobre a esquerda
 
 
 ## Liga uma província a um país ou um município a uma província (parent = 0 tira do de cima). Cada cadastro tem um só de cima: o vínculo anterior sai.
@@ -290,42 +386,30 @@ func refresh_search() -> void:
 	_refresh_hierarchy()
 
 
-## A árvore do Índice: todos os cadastros por tipo; província e município ficam sob o cadastro de nível acima (TerritoryParent).
+## A árvore dos Registros: todos os cadastros, sem o limite da busca; cada divisão sob o cadastro de nível acima (parent).
 func _hierarchy_rows() -> Array:
-	var rows := []
-	for kind in UiKit.all_kinds():
-		var found = registry.Search("", kind, "", 0, shown_t)
-		if found == null:
-			continue
-		for e in found:
-			var parent := 0
-			if kind == "provincia" or kind == "municipio":
-				var p = registry.TerritoryParent(int(e.id))
-				parent = int(p) if p != null else 0
-			rows.append({"id": int(e.id), "kind": kind, "name": String(e.name), "parent": parent})
-	return rows
+	var rows = registry.Outline(shown_t)
+	return rows if rows != null else []
 
 
-## As divisões de um país ou de uma província, para a aba Composição: [{id, name, kind, children: [{id, name}]}] (as províncias com os municípios delas; os
-## municípios direto no país sem filhos).
+## As divisões de um país ou de uma subdivisão, para a ficha: [{id, name, kind, label, differs, children: [...]}] (as do 1º nível com as
+## de dentro; as do 2º nível ligadas direto ao país, sem filhos).
 func _division_of(id: int, kind: String) -> Array:
 	if not kind in ["pais", "provincia"]:
 		return []
-	var rows := _hierarchy_rows()
+	var children := {}  # parent -> as divisões dele, na ordem de nome
+	for r in _hierarchy_rows():
+		if int(r.parent) != 0:
+			children.get_or_add(int(r.parent), []).append(r)
 	var out: Array = []
-	for r in rows:
-		if int(r.parent) != id:
-			continue
-		var children: Array = []
-		if String(r.kind) == "provincia":
-			for c in rows:
-				if int(c.parent) == int(r.id) and String(c.kind) == "municipio":
-					children.append({"id": int(c.id), "name": String(c.name)})
-		out.append({"id": int(r.id), "name": String(r.name), "kind": String(r.kind), "children": children})
-	out.sort_custom(func(x, y) -> bool:
-		if x.kind != y.kind:
-			return x.kind == "provincia"
-		return String(x.name) < String(y.name))
+	for level in ["provincia", "municipio"]:
+		for r in children.get(id, []):
+			if r.kind == level:
+				var item: Dictionary = r.duplicate()
+				item["color"] = int(registry.EntityColor(int(r.id)))
+				var inside: Array = children.get(int(r.id), []) if level == "provincia" else []
+				item["children"] = inside.map(func(c): return c.merged({"color": int(registry.EntityColor(int(c.id)))}))
+				out.append(item)
 	return out
 
 
@@ -369,7 +453,11 @@ func pick(dir: Vector3, tolerance_km: float) -> int:
 	if territories != null and "politica" in presence_panel.layers():
 		var owner: int = territories.owner_at(dir)
 		if owner != 0:
-			if owner != _current or not sheet.visible:
+			var division: int = territories.division_at(dir, owner)
+			if division != 0:
+				if sheet.open_division != division or not sheet.visible:
+					show_division(division)
+			elif owner != _current or not sheet.visible:
 				open(owner)
 			return 1
 	if not presence_panel.all_entities() and _current == 0:
@@ -390,6 +478,7 @@ func pick(dir: Vector3, tolerance_km: float) -> int:
 		for id in found:
 			var h: Dictionary = found[id]
 			rows.append({"id": id, "kind": h.kind, "name": h.entity, "match": "%s · %s" % [h.place, UiKit.role_label(h.role)]})
+		search.show()  # os vários resultados do clique precisam aparecer para o usuário escolher
 		search.show_results(rows, _current)
 		_search_key = 0  # a lista agora não é a da busca: a próxima atualização a refaz
 	return found.size()
@@ -482,15 +571,21 @@ func _on_link_search(text: String, dst_kind: String) -> void:
 
 
 func _on_delete() -> void:
-	var deleted := _current
+	var deleted := _delete_target if _delete_target != 0 else _current
+	_delete_target = 0
 	var deleted_layer = territories.before_delete(deleted) if territories != null else null
 	if registry.Delete(deleted) == null:
 		return
 	if territories != null:
 		territories.after_delete(deleted, deleted_layer)
+	if deleted != _current:  # excluída pela lista do país: o país continua aberto
+		sheet.open_division = 0
+		_reload()
+		return
 	_current = 0
 	_sheet_hash = 0
 	sheet.hide_sheet()
+	selection_cleared.emit()
 	refresh_search()
 	refresh_map()
 	if territories != null:
@@ -580,9 +675,12 @@ func _reload() -> void:
 		_current = 0
 		_sheet_hash = 0
 		sheet.hide_sheet()
+		selection_cleared.emit()
 	else:
 		_sheet_hash = s.hash()
-		sheet.show_sheet(s, registry.LinkTypesFor(s.kind), _calendar_info(s), _geo_info(s))
+		var geo := _geo_info(s)
+		sheet.show_sheet(s, registry.LinkTypesFor(s.kind), _calendar_info(s), geo)
+		sheet_loaded.emit(s, geo)
 	refresh_search()
 	refresh_map()
 	if territories != null:
@@ -622,7 +720,9 @@ func _geo_info(s: Dictionary) -> Dictionary:
 			seen[int(e.place_id)] = true
 			cities.append({"id": int(e.place_id), "name": e.place})
 	var geo := {"cities": cities, "places": c.items, "places_more": c.more, "fixed_text": _fixed_text(), "has_fixed": fixed_dir != Vector3.ZERO, "dates_e": dates_e, "dates_d": dates_d,
-			"chain": _chain_of(int(s.id)), "composition": _map_composition(s), "division": _division_of(int(s.id), String(s.kind))}
+			"chain": _chain_of(int(s.id)), "composition": _map_composition(s), "division": _division_of(int(s.id), String(s.kind)),
+			"level_names": [registry.LevelName(int(s.id), 1), registry.LevelName(int(s.id), 2)] if s.kind == "pais" else [],
+			"suggestions": Array(registry.DivisionSuggestions())}
 	var territory_info: Dictionary = territories.sheet_info(s) if territories != null else {}
 	if not territory_info.is_empty():
 		geo["territory"] = territory_info

@@ -16,6 +16,11 @@ geológicas e dos tipos de vulcanismo são hipótese na calibração dos mapas.
 | Ferro | Formação bandada (sílex, muitas vezes metamorfizada); skarn; **ferro de pântano**, onde água subterrânea com ferro chega a brejos (o ferro dos povos do norte até o século XVI); **laterita**, crosta de clima quente e úmido sobre rocha com ferro | [bandada](https://pubs.usgs.gov/bul/b1693/html/bull971h.htm), [skarn](https://pubs.usgs.gov/bul/b1693/html/bull86em.htm), [ferro de pântano (Britannica)](https://www.britannica.com/science/bog-iron-ore), [(USGS)](https://www.usgs.gov/publications/bog-iron-formation-nassawango-creek-watershed-maryland-usa), [laterita](https://www.britannica.com/science/laterite) | Idade das rochas (os mapas não têm); a renovação do ferro de pântano (uma vez por geração). Quartzito saiu: é comum e quase nunca tem ferro |
 | Sal | Evaporação maior que a entrada de água em bacias fechadas, sobretudo em clima árido; salinas de costa | [minerais de deserto](https://pubs.usgs.gov/gip/deserts/minerals), [água subterrânea e evaporitos](https://www.usgs.gov/publications/ground-water-control-evaporite-deposition) | Bacia fechada (o mapa não tem legenda): usa-se "lago em clima árido". As salinas de costa vêm do conhecimento geral, sem fonte conferida |
 
+**Manchas ou cobertura (26/11/2026).** Minerais saem em manchas em volta de centros sorteados. Vegetação e animal saem em
+**cobertura**: tudo o que passa na regra é pintado, um registro por trecho contínuo (menores que 5.000 km² ficam de fora, no
+máximo 200). Dá para trocar em "Ajustes avançados" → "Como se espalha". O motivo: o modelo "Floresta" em manchas cobria só 29%
+da floresta do mapa e parecia um conjunto de bolas.
+
 ## Revisão de 25/11/2026 (problemas do mesmo tipo do quartzito)
 
 - **Um sinal fraco bastava sozinho:** quartzito (ferro), granito (estanho), "árido e plano" (sal). Agora cada perfil exige um tipo

@@ -53,6 +53,9 @@ var title: Label
 var back_button: Button
 var message: Label
 var list_box: VBoxContainer      # a tela da lista
+var suggest_button: Button
+var add_row: Control              # "Pintar área nova" e "Colocar ponto"
+signal tutorial_requested         # o botão "?" do cabeçalho
 var query: LineEdit
 var types: ItemList
 var empty_list: Label
@@ -117,6 +120,7 @@ func _init() -> void:
 	title = _heading(head, "RECURSOS")
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.clip_text = true
+	_button(head, "?", func() -> void: tutorial_requested.emit()).tooltip_text = "Ver como funcionam os recursos"
 	_button(head, "✕", func() -> void: closed.emit())
 	message = _note(box, "")
 	message.modulate = Color(1.0, 0.85, 0.4)
@@ -155,7 +159,8 @@ func _build_list(box: VBoxContainer) -> void:
 		_button(ready, ResourceProfiles.PROFILES[i].name, func() -> void: profile_requested.emit(i)).tooltip_text = ResourceProfiles.PROFILES[i].about
 
 	list_box.add_child(HSeparator.new())
-	_button(list_box, "Sugerir para todos", func() -> void: preview_all_requested.emit()).tooltip_text = \
+	suggest_button = _button(list_box, "Sugerir para todos", func() -> void: preview_all_requested.emit())
+	suggest_button.tooltip_text = \
 		"Mostra no mapa uma prévia dos recursos que já têm regra de sugestão. Nada muda antes de aplicar."
 	all_summary = _note(list_box, "")
 	all_actions = _row(list_box)
@@ -180,6 +185,7 @@ func _build_type(box: VBoxContainer) -> void:
 
 	var map_page := pages[TAB_MAP]
 	var add := _row(map_page)
+	add_row = add
 	_button(add, "Pintar área nova", func() -> void: area_requested.emit()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_button(add, "Colocar ponto", func() -> void: point_requested.emit()).tooltip_text = "Para um local pequeno, como uma mina"
 	empty_occurrences = _note(map_page, "Este recurso ainda não está no mapa. Pinte uma área, coloque um ponto ou use a aba Sugerir.")

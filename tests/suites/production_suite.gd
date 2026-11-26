@@ -206,6 +206,31 @@ func _run_scene() -> void:
 		return fail("mais pessoas que o povoado tem: aviso")
 	panel.activity_added.emit(int(reg.Recipes()[0].id), 30)
 	var village: int = prod.settlement_id
+	# Uma atividade diferente, sem sair do povoado: o botão abre a receita em branco, e salvar volta com ela escolhida.
+	panel.create_activity.pressed.emit()
+	if not panel.recipes_box.visible or panel.title.text != "RECEITAS" or panel.recipe_name.text != "" or panel.recipe_output.selected != -1:
+		return fail("o botão abre uma receita em branco: %s" % panel.title.text)
+	panel.recipe_name.text = "Secar sal"
+	prod.refresh()  # como na virada do mês: o que foi digitado fica
+	panel._save_recipe()
+	if panel.recipe_name.text != "Secar sal" or panel.recipe_output.selected != -1 or panel.message.text != "Escolha o bem que a receita produz.":
+		return fail("sem o bem escolhido o formulário fica como está: %s" % panel.message.text)
+	panel.recipe_output.select(0)
+	panel._save_recipe()
+	if panel.recipe_name.text != "Secar sal":
+		return fail("uma receita recusada não pode apagar o formulário")
+	panel.back_requested.emit()
+	if not panel.place_box.visible or prod.settlement_id != village:
+		return fail("voltar das receitas, vindo do povoado, volta para ele")
+	panel.create_activity.pressed.emit()
+	panel.recipe_saved.emit(0, {"name": "Secar sal", "kind": "fabricacao", "output_id": sal, "output_qty": 1.0, "labor_days": 2.0, "inputs": []})
+	if not panel.place_box.visible or prod.settlement_id != village or panel.activity_recipe.get_item_text(panel.activity_recipe.selected) != "Secar sal" \
+			or not panel.message.text.contains("criada"):
+		return fail("salvar volta ao povoado com a atividade escolhida: " + panel.message.text)
+	for x in reg.Recipes():
+		if x.name == "Secar sal":
+			reg.DeleteRecipe(int(x.id))  # o resto da suíte conta com uma receita só
+	prod.refresh()
 	main.clock.now = Calendar.to_seconds(1, 1, 15)
 	main.clock.advance_months(1)  # passa por 1º de fevereiro: janeiro é processado
 	if not _near(_stock_of(reg, village, sal), 30.0 * 31.0 / 30.0 * 10.0) or not panel.results_box.get_child(1).text.contains("+310 kg de Sal"):

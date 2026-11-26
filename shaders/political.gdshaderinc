@@ -22,6 +22,16 @@ global uniform float area_gray;  // 1 = o mapa de baixo são os países (ficam c
 // A costa de todos os mapas: R = distância com sinal até a costa em km (+ terra), G = lago (Terrain.CoastImage). Global para o mapa político e as outras
 // camadas desenharem a MESMA linha de costa.
 global uniform sampler2D coast_map : filter_linear, repeat_enable;
+// As linhas do pincel de fronteira (Territory.Walls): perto delas a borda sai em cima da linha, mais fina que o pixel do mapa.
+// wall_index: uma célula por 4×4 pixels do mapa, com o início e a quantidade de trechos; wall_segments (1024 de largura): x0, y0, x1, y1
+// em pixels do mapa (o centro do pixel i é i + 0,5). wall_on 0 = não há linha à vista.
+global uniform sampler2D wall_index : filter_nearest;
+global uniform sampler2D wall_segments : filter_nearest;
+global uniform float wall_on;
+
+float wall_cross(vec2 a, vec2 b) {
+	return a.x * b.y - a.y * b.x;
+}
 
 // Terra pela costa do mapa político (0..1, com a borda de um pixel de tela). known = false enquanto a costa não foi calculada.
 float coast_land(vec2 uv, out bool known) {
@@ -74,8 +84,9 @@ int political_owner(vec2 uv, float width, float coast_km, out float line, out fl
 	float texels_per_pixel = max(length(fwidth(p)), 0.0001);  // antes de qualquer desvio: derivada fora de fluxo condicional
 	ivec2 i0 = ivec2(floor(p)) - 1;
 	vec4 wx = political_bspline(fract(p.x)), wy = political_bspline(fract(p.y));
-	// Em terra perto do mar, "ninguém" não vota: a costa da altitude pode passar um pouco além de onde o país foi pintado, e a faixa entre os dois
-	// ficava sem cor. Assim o país mais próximo cobre essa faixa (até ~1,5 pixel do mapa), sem engrossar as fronteiras no interior.
+	// Em terra perto do mar, o "ninguém" que é ÁGUA no mapa não vota: a costa desenhada pode passar um pouco além de onde dá para pintar, e a faixa
+	// entre os dois ficava sem cor. Assim o país mais próximo cobre essa faixa (até ~1,5 pixel do mapa). Terra sem dono continua votando: sem isso o
+	// país vazava por cima dela em quadrados do tamanho do pixel do mapa, onde a borda pintada cruzava o litoral.
 	vec2 reach = 2.0 / vec2(size);
 	float h0 = height(uv), h1 = height(uv + vec2(reach.x, 0.0)), h2 = height(uv - vec2(reach.x, 0.0));
 	float h3 = height(uv + vec2(0.0, reach.y)), h4 = height(uv - vec2(0.0, reach.y));
@@ -86,8 +97,63 @@ int political_owner(vec2 uv, float width, float coast_km, out float line, out fl
 	float w[16];
 	for (int j = 0; j < 4; j++) {
 		for (int i = 0; i < 4; i++) {
-			ids[j * 4 + i] = political_id(i0 + ivec2(i, j), size);
-			w[j * 4 + i] = (coastal && ids[j * 4 + i] == 0) ? 0.0 : wx[i] * wy[j];
+			ivec2 texel = i0 + ivec2(i, j);
+			ids[j * 4 + i] = political_id(texel, size);
+			bool silent = coastal && ids[j * 4 + i] == 0 && height((vec2(texel) + 0.5) / vec2(size)) < 0.0;
+			w[j * 4 + i] = silent ? 0.0 : wx[i] * wy[j];
+		}
+	}
+	// Perto de uma linha desenhada, um pixel do mapa do outro lado dela não vota aqui. "Do outro lado" = o segmento deste ponto até o
+	// centro dele cruza a linha: vale para cantos, pontas e encontros de várias linhas. Só de perto (de longe a diferença não aparece) e
+	// onde os 16 pixels não são todos do mesmo dono.
+	float wall_dist = 1e9;
+	float across_w[16];
+	bool walled = false;
+	bool mixed = false;
+	for (int j = 0; j < 16; j++) {
+		across_w[j] = 0.0;
+		mixed = mixed || ids[j] != ids[0];
+	}
+	if (wall_on > 0.5 && mixed && texels_per_pixel < 0.6) {
+		vec2 here = p + 0.5;
+		ivec2 cells = textureSize(wall_index, 0);
+		ivec2 cell = ivec2(int(fract(uv.x) * float(cells.x)), clamp(int(uv.y * float(cells.y)), 0, cells.y - 1));
+		vec2 span = texelFetch(wall_index, cell, 0).rg;
+		int hidden = 0;  // um bit por pixel: 1 = do outro lado
+		for (int k = 0; k < min(int(span.y + 0.5), 192); k++) {
+			int address = int(span.x + 0.5) + k;
+			vec4 segment = texelFetch(wall_segments, ivec2(address % 1024, address / 1024), 0);
+			vec2 a = segment.xy - here;
+			float turn = float(size.x) * floor(a.x / float(size.x) + 0.5);  // a volta na longitude
+			a.x -= turn;
+			vec2 b = segment.zw - here - vec2(turn, 0.0);
+			if (any(greaterThan(min(a, b), vec2(2.0))) || any(lessThan(max(a, b), vec2(-2.0)))) {
+				continue;  // longe demais para passar entre este ponto e algum dos 16 pixels
+			}
+			vec2 along = b - a;
+			wall_dist = min(wall_dist, length(a + clamp(-dot(a, along) / max(dot(along, along), 1e-12), 0.0, 1.0) * along));
+			float side_here = wall_cross(along, -a);
+			for (int c = 0; c < 16; c++) {
+				vec2 q = vec2(i0 + ivec2(c % 4, c / 4)) + 0.5 - here;
+				if ((wall_cross(q, a) > 0.0) != (wall_cross(q, b) > 0.0) && (side_here > 0.0) != (wall_cross(along, q - a) > 0.0)) {
+					hidden ^= 1 << c;  // cruzar duas vezes volta para o mesmo lado
+				}
+			}
+		}
+		if (hidden != 0) {
+			float visible = 0.0;
+			for (int c = 0; c < 16; c++) {
+				visible += (hidden & (1 << c)) != 0 ? 0.0 : w[c];
+			}
+			if (visible > 0.00001) {
+				walled = true;
+				for (int c = 0; c < 16; c++) {
+					if ((hidden & (1 << c)) != 0) {
+						across_w[c] = wx[c % 4] * wy[c / 4];
+						w[c] = 0.0;
+					}
+				}
+			}
 		}
 	}
 	// O voto de cada candidato = soma dos pesos dos pixels que têm o mesmo id; o primeiro e o segundo colocados.
@@ -100,6 +166,9 @@ int political_owner(vec2 uv, float width, float coast_km, out float line, out fl
 		float s = 0.0;
 		for (int j = 0; j < 16; j++) {
 			s += ids[j] == ids[k] ? w[j] : 0.0;
+		}
+		if (walled && s <= 0.0) {
+			continue;  // só do outro lado da linha: não disputa
 		}
 		if (s > best) {
 			second = best;
@@ -123,6 +192,25 @@ int political_owner(vec2 uv, float width, float coast_km, out float line, out fl
 			sub = 1.0 - smoothstep(0.3 * width - 0.5, 0.3 * width + 0.5, d);
 		} else {
 			line = 1.0 - smoothstep(0.5 * width - 0.5, 0.5 * width + 0.5, d);  // largura total ≈ width
+		}
+	}
+	// A borda escura em cima da própria linha, quando o outro lado é de outro.
+	if (walled) {
+		int other = -1;
+		float other_w = 0.0;
+		for (int c = 0; c < 16; c++) {
+			if (across_w[c] > other_w) {
+				other_w = across_w[c];
+				other = ids[c];
+			}
+		}
+		if (other >= 0 && other != best_id && (other == 0 || political_color(other).a > 0.5)) {
+			float on_line = 1.0 - smoothstep(0.5 * width - 0.5, 0.5 * width + 0.5, wall_dist / texels_per_pixel);
+			if (other != 0 && political_top_id(best_id) == political_top_id(other)) {
+				sub = max(sub, on_line);
+			} else {
+				line = max(line, on_line);
+			}
 		}
 	}
 	return best_id;

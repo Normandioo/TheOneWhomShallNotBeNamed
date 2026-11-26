@@ -14,6 +14,9 @@ const SMOOTH := 7.0         # 1/s: rapidez com que a distância alcança o alvo
 const ORBIT_SENSITIVITY := 0.005  # rad por pixel arrastado, a 3 raios; mais devagar quando perto
 const FOV := 40.0
 
+var orbit_speed := 1.0  # opções do jogador: 1 = o padrão
+var zoom_speed := 1.0
+
 var cam: Camera3D
 var radius := 1.0            # raio do globo na cena
 var yaw := 0.0
@@ -64,9 +67,9 @@ func handle_input(e: InputEvent) -> void:
 		var mb := e as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
 			# O zoom age na altura acima do chão, não na distância ao centro: perto da superfície ainda aproxima.
-			target_dist = radius + (target_dist - radius) / WHEEL_FACTOR
+			target_dist = radius + (target_dist - radius) / pow(WHEEL_FACTOR, zoom_speed)
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
-			target_dist = radius + (target_dist - radius) * WHEEL_FACTOR
+			target_dist = radius + (target_dist - radius) * pow(WHEEL_FACTOR, zoom_speed)
 		elif mb.button_index == MOUSE_BUTTON_LEFT or mb.button_index == MOUSE_BUTTON_RIGHT:
 			_dragging = mb.pressed
 			if mb.pressed:
@@ -76,6 +79,6 @@ func handle_input(e: InputEvent) -> void:
 	elif e is InputEventMouseMotion and _dragging:
 		var mm := e as InputEventMouseMotion
 		_drag_moved += mm.relative.length()
-		var k := ORBIT_SENSITIVITY * clampf((dist - radius) / (2.0 * radius), 0.002, 1.0)
+		var k := ORBIT_SENSITIVITY * orbit_speed * clampf((dist - radius) / (2.0 * radius), 0.002, 1.0)
 		yaw = wrapf(yaw - mm.relative.x * k, -PI, PI)
 		pitch = clampf(pitch + mm.relative.y * k, -1.5, 1.5)

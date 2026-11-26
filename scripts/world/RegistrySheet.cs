@@ -228,6 +228,15 @@ public partial class Registry
     /// Texto vazio lista tudo (até 200). Cada resultado: id, kind, name (principal em t), match (o nome que casou, se não for o principal).
     public Array<Dictionary> Search(string text, string kind, string tag, long relatedTo, long t)
     {
+        var found = Matching(text, kind, tag, relatedTo, t).Take(200).ToList();
+        var subdivisions = found.Any(h => DivisionLevel(h.Kind) > 0) ? Subdivisions() : null;
+        return new(found.Select(h => new Dictionary { ["id"] = h.Id, ["kind"] = h.Kind, ["name"] = h.Name, ["match"] = h.Match,
+                                                      ["label"] = subdivisions?.GetValueOrDefault(h.Id).Label ?? "" }));
+    }
+
+    /// Todos os que casam, em ordem de nome (a busca mostra os primeiros 200; a árvore, todos).
+    IEnumerable<(long Id, string Kind, string Name, string Match)> Matching(string text, string kind, string tag, long relatedTo, long t)
+    {
         HashSet<long>? allowed = null;
         if (tag != "") allowed = _db.Rows("select entity_id from entity_tag where tag = @0", tag).Select(r => Convert.ToInt64(r[0])).ToHashSet();
         if (relatedTo != 0)
@@ -251,9 +260,9 @@ public partial class Registry
             if (Matches(name, text)) h.Match ??= name;
             hits[id] = h;
         }
-        return new(hits.Where(p => p.Value.Match != null).OrderBy(p => p.Value.Display ?? p.Value.Match, StringComparer.CurrentCultureIgnoreCase).Take(200)
-            .Select(p => new Dictionary { ["id"] = p.Key, ["kind"] = p.Value.Kind, ["name"] = p.Value.Display ?? p.Value.Match ?? "",
-                                          ["match"] = p.Value.Match != null && p.Value.Match != p.Value.Display ? p.Value.Match : "" }));
+        return hits.Where(p => p.Value.Match != null).OrderBy(p => p.Value.Display ?? p.Value.Match, StringComparer.CurrentCultureIgnoreCase)
+            .Select(p => (p.Key, p.Value.Kind, p.Value.Display ?? p.Value.Match ?? "",
+                          p.Value.Match != null && p.Value.Match != p.Value.Display ? p.Value.Match : ""));
     }
 
     // ---- ficha ----
@@ -302,10 +311,10 @@ public partial class Registry
             links.Add(new Dictionary { ["id"] = Convert.ToInt64(r[0]), ["type"] = Str(r[1]), ["outgoing"] = outgoing,
                                        ["label"] = Str(outgoing ? r[6] : r[7]),
                                        ["other_id"] = Convert.ToInt64(outgoing ? r[3] : r[2]), ["other_name"] = Str(outgoing ? r[9] : r[8]),
-                                       ["other_kind"] = Str(outgoing ? r[11] : r[10]), ["from"] = Convert.ToInt64(r[4]), ["to"] = Convert.ToInt64(r[5]) });
+                                       ["other_kind"] = Str(outgoing ? r[11] : r[10]), ["other_label"] = DivisionName(Convert.ToInt64(outgoing ? r[3] : r[2])), ["from"] = Convert.ToInt64(r[4]), ["to"] = Convert.ToInt64(r[5]) });
         }
 
-        return new Dictionary { ["id"] = id, ["kind"] = kind, ["name"] = NameAt(id, t) is { Length: > 0 } n ? n : Name(id), ["summary"] = Str(e[0][1]),
+        return new Dictionary { ["id"] = id, ["kind"] = kind, ["label"] = DivisionName(id), ["name"] = NameAt(id, t) is { Length: > 0 } n ? n : Name(id), ["summary"] = Str(e[0][1]),
                                 ["names"] = names, ["tags"] = Tags(id), ["fields"] = fields, ["links"] = links,
                                 ["calendars"] = CalendarsOf(id, t), ["presences"] = PresencesOf(id, t), ["estimates"] = EstimatesOf(id, t), ["population"] = PopulationOf(id, t),
                                 ["compositions"] = CompositionsOf(id, t) };
@@ -334,6 +343,7 @@ public partial class Registry
             _db.Run("update entity set summary = @0 where id = @1", e[0][1], copy);
             _db.Run("insert into field_value(entity_id, field_id, state, num, text) select @1, field_id, state, num, text from field_value where entity_id = @0", id, copy);
             _db.Run("insert into entity_tag(entity_id, tag) select @1, tag from entity_tag where entity_id = @0", id, copy);
+            _db.Run("insert into division_name(entity_id, level, name) select @1, level, name from division_name where entity_id = @0", id, copy);
             if (copyLinks)
             {
                 _db.Run("insert into presence(entity_id, place_id, role, valid_from, valid_to, certainty, note) select @1, place_id, role, valid_from, valid_to, certainty, note from presence where entity_id = @0 and valid_to = @2", id, copy, Forever);
@@ -353,25 +363,7 @@ public partial class Registry
     public long Delete(long id)
     {
         long n = AffectedLinks(id);
-        _db.Tx(() =>
-        {
-            _db.Run("delete from relation where src = @0 or dst = @0", id);
-            _db.Run("delete from calendar_use where entity_id = @0", id);
-            _db.Run("delete from presence where entity_id = @0", id);
-            _db.Run("delete from distribution_share where distribution_id in (select id from distribution where subject_id = @0)", id);
-            _db.Run("delete from distribution where subject_id = @0", id);
-            _db.Run("delete from population_estimate where subject_id = @0", id);
-            _db.Run("delete from population_total where subject_id = @0", id);
-            // Quem era categoria de uma distribuição some dela, e a lista deixa de ser completa (não dá para afirmar que está inteira).
-            _db.Run("update distribution set complete = 0 where id in (select distribution_id from distribution_share where category_id = @0)", id);
-            _db.Run("delete from distribution_share where category_id = @0", id);
-            _db.Run("update entity_name set lang_id = null where lang_id = @0", id);
-            _db.Run("delete from entity_name where entity_id = @0", id);
-            _db.Run("delete from field_value where entity_id = @0", id);
-            _db.Run("delete from entity_tag where entity_id = @0", id);
-            _db.Run("delete from entity where id = @0", id);
-            return 0;
-        });
+        _db.Tx(() => DeleteMarked("id = @0", id));  // RegistryReset.cs: limpa tudo o que aponta para o cadastro
         return n;
     }
 

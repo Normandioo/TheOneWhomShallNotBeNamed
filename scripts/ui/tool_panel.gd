@@ -1,13 +1,12 @@
 extends PanelContainer
-## A barra superior, em toda a largura (48 px): a marca, o menu do mundo e o estado da gravação; os modos (Navegar, Território, Relevo);
-## desfazer e refazer; e à direita o resumo do mundo, a busca, a configuração e a ajuda. A placa da data (TimeBar) pende dela, ao centro.
-## Os pincéis e os controles do relevo ficam na barra de edição de baixo (edit_bar), que só aparece com uma ferramenta ativa.
+## As ferramentas e os comandos do mundo. Este painel é a barra de baixo ao centro (Navegar, Território, Relevo, desfazer e refazer);
+## ele monta também o bloco do alto à direita (world_block: o tempo, a busca, os Registros e o menu Mundo), o par "salvo / contagem" que
+## vai para a barra de estado (status_items) e a barra dos pincéis de relevo (edit_bar), que só aparece com a ferramenta ativa.
 ## Só mostra e pede: avisa por sinais, e a pilha de comandos diz o que dá para desfazer.
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 const UiIcons = preload("res://scripts/ui/ui_icons.gd")
 const TerrainBrush = preload("res://scripts/edit/terrain_brush.gd")
-const SunCrest = preload("res://scripts/ui/sun_crest.gd")
 
 signal tool_selected(op: int)  # -1 = navegar; senão TerrainBrush.Op
 signal territory_requested     # o modo Território: pintar o cadastro aberto na ficha
@@ -21,17 +20,22 @@ signal import_requested
 signal search_requested        # a caixa de busca: abre o Índice na aba Busca
 signal config_requested(which: String)  # "tipos", "regras" ou "calendarios"
 signal help_requested
+signal relief_tutorial_requested  # o botão "?" da barra de relevo
+signal registry_requested      # o botão Registros: abre ou fecha a árvore de todos os cadastros
 signal resources_toggled(open: bool)  # o painel de recursos
 signal settlements_toggled(open: bool)  # o painel dos povoados (produção)
 
 const NAVIGATE := -1
-const HEIGHT := 48
+const BLOCK_WIDTH := 500
 const BRUSH_ICONS := ["raise", "lower", "level", "smooth", "mountains", "erosion", "valley"]
 
 var radius: HSlider
 var strength: HSlider
 var roughness: HSlider
 var edit_bar: PanelContainer  # embaixo, ao centro: o main a põe no HUD
+var world_block: PanelContainer  # no alto à direita: o main o põe no HUD
+var status_items: HBoxContainer  # "salvo" e a contagem: o main põe na barra de estado
+var time_slot: VBoxContainer     # onde a barra de tempo é encaixada, no alto do world_block
 var _buttons: Array[Button] = []
 var _undo: Button
 var _redo: Button
@@ -50,40 +54,15 @@ var _territory_active := false
 
 
 func _init(radius_km: float, strength_m: float, roughness_value := 0.5) -> void:
-	add_theme_stylebox_override("panel", UiKit.bar_style(SIDE_BOTTOM))
-	set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	custom_minimum_size = Vector2(0, HEIGHT)
-	offset_bottom = HEIGHT
+	add_theme_stylebox_override("panel", UiKit.metal_style(Color("#1b262a"), 6, 5))
+	resized.connect(func() -> void: size = get_combined_minimum_size())
 	_workspace = HBoxContainer.new()
-	_workspace.add_theme_constant_override("separation", 8)
+	_workspace.add_theme_constant_override("separation", 4)
 	add_child(_workspace)
-	var logo := SunCrest.new()
-	logo.custom_minimum_size = Vector2(30, 30)
-	logo.color = UiKit.BRASS
-	_workspace.add_child(logo)
-	var brand := Label.new()
-	brand.text = "EVRON"
-	brand.add_theme_font_size_override("font_size", 20)
-	UiKit.style_heading(brand)
-	_workspace.add_child(brand)
-	var world := MenuButton.new()  # o mundo como um todo: exportar e importar a pasta .world
-	world.text = "Mundo"
-	world.icon = UiIcons.get_icon("chevron_down", 14)
-	world.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	world.tooltip_text = "Exportar ou importar o mundo (uma pasta .world)"
-	world.get_popup().add_item("Exportar mundo…", 0)
-	world.get_popup().add_item("Importar mundo…", 1)
-	world.get_popup().id_pressed.connect(func(id: int) -> void: (export_requested if id == 0 else import_requested).emit())
-	_workspace.add_child(world)
-	_saved = Label.new()
-	_saved.add_theme_font_size_override("font_size", 13)
-	_workspace.add_child(_saved)
-	show_saved(true)
-	_workspace.add_child(VSeparator.new())
 	_navigate = _mode("Navegar", "navigate", "Navegar: girar, aproximar e selecionar · V")
 	_navigate.button_pressed = true
 	_navigate.pressed.connect(func() -> void: tool_selected.emit(NAVIGATE))
-	_territory_toggle = _mode("Território", "territory", "Território: pintar o país, a província ou a área aberta na ficha · T")
+	_territory_toggle = _mode("Território", "territory", "Território: pintar o país, a subdivisão ou a área selecionada · T")
 	_territory_toggle.toggled.connect(func(open: bool) -> void:
 		if open:
 			territory_requested.emit()
@@ -95,51 +74,94 @@ func _init(radius_km: float, strength_m: float, roughness_value := 0.5) -> void:
 			tool_selected.emit(0)
 		else:
 			tool_selected.emit(NAVIGATE))
+	_workspace.add_child(VSeparator.new())
 	_undo = _icon_button("undo", "Desfazer", undo_requested)
 	_redo = _icon_button("redo", "Refazer", redo_requested)
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_workspace.add_child(spacer)
-	_counts = Label.new()
-	_counts.add_theme_font_size_override("font_size", 13)
-	_counts.add_theme_color_override("font_color", UiKit.MUTED)
-	_workspace.add_child(_counts)
-	resources_toggle = Button.new()
-	resources_toggle.text = "Recursos"
-	resources_toggle.toggle_mode = true
-	resources_toggle.tooltip_text = "Catálogo de recursos e ocorrências no mapa"
-	resources_toggle.toggled.connect(func(open: bool) -> void: resources_toggled.emit(open))
-	_workspace.add_child(resources_toggle)
-	settlements_toggle = Button.new()
-	settlements_toggle.text = "Povoados"
-	settlements_toggle.toggle_mode = true
-	settlements_toggle.tooltip_text = "Povoados: trabalhadores, atividades, estoques e receitas"
-	settlements_toggle.toggled.connect(func(open: bool) -> void: settlements_toggled.emit(open))
-	_workspace.add_child(settlements_toggle)
+	# Os painéis de recursos e de povoados são abertos pelas categorias do alto; estes botões escondidos guardam o estado deles.
+	resources_toggle = _hidden_toggle(resources_toggled)
+	settlements_toggle = _hidden_toggle(settlements_toggled)
+	_build_world_block()
+	_build_status()
+	_build_edit_bar(radius_km, strength_m, roughness_value)
+	_show_values()
+	show_history(false, false, "", "")
+
+
+func _hidden_toggle(signal_to: Signal) -> Button:
+	var b := Button.new()
+	b.toggle_mode = true
+	b.visible = false
+	b.toggled.connect(func(open: bool) -> void: signal_to.emit(open))
+	add_child(b)
+	return b
+
+
+func _build_world_block() -> void:
+	world_block = PanelContainer.new()
+	world_block.add_theme_stylebox_override("panel", UiKit.metal_style(Color("#1b262a"), 8, 6))
+	world_block.custom_minimum_size = Vector2(BLOCK_WIDTH, 0)
+	world_block.resized.connect(func() -> void: world_block.size = world_block.get_combined_minimum_size())
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	world_block.add_child(box)
+	time_slot = VBoxContainer.new()
+	box.add_child(time_slot)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	box.add_child(row)
 	var search := Button.new()
 	search.text = "Buscar…    Ctrl F"
 	search.icon = UiIcons.get_icon("search", 16)
 	search.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	search.custom_minimum_size = Vector2(170, 0)  # estreito: a barra tem de caber com a placa da data no meio
+	search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	search.clip_text = true
 	search.tooltip_text = "Buscar entidades, lugares e nomes · Ctrl+F"
 	search.pressed.connect(func() -> void: search_requested.emit())
-	_workspace.add_child(search)
-	var config := MenuButton.new()  # tipos, regras e calendários: o que configura o mundo
-	config.icon = UiIcons.get_icon("gear", 18)
-	config.tooltip_text = "Configuração do mundo: tipos, regras e calendários"
-	for item in [["Tipos, campos e vínculos…", "tipos"], ["Regras…", "regras"], ["Calendários…", "calendarios"]]:
-		config.get_popup().add_item(item[0])
-		config.get_popup().set_item_metadata(config.get_popup().item_count - 1, item[1])
-	config.get_popup().index_pressed.connect(func(i: int) -> void: config_requested.emit(config.get_popup().get_item_metadata(i)))
-	_workspace.add_child(config)
+	row.add_child(search)
+	var registry := Button.new()
+	registry.text = "Registros"
+	registry.tooltip_text = "Todos os cadastros do mundo, por tipo · O"
+	registry.pressed.connect(func() -> void: registry_requested.emit())
+	row.add_child(registry)
+	var world := MenuButton.new()  # o mundo como um todo: o que o configura, exportar e importar
+	world.text = "Mundo"
+	world.flat = false
+	world.icon = UiIcons.get_icon("chevron_down", 14)
+	world.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	world.tooltip_text = "Opções, tipos, regras, calendários, exportar e importar o mundo"
+	var popup := world.get_popup()
+	for item in [["Opções…", "opcoes"], ["Tipos, campos e vínculos…", "tipos"], ["Regras…", "regras"], ["Calendários…", "calendarios"], ["Exportar mundo…", "exportar"], ["Importar mundo…", "importar"]]:
+		if item[1] == "exportar":
+			popup.add_separator()
+		popup.add_item(item[0])
+		popup.set_item_metadata(popup.item_count - 1, item[1])
+	popup.index_pressed.connect(func(i: int) -> void:
+		var key: String = popup.get_item_metadata(i)
+		if key == "exportar":
+			export_requested.emit()
+		elif key == "importar":
+			import_requested.emit()
+		else:
+			config_requested.emit(key))
+	row.add_child(world)
 	var help := Button.new()
 	help.icon = UiIcons.get_icon("help", 18)
-	help.tooltip_text = "Atalhos e ajuda · F1"
+	help.tooltip_text = "Ajuda e tutoriais de cada menu (F1: atalhos)"
 	help.pressed.connect(func() -> void: help_requested.emit())
-	_workspace.add_child(help)
-	_build_edit_bar(radius_km, strength_m, roughness_value)
-	_show_values()
-	show_history(false, false, "", "")
+	row.add_child(help)
+
+
+func _build_status() -> void:
+	status_items = HBoxContainer.new()
+	status_items.add_theme_constant_override("separation", 16)
+	_saved = Label.new()
+	_saved.add_theme_font_size_override("font_size", 13)
+	status_items.add_child(_saved)
+	_counts = Label.new()
+	_counts.add_theme_font_size_override("font_size", 13)
+	_counts.add_theme_color_override("font_color", UiKit.MUTED)
+	status_items.add_child(_counts)
+	show_saved(true)
 
 
 ## Um modo da barra: botão de alternância com ícone e nome.
@@ -147,6 +169,7 @@ func _mode(label: String, icon_name: String, tip: String) -> Button:
 	var b := Button.new()
 	b.text = label
 	b.icon = UiIcons.get_icon(icon_name, 16)
+	UiKit.tint_icon(b, icon_name)
 	b.tooltip_text = tip
 	b.toggle_mode = true
 	_workspace.add_child(b)
@@ -171,10 +194,19 @@ func _build_edit_bar(radius_km: float, strength_m: float, roughness_value: float
 	edit_bar.resized.connect(func() -> void: edit_bar.size = edit_bar.get_combined_minimum_size())  # o Main a põe no lugar (_layout)
 	var box := VBoxContainer.new()
 	edit_bar.add_child(box)
+	var head := HBoxContainer.new()
+	box.add_child(head)
 	var title := Label.new()
 	title.text = "RELEVO"
 	UiKit.style_heading(title)
-	box.add_child(title)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title)
+	var help := Button.new()
+	help.text = "?"
+	help.custom_minimum_size = Vector2(28, 24)
+	help.tooltip_text = "Ver como funciona o relevo"
+	help.pressed.connect(func() -> void: relief_tutorial_requested.emit())
+	head.add_child(help)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	box.add_child(row)

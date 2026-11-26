@@ -9,6 +9,7 @@ const HEIGHT := 30  # os painéis de baixo sobem esta altura
 
 var _cursor: Label
 var _camera: Label
+var _row: HBoxContainer
 
 
 func _init() -> void:
@@ -22,6 +23,7 @@ func _init() -> void:
 	offset_top = -HEIGHT
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var row := HBoxContainer.new()
+	_row = row
 	row.add_theme_constant_override("separation", 24)
 	add_child(row)
 	_cursor = Label.new()
@@ -34,6 +36,12 @@ func _init() -> void:
 	_camera.add_theme_font_size_override("font_size", 13)
 	_camera.modulate = Color(1, 1, 1, 0.6)
 	row.add_child(_camera)
+
+
+## Encaixa no começo da barra o que o mundo informa sempre (salvo e contagem).
+func add_leading(node: Control) -> void:
+	_row.add_child(node)
+	_row.move_child(node, 0)
 
 
 ## O texto do Main vem em várias linhas; aqui fica numa só.

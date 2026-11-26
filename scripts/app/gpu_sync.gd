@@ -1,5 +1,5 @@
 extends RefCounted
-## Leva o que mudou no mundo para a GPU, uma vez por quadro: altitude, rios, camada política e a costa do mapa político.
+## Leva o que mudou no mundo para a GPU, uma vez por quadro: altitude, rios, camada política, as linhas de fronteira e a costa do mapa político.
 ## Durante a pincelada limita a frequência (altitude e política, no máximo 10x por segundo; rios e costa só ao soltar o mouse).
 
 const PerfMonitor = preload("res://scripts/app/perf_monitor.gd")
@@ -13,6 +13,8 @@ var _material
 var _territories
 var _since_upload := 0.0
 var _since_political := 0.0
+var _walls_key := []  # o estado das linhas que já está na GPU
+var wall_stats := {}  # {count, longest, ms} do último envio (para os testes e o monitor)
 var _area_shown := false
 var _area_gray := false
 var _area_key := ""   # a camada de área e a versão que já estão na GPU
@@ -50,6 +52,7 @@ func tick(delta: float) -> void:
 		PerfMonitor.stop("político->GPU", t_p)
 		_since_political = 0.0
 	_since_political += delta
+	_tick_walls()
 	var area_on: bool = _territories.area_active()
 	var area_gray: bool = _territories.area_gray()
 	if area_on != _area_shown or area_gray != _area_gray:
@@ -65,6 +68,21 @@ func tick(delta: float) -> void:
 	if _terrain.RiversDirty and not _brush.active:  # os rios só mudam ao soltar o mouse, desfazer ou refazer
 		_material.refresh_rivers(_terrain.RiversImage())
 		_terrain.RiversDirty = false
+
+
+## As linhas do pincel de fronteira: refeitas quando a pintura, as camadas à vista ou a prévia do traço mudam (não durante a pincelada).
+func _tick_walls() -> void:
+	if _territories.territory_stroking:
+		return
+	var pending = _territories.boundary_tool.pending_plan()
+	var key: Array = [] if _territories.previewing else _territories.walls_key() + [pending.get_instance_id() if pending != null else 0]
+	if key == _walls_key:
+		return
+	_walls_key = key
+	var start := Time.get_ticks_usec()
+	var walls: Dictionary = {"count": 0} if _territories.previewing else _territories.walls()
+	_material.set_walls(walls)
+	wall_stats = {"count": walls.count, "longest": walls.get("longest", 0), "ms": (Time.get_ticks_usec() - start) / 1000.0}
 
 
 ## Espera a thread da costa acabar (ao fechar o programa).

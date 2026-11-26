@@ -213,6 +213,16 @@ public partial class Registry
         _db.Rows("select id from resource_suppression where type_id = @0 order by id", typeId),
     });
 
+    /// A regra deste recurso cobre tudo o que serve? Só em áreas. Sem dizer na regra, vegetação e animal cobrem; o resto é em manchas.
+    public bool CoversArea(long typeId, string rule)
+    {
+        try { return Covers(typeId, Evron.ResourceRule.Parse(rule)); }
+        catch (ArgumentException) { return false; }
+    }
+
+    bool Covers(long typeId, Evron.ResourceRule rule) => rule.Output == "area" && (rule.Spread != "" ? rule.Spread == "cobertura"
+        : _db.Scalar("select category from resource_type where id = @0", typeId)?.ToString() is "vegetal" or "animal");
+
     /// A prévia: não grava nada. maps: arquivo -> Image RGB8 na grade do terreno; layer: a camada pintada do recurso.
     public ResourcePlan PlanResources(long typeId, string rule, Terrain terrain, Territory layer, Godot.Collections.Dictionary maps)
     {
@@ -246,7 +256,8 @@ public partial class Registry
                 else protectedPoints.Add(Vec.FromLatLon(Convert.ToDouble(r[2]), Convert.ToDouble(r[3])));
             }
 
-            var proposals = ResourceGenerator.Generate(plan.Rule, terrain, bytes, p => protectedAreas.Contains(layer.Get(p)));
+            plan.Cover = Covers(typeId, plan.Rule);
+            var proposals = ResourceGenerator.Generate(plan.Rule, terrain, bytes, p => protectedAreas.Contains(layer.Get(p)), plan.Cover);
             var suppressed = _db.Rows("select lat, lon, radius_km from resource_suppression where type_id = @0", typeId)
                 .Select(r => (At: Vec.FromLatLon(Convert.ToDouble(r[0]), Convert.ToDouble(r[1])), Km: Convert.ToDouble(r[2]))).ToList();
             // Uma gerada fixada fica onde está: a sugestão que a originou não aparece de novo.
@@ -279,8 +290,11 @@ public partial class Registry
             long type = plan.TypeId;
             string rule = plan.Rule.ToJson();
             list.Add(Change("resource_type", TypeColumns, type, () => _db.Run("update resource_type set rule = @0 where id = @1", rule, type)));
+            // O histórico guarda o jeito que valeu de fato: mudar a categoria depois não muda o que esta geração diz.
+            var used = Evron.ResourceRule.Parse(rule);
+            used.Spread = plan.Cover ? "cobertura" : "manchas";
             long generation = _db.Insert("insert into resource_generation(type_id, algorithm, rule, layers, terrain_hash) values (@0, @1, @2, @3, @4)",
-                type, ResourceGenerator.AlgorithmVersion, rule, JsonSerializer.Serialize(plan.Rule.Maps().Prepend("altitude")), plan.TerrainHash);
+                type, ResourceGenerator.AlgorithmVersion, used.ToJson(), JsonSerializer.Serialize(plan.Rule.Maps().Prepend("altitude")), plan.TerrainHash);
             list.Add(Edit("resource_generation", GenerationColumns, generation, null));
             foreach (long id in plan.Replaced) list.Add(Remove("resource_occurrence", OccurrenceColumns, id));
             if (plan.ReplacedAreas.Count > 0)

@@ -52,9 +52,15 @@ const TypesController = preload("res://scripts/app/types_controller.gd")
 const WorldFiles = preload("res://scripts/app/world_files.gd")
 const ToolPanel = preload("res://scripts/ui/tool_panel.gd")
 const TimeBar = preload("res://scripts/ui/time_bar.gd")
+const TopHud = preload("res://scripts/ui/top_hud.gd")
+const HudController = preload("res://scripts/app/hud_controller.gd")
+const UserSettings = preload("res://scripts/app/user_settings.gd")
+const OptionsPanel = preload("res://scripts/ui/options_panel.gd")
+const TutorialOverlay = preload("res://scripts/ui/tutorial_overlay.gd")
+const TutorialController = preload("res://scripts/app/tutorial_controller.gd")
+const RecordsReset = preload("res://scripts/app/records_reset.gd")
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 
-const AUTOSAVE_SECONDS := 30.0  # reais; o relógio também é salvo a cada comando e ao fechar
 
 @onready var hud: Control = $Hud
 
@@ -85,6 +91,17 @@ var rules := RulesController.new()
 var types := TypesController.new()
 var world_files := WorldFiles.new()
 var tool_panel: ToolPanel
+var top_hud: TopHud              # emblema, números e categorias do selecionado
+var windows := HudController.new()  # o que o alto mostra e a janela única da esquerda
+var options_path := "user://evron_options.cfg"  # "" = não grava nem lê as opções (os testes o esvaziam antes de pôr a cena na árvore)
+var settings := UserSettings.new()
+var options_panel: OptionsPanel
+var tutorial_overlay: TutorialOverlay
+var tutorials := TutorialController.new()
+var records := RecordsReset.new()  # Opções → Cadastros: apagar categorias, com cópia antes
+var backup_dir := "user://copias"  # onde ficam as cópias do mundo feitas antes de apagar
+var _presence: PresencePanel
+var _tooltip_theme := {}  # o visual das dicas, guardado enquanto elas estão desligadas
 var clock := WorldClock.new()
 var demo := DemoModule.new()
 var seasonal: SeasonalTemperature  # null se os mapas em °C não foram gerados (tools/import_maps.py)
@@ -115,8 +132,8 @@ const TIP_WIDTH := 48  # caracteres por linha das dicas
 
 
 func _ready() -> void:
-	if domains_db != ":memory:":  # o jogo abre maximizado; os testes não (a janela deles nasce fora da tela, e maximizar a traria de volta)
-		get_window().mode = Window.MODE_MAXIMIZED
+	settings.load_from(options_path)
+	_apply_window_mode()
 	get_tree().node_added.connect(func(n: Node) -> void:
 		if n is BaseButton or n is Range:
 			_name_on_hover.call_deferred(n))
@@ -149,15 +166,19 @@ func _ready() -> void:
 	legend = LegendPanel.new()
 	tool_panel = ToolPanel.new(brush.radius_km, brush.strength, brush.roughness)
 	time_bar = TimeBar.new()
-	for panel in [layer_panel, legend, tool_panel, time_bar, tool_panel.edit_bar]:
+	top_hud = TopHud.new()
+	for panel in [layer_panel, legend, tool_panel, tool_panel.edit_bar, top_hud, tool_panel.world_block, windows.alerts]:
 		hud.add_child(panel)
+	tool_panel.time_slot.add_child(time_bar)
+	status_bar.add_leading(tool_panel.status_items)
 	var search := SearchPanel.new()
 	var sheet := SheetPanel.new()
 	hud.add_child(search)
 	hud.add_child(sheet)
 	_dock = {"search": search, "sheet": sheet}
 	tool_panel.search_requested.connect(search.focus_query)
-	tool_panel.help_requested.connect(_show_help)
+	tool_panel.registry_requested.connect(func() -> void: windows.toggle_registry())
+	tool_panel.help_requested.connect(func() -> void: options_panel.open("ajuda"))
 	tool_panel.config_requested.connect(_open_config)
 	search.summary_changed.connect(tool_panel.show_counts)
 	hud.resized.connect(_layout)
@@ -165,9 +186,13 @@ func _ready() -> void:
 	sheet.visibility_changed.connect(_layout)
 	legend.resized.connect(_layout)
 	layer_panel.resized.connect(_layout)
-	search.visible = get_viewport().get_visible_rect().size.x >= 1600.0  # em janela estreita o Índice começa recolhido (tecla O)
+	for piece in [top_hud, tool_panel, tool_panel.world_block, mode_rail]:
+		piece.resized.connect(_layout)
+	top_hud.minimum_size_changed.connect(func() -> void: _layout.call_deferred())  # minimizar ou expandir muda a altura: a janela acompanha
+	search.visible = false  # o mapa abre livre: os Registros são abertos pelo botão do alto (tecla O)
 	_layout.call_deferred()
 	var calendar_panel := CalendarPanel.new()
+	_dock["calendar"] = calendar_panel
 	hud.add_child(calendar_panel)  # por último: abre por cima dos outros painéis
 	domains = DomainHub.new()
 	domains.setup(domains_db, search, sheet, calendar_panel)
@@ -177,6 +202,7 @@ func _ready() -> void:
 	terrain.Dirty = false
 	terrain.RiversDirty = false
 	var presence_panel := PresencePanel.new()
+	_presence = presence_panel
 	hud.add_child(presence_panel)
 	_dock["presence"] = presence_panel
 	presence_panel.hide()  # abre pelo botão Sobreposições da coluna de modos
@@ -230,6 +256,7 @@ func _ready() -> void:
 	_dock["region_card"] = region_card
 	region_card.resized.connect(_layout)
 	region_card.visibility_changed.connect(_layout)
+	region_card.minimum_size_changed.connect(func() -> void: _layout.call_deferred())  # a altura muda quando os tipos se acomodam em linhas
 	region_card.lookup = func(text: String, kind: String) -> Array: return domains.sheet.lookup.call(text, kind)
 	territories = TerritoryEditor.new()
 	var area_bar := AreaBar.new()  # com um mapa de área na tela: criar uma nova e a dica de clicar para editar
@@ -253,11 +280,24 @@ func _ready() -> void:
 	territories.painting_changed.connect(func(on: bool) -> void: area_bar.visible = not on and territories.territory_level in TerritoryEditor.AREA_LEVELS)
 	territories.draft_ready.connect(region_card.show_draft)
 	territories.draft_closed.connect(region_card.hide)
+	region_card.kind_chosen.connect(func(kind: String) -> void:
+		region_card.hide()
+		territories.start_draft(kind))
+	region_card.kind_changed.connect(territories.set_draft_kind)
+	domains.sheet_loaded.connect(func(_s: Dictionary, _g: Dictionary) -> void:
+		if region_card.choosing and region_card.visible:
+			region_card.hide())  # selecionou um cadastro: a pergunta do tipo novo perde o sentido
+	territories.paint_started.connect(_show_painted_kind)
 	region_card.create_requested.connect(territories.draft_create)
+	region_card.naming = func(parent: int, level: int) -> Dictionary:
+		var registry = domains.registry
+		var country: int = 0 if parent == 0 else (parent if String(registry.Kind(parent)) == "pais" else int(registry.CountryOf(parent)))
+		return {"inherited": registry.LevelName(country, level), "suggestions": Array(registry.DivisionSuggestions())}
 	region_card.discard_requested.connect(territories.discard_draft)
 	region_card.more_requested.connect(func() -> void:
 		region_card.hide()
-		territories.start_draft())
+		territories.start_draft()
+		territories.draft_set_parent(int(region_card._parent.get("id", 0))))  # o "Fica dentro de" do cartão vale para os próximos traços
 	territories.palette_changed.connect(material.set_political_palette)
 	territories.selection_changed.connect(material.set_political_selected)
 	territories.painting_changed.connect(_on_painting_changed)
@@ -288,7 +328,8 @@ func _ready() -> void:
 	country_labels.source_level = "pais"
 	country_labels.font_size = 17
 	country_labels.size_factor = 0.035  # os países são muitos e pequenos: aparecem com menos zoom
-	country_labels.active_when = func() -> bool: return _country_names and MapLayers.LAYERS[layer]["kind"] == "political"
+	country_labels.active_when = func() -> bool:  # num mapa de cultura, etnia etc. só os nomes desse tipo
+		return _country_names and MapLayers.LAYERS[layer]["kind"] == "political" and not territories.shown_kind() in TerritoryEditor.AREA_LEVELS
 	hud.add_child(country_labels)
 	hud.move_child(country_labels, 0)
 	country_labels.setup(territories, domains, globe)
@@ -310,11 +351,19 @@ func _ready() -> void:
 	territories.bind_import(import_panel)
 	var types_panel := preload("res://scripts/ui/types_panel.gd").new()
 	hud.add_child(types_panel)
+	_dock["types"] = types_panel
 	types.setup(domains, types_panel)
 	var rules_panel := preload("res://scripts/ui/rules_panel.gd").new()
 	hud.add_child(rules_panel)
+	_dock["rules"] = rules_panel
 	rules.setup(domains, rules_panel)
 	world_files.setup(self)
+	if domains.usable:
+		windows.setup(top_hud, domains, search, resources, resource_panel, production, settlement_panel, territories)
+		windows.paint_new = _start_territory
+		windows.layout_changed.connect(_layout)
+		domains.refresh_search()
+		search.summary_changed.emit(search.summary())  # a contagem foi dada antes de o alto da tela estar ligado
 	if domains.usable and not _terrain_loaded:
 		world_files.notice.call_deferred("O relevo gravado neste mundo não pôde ser lido (veja o log). O mapa abriu com o relevo original e as "
 			+ "edições de relevo desta sessão não serão gravadas; a exportação e a importação do mundo continuam funcionando.")
@@ -367,6 +416,7 @@ func _ready() -> void:
 	globe.surface_clicked.connect(select)
 	gpu_sync = GpuSync.new(terrain, brush, material, territories)
 	set_layer(0)
+	_setup_options()
 
 
 ## Todo botão mostra o próprio nome ao passar o mouse (o texto pode estar cortado; o "✕" é "Fechar"). Os que já têm dica não mudam, mas dicas
@@ -394,6 +444,7 @@ func _exit_tree() -> void:
 	if gpu_sync != null:
 		gpu_sync.finish()  # a thread da costa lê o relevo: terminar antes de gravar e de fechar (fechar com ela rodando derrubava o programa)
 	if domains != null:
+		_remember_session()
 		save_terrain(true)
 		domains.close()
 
@@ -407,7 +458,7 @@ func _process(delta: float) -> void:
 	gpu_sync.tick(delta)
 	territories.boundary_tool.tick()  # prévia do traço de fronteira quando o mouse para
 	_since_save += delta
-	if _since_save >= AUTOSAVE_SECONDS:
+	if _since_save >= float(settings.value("autosave_seconds")):
 		save_clock()
 		if not brush.active:
 			save_terrain()
@@ -416,9 +467,10 @@ func _process(delta: float) -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		_remember_session()
 		save_clock()
 		save_terrain(true)
-	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT and domains != null:
+	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT and domains != null and not get_window().unfocusable:  # a janela dos testes nunca tem foco: perdê-lo não cancela o traço
 		territories.boundary_tool.cancel()
 		territories.territory_end()
 
@@ -434,6 +486,8 @@ func _input(e: InputEvent) -> void:
 
 
 func _unhandled_input(e: InputEvent) -> void:
+	if (options_panel != null and options_panel.visible) or (tutorial_overlay != null and tutorial_overlay.blocking()):
+		return  # com o menu ou um tutorial na tela, os atalhos e o globo esperam
 	if e is InputEventKey and e.pressed and not e.echo and e.keycode == KEY_F3:
 		_perf.toggle()
 		return
@@ -451,8 +505,17 @@ func _unhandled_input(e: InputEvent) -> void:
 					set_tool(0)
 					return
 				KEY_O:
-					_dock["search"].visible = not _dock["search"].visible
+					windows.toggle_registry()
 					return
+				KEY_ESCAPE:
+					if _can_dismiss():  # Esc fecha a janela; sem janela, tira a seleção (não consome: os painéis também ouvem Esc)
+						if windows.window_open():
+							windows.close_window()
+						elif domains.current() != 0:
+							domains.deselect()
+						else:
+							options_panel.open()
+						return
 				KEY_F1:
 					_show_help()
 					return
@@ -473,6 +536,7 @@ func _unhandled_input(e: InputEvent) -> void:
 			if e.pressed:
 				var n := globe.pick(e.position)
 				if territories.territory_mode == "fronteira":
+					territories.draft_anchor(n)
 					territories.boundary_tool.press(n, e.position, globe.camera_altitude_km())
 				else:
 					territories.territory_begin(n)
@@ -501,53 +565,107 @@ func _unhandled_input(e: InputEvent) -> void:
 
 # --- Disposição do HUD -----------------------------------------------------------------------------------------
 
-## Põe os painéis no lugar do desenho: barra de cima (48), coluna de modos (52) e o Índice acoplados à esquerda, a ficha à direita
-## (as duas na altura toda, entre a barra de cima e a de estado), a legenda embaixo ao lado do Índice e o ponto fixado em cima do globo.
+## Põe os painéis no lugar: no alto à esquerda o selecionado e as categorias; no alto à direita o tempo, a busca e o menu Mundo, com os
+## avisos embaixo; à esquerda a janela única, entre o alto e a barra de estado; embaixo à direita os modos de mapa; embaixo ao centro a
+## barra de ferramentas (e, em cima dela, só a barra da ferramenta em uso). A legenda e o ponto fixado ficam ao lado da janela.
+const NARROW := 1500.0  # abaixo disto as categorias ficam só com o ícone
+
 func _layout() -> void:
-	if _dock.is_empty() or tool_panel == null:
+	if _dock.is_empty() or tool_panel == null or top_hud == null:
 		return
 	var width := hud.size.x
-	var top := float(ToolPanel.HEIGHT)
 	var bottom := hud.size.y - StatusBar.HEIGHT
-	mode_rail.position = Vector2(0, top)
-	mode_rail.size = Vector2(ModeRail.WIDTH, bottom - top)
-	var left := float(ModeRail.WIDTH)
-	var index: Control = _dock["search"]
-	if index.visible:
-		index.position = Vector2(left, top)
-		index.size = Vector2(SearchPanel.WIDTH, bottom - top)
-		left += SearchPanel.WIDTH
-	var free_right: float = width - SheetPanel.WIDTH if _dock["sheet"].visible else width
-	for key in ["resources", "settlements"]:  # à direita, encostados na ficha quando ela está aberta
-		var side: Control = _dock.get(key)
-		if side != null and side.visible:
-			free_right -= side.custom_minimum_size.x
-			side.position = Vector2(free_right, top)
-			side.size = Vector2(side.custom_minimum_size.x, bottom - top)
-	var lift := 0.0  # a barra de edição de baixo (relevo ou território) fica no meio do espaço livre; a legenda sobe acima dela
-	for bar in [_dock.get("territory"), tool_panel.edit_bar, _dock.get("region_card"), _dock.get("why_card")]:
-		if bar != null and bar.visible:
-			bar.size = bar.get_combined_minimum_size()
-			bar.position = Vector2(clampf((left + free_right) / 2.0 - bar.size.x / 2.0, left + 8.0, maxf(left + 8.0, free_right - bar.size.x - 8.0)),
-				bottom - bar.size.y - 12.0)
-			lift = bar.size.y + 12.0
+	var compact := width < NARROW
+	top_hud.set_compact(compact)
+	var block: Control = tool_panel.world_block
+	block.custom_minimum_size.x = 440.0 if compact else float(ToolPanel.BLOCK_WIDTH)
+	block.size = block.get_combined_minimum_size()
+	block.position = Vector2(width - block.size.x, 0)
+	top_hud.fit_stats(width - block.size.x - (150.0 if compact else 200.0))
+	top_hud.position = Vector2.ZERO
+	top_hud.size = top_hud.get_combined_minimum_size()
+	windows.alerts.position = Vector2(width - windows.alerts.size.x - 10.0, block.size.y + 8.0)
+	var top := top_hud.size.y + 4.0
+
+	var left := 0.0
+	for key in ["sheet", "search", "resources", "settlements"]:
+		var window: Control = _dock.get(key)
+		if window != null and window.visible:
+			window.position = Vector2(0, top)
+			window.size = Vector2(SheetPanel.WIDTH, bottom - top)
+			left = SheetPanel.WIDTH
+
+	mode_rail.size = mode_rail.get_combined_minimum_size()
+	mode_rail.position = Vector2(width - mode_rail.size.x, bottom - mode_rail.size.y)
+	var free_right := mode_rail.position.x
+
+	# Ferramentas embaixo ao centro; pintando território, a barra dele toma o lugar.
+	var painting: bool = _dock.get("territory") != null and _dock["territory"].visible
+	tool_panel.visible = not painting
+	var lift := 0.0
+	var bars: Array = [tool_panel, _dock.get("territory"), tool_panel.edit_bar, _dock.get("region_card"), _dock.get("why_card")]
+	var highest_left := width
+	var highest_top := bottom
+	for bar in bars:
+		if bar == null or not bar.visible:
+			continue
+		bar.size = bar.get_combined_minimum_size()
+		var x := clampf((left + free_right) / 2.0 - bar.size.x / 2.0, left + 8.0, maxf(left + 8.0, free_right - bar.size.x - 8.0))
+		# Uma barra mais larga que o espaço livre sobe acima dos modos de mapa, em vez de ficar por baixo deles; se nem ao lado
+		# da janela ela cabe, avança sobre a janela: nenhum botão sai da tela.
+		var floor_y := bottom - 8.0
+		if x + bar.size.x > free_right:
+			floor_y = minf(floor_y, mode_rail.position.y - 8.0)
+			x = clampf(x, minf(left + 8.0, maxf(8.0, width - bar.size.x - 8.0)), maxf(8.0, width - bar.size.x - 8.0))
+		bar.position = Vector2(x, floor_y - bar.size.y - lift)
+		highest_left = minf(highest_left, x)
+		highest_top = minf(highest_top, bar.position.y)
+		lift += bar.size.y + 8.0
+
+	var legend_floor := bottom - 12.0
+	if highest_left < left + 12.0 + legend.size.x + 8.0:
+		legend_floor = minf(legend_floor, highest_top - 8.0)  # uma barra chega até a legenda: ela sobe
+	legend.position = Vector2(left + 12.0, legend_floor - legend.size.y)
 	var overlays: Control = _dock.get("presence")
-	legend.position = Vector2(left + 12.0, bottom - legend.size.y - 12.0 - lift)
 	if overlays != null and overlays.visible:
-		overlays.position = Vector2(left + 12.0, (legend.position.y if legend.visible else bottom - 12.0 - lift) - overlays.size.y - 10.0)
-	layer_panel.position = Vector2(left + 12.0, top + 12.0)  # o ponto fixado, em cima do globo
+		overlays.size = overlays.get_combined_minimum_size()
+		overlays.position = Vector2(width - overlays.size.x, maxf(top, mode_rail.position.y - overlays.size.y - 6.0))
+	layer_panel.position = Vector2(left + 12.0, top + 8.0)  # o ponto fixado, em cima do globo
 	var area_bar: Control = _dock.get("area_bar")
 	if area_bar != null:
-		area_bar.position = Vector2(left + 12.0, top + 12.0 + (layer_panel.size.y + 8.0 if layer_panel.visible else 0.0))
-	var sheet: Control = _dock["sheet"]
-	if sheet.visible:
-		sheet.position = Vector2(width - SheetPanel.WIDTH, top)
+		area_bar.position = Vector2(left + 12.0, top + 8.0 + (layer_panel.size.y + 8.0 if layer_panel.visible else 0.0))
 
 
-## A engrenagem da barra de cima: abre as mesmas janelas que o Índice abria (tipos, regras e calendários).
+## Uma pintura começou: o mapa mostra o tipo de coisa que se pinta (o político, no nível dele). Depois dá para trocar de camada à vontade.
+func _show_painted_kind(kind: String) -> void:
+	if MapLayers.LAYERS[layer]["kind"] != "political":
+		for i in MapLayers.LAYERS.size():
+			if MapLayers.LAYERS[i]["kind"] == "political":
+				set_layer(i)
+				break
+	var divisions := kind in ["provincia", "municipio"]
+	mode_rail.show_level(kind if kind != "" else "pais", divisions)
+
+
+## Esc pode fechar a janela ou tirar a seleção? Não enquanto há uma ferramenta, uma pintura ou um clique esperado no globo (o Esc é deles).
+func _can_dismiss() -> bool:
+	if _dock.has("region_card") and _dock["region_card"].visible:
+		return false
+	if tool != ToolPanel.NAVIGATE or territories.painting_territory or territories.drafting:
+		return false
+	for key in ["resources", "settlements"]:
+		var panel = _dock.get(key)
+		if panel != null and panel.visible and panel.waiting:
+			return false
+	return true
+
+
+## O menu Mundo: abre as janelas de tipos, regras e calendários (as mesmas dos Registros).
 func _open_config(which: String) -> void:
 	var index: Control = _dock["search"]
 	match which:
+		"opcoes":
+			options_panel.open()
 		"tipos":
 			index.types_requested.emit()
 		"regras":
@@ -559,8 +677,12 @@ func _open_config(which: String) -> void:
 ## O modo Território: pinta o cadastro aberto na ficha (T ou o botão da barra de cima).
 func _start_territory() -> void:
 	resources.cancel_click()
-	if domains.current() == 0:
-		territories.start_draft()  # nada aberto: pinta uma região nova e o cartão pergunta o que é
+	if territories.drafting:
+		territories.start_draft()  # volta a pintar o rascunho, do tipo já escolhido
+	elif domains.current() == 0:
+		tool_panel.show_territory_editing(false)
+		_dock["region_card"].show_choice()  # nada selecionado: primeiro o tipo, depois o pincel
+		return
 	else:
 		territories.start_painting(domains.current())
 	if not territories.painting_territory:  # um tipo sem área pintável
@@ -576,13 +698,129 @@ func _show_help() -> void:
 		_help.dialog_text = "V  Navegar
 T  Território: pintar o cadastro aberto na ficha (sem ficha aberta, cria uma região nova)
 R  Relevo
-O  Recolher ou abrir o Índice
+O  Abrir ou fechar os Registros
 " 			+ "Ctrl+F  Buscar
 Ctrl+Z / Ctrl+Y  Desfazer e refazer
-Esc  Concluir o modo de edição
+Esc  Concluir o modo de edição; fechar a janela; tirar a seleção; abrir as opções
 F1  Esta ajuda"
 		add_child(_help)
 	_help.popup_centered()
+
+
+# --- Opções e tutoriais -----------------------------------------------------------------------------------------
+
+func _setup_options() -> void:
+	options_panel = OptionsPanel.new()
+	hud.add_child(options_panel)
+	records.setup(self)
+	options_panel.setup(settings, TutorialController.GROUPS, records)
+	tutorial_overlay = TutorialOverlay.new()
+	hud.add_child(tutorial_overlay)  # por último: por cima de tudo
+	tutorials.setup(self, tutorial_overlay, settings)
+	tutorials.auto = options_path != ""
+	options_panel.tutorial_requested.connect(tutorials.request)
+	options_panel.quit_requested.connect(func() -> void:
+		get_tree().root.propagate_notification(NOTIFICATION_WM_CLOSE_REQUEST)  # grava o relógio e o relevo, como ao fechar a janela
+		get_tree().quit())
+	settings.changed.connect(_apply_option)
+	for key in UserSettings.OPTIONS:
+		if key != "window_mode":
+			_apply_option(key)
+	_restore_session()
+	tutorials.offer_basic.call_deferred()
+
+
+func _apply_option(key: String) -> void:
+	match key:
+		"window_mode":
+			_apply_window_mode()
+		"ui_scale":
+			get_window().content_scale_factor = clampf(float(settings.value(key)), 0.75, 1.5)
+		"max_fps":
+			Engine.max_fps = maxi(int(settings.value(key)), 0)
+		"vsync":
+			if DisplayServer.get_name() != "headless" and options_path != "":
+				DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if settings.value(key) else DisplayServer.VSYNC_DISABLED)
+		"orbit_speed":
+			globe.camera.orbit_speed = clampf(float(settings.value(key)), 0.25, 2.0)
+		"zoom_speed":
+			globe.camera.zoom_speed = clampf(float(settings.value(key)), 0.25, 2.0)
+		"tooltips":
+			_apply_tooltips(settings.value(key))
+
+
+## O jogo abre como o jogador pediu (maximizado, se nada foi pedido). A janela dos testes fica como nasceu: maximizar a traria para a tela.
+func _apply_window_mode() -> void:
+	if domains_db == ":memory:" or get_window().unfocusable:
+		return
+	match String(settings.value("window_mode")):
+		"cheia":
+			get_window().mode = Window.MODE_FULLSCREEN
+		"janela":
+			get_window().mode = Window.MODE_WINDOWED
+			var screen := DisplayServer.screen_get_usable_rect(get_window().current_screen)
+			get_window().size = Vector2i(Vector2(screen.size) * 0.85)
+			get_window().position = screen.position + (screen.size - get_window().size) / 2
+		_:
+			get_window().mode = Window.MODE_MAXIMIZED
+
+
+## Dicas desligadas: o balão fica invisível (o Godot não tem um interruptor que valha com o jogo aberto).
+func _apply_tooltips(on: bool) -> void:
+	var theme := hud.theme
+	if on:
+		if _tooltip_theme.is_empty():
+			return
+		theme.set_stylebox("panel", "TooltipPanel", _tooltip_theme.panel)
+		theme.set_color("font_color", "TooltipLabel", _tooltip_theme.font)
+		theme.set_color("font_shadow_color", "TooltipLabel", _tooltip_theme.shadow)
+		theme.set_font_size("font_size", "TooltipLabel", _tooltip_theme.size)
+		_tooltip_theme = {}
+	elif _tooltip_theme.is_empty():
+		_tooltip_theme = {"panel": theme.get_stylebox("panel", "TooltipPanel"), "font": theme.get_color("font_color", "TooltipLabel"),
+			"shadow": theme.get_color("font_shadow_color", "TooltipLabel"), "size": theme.get_font_size("font_size", "TooltipLabel")}
+		theme.set_stylebox("panel", "TooltipPanel", StyleBoxEmpty.new())
+		theme.set_color("font_color", "TooltipLabel", Color.TRANSPARENT)
+		theme.set_color("font_shadow_color", "TooltipLabel", Color.TRANSPARENT)
+		theme.set_font_size("font_size", "TooltipLabel", 1)
+
+
+## Guarda como a tela estava (o alto, as sobreposições e o modo de mapa).
+func _remember_session() -> void:
+	if options_panel == null or territories == null:
+		return
+	settings.set_value("hud_minimized", top_hud.minimized)
+	settings.set_value("legend", _presence.legend_check.button_pressed)
+	settings.set_value("country_names", _country_names)
+	settings.set_value("rivers", _presence.rivers_check.button_pressed)
+	settings.set_value("area_overlay", territories.overlay_level)
+	var level: String = territories.territory_level
+	settings.set_value("map_layer", layer)
+	settings.set_value("map_level", level if level in TerritoryEditor.PAINTABLE and not territories.drafting else "pais")
+	settings.set_value("map_subdivisions", territories.subdivisions_view)
+
+
+func _restore_session() -> void:
+	if settings.value("remember_hud") and settings.value("hud_minimized"):
+		top_hud.set_minimized(true)
+	if settings.value("remember_overlays"):
+		_presence.legend_check.button_pressed = settings.value("legend")
+		_presence.names_check.button_pressed = settings.value("country_names")
+		_presence.rivers_check.button_pressed = settings.value("rivers")
+		var overlay: String = settings.value("area_overlay")
+		if overlay in TerritoryEditor.AREA_LEVELS and domains.usable:
+			_presence.set_area_level(overlay)
+			territories.set_overlay(overlay)
+	if settings.value("remember_map"):
+		var index := int(settings.value("map_layer"))
+		if index > 0 and index < MapLayers.LAYERS.size():
+			set_layer(index)
+		var level: String = settings.value("map_level")
+		if domains.usable and level in TerritoryEditor.PAINTABLE and MapLayers.LAYERS[layer]["kind"] == "political":
+			var subs: bool = settings.value("map_subdivisions") and level == "pais"
+			territories.set_subdivisions_view(subs)
+			territories.show_level(level)
+			mode_rail.show_level(territories.territory_level, subs)
 
 
 # --- Casos de uso ---------------------------------------------------------------------------------------------
@@ -746,6 +984,8 @@ func _show_brush(n: Vector3, km := -1.0) -> void:
 
 ## Entrou ou saiu do modo pintar território: a barra de ferramentas volta a Navegar e o anel do pincel some.
 func _on_painting_changed(on: bool) -> void:
+	if not on and territories.territory_level in ["provincia", "municipio"]:
+		mode_rail.show_level("pais")  # terminada a pintura de uma divisão, o mapa volta ao político dos países
 	tool = ToolPanel.NAVIGATE
 	tool_panel.show_territory_editing(on)
 	_show_brush(Vector3.ZERO)

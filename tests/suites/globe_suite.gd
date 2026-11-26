@@ -104,7 +104,7 @@ func run() -> void:
 	var text: String = main.status_bar._cursor.text
 	if not text.contains("Lat 20,") or not text.contains("Altitude"):
 		return fail("o cursor no centro deveria mostrar lat 20° e a altitude: %s" % text)
-	await send(motion(Vector2(tree.root.size.x - 8.0, 60.0), Vector2(1, 0)))  # fora do planeta e dos painéis (a barra de cima ocupa o canto de cima)
+	await send(motion(Vector2(tree.root.size.x - 8.0, tree.root.size.y * 0.45), Vector2(1, 0)))  # fora do planeta e dos painéis (o bloco do tempo ocupa o canto de cima)
 	if main.status_bar._cursor.text != "Fora do planeta.":
 		return fail("o canto da tela está fora do planeta: %s" % main.status_bar._cursor.text)
 	ok("cursor: lat/lon e altitude sob o mouse")

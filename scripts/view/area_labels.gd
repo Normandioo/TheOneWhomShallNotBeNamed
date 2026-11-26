@@ -30,7 +30,7 @@ func _process(delta: float) -> void:
 	if _territories == null:
 		return
 	_since += delta
-	var level: String = _territories.overlay_level if _territories.area_active() else _territories.territory_level
+	var level: String = _territories.overlay_level if _territories.area_active() else _territories.shown_kind()
 	if source_level != "":
 		level = source_level
 	var wanted: bool = (active_when.call() if source_level != "" else level in _territories.AREA_LEVELS) and _hub.usable and not _territories.territory_stroking
@@ -40,7 +40,7 @@ func _process(delta: float) -> void:
 		return
 	if _since >= 0.4 or _labels.is_empty():
 		_since = 0.0
-		var layer = _territories.layer(source_level) if source_level != "" else (_territories.area_layer() if _territories.area_active() else _territories.territory)
+		var layer = _territories.layer(source_level if source_level != "" else level)
 		var key := {"level": level, "version": layer.Version, "id": layer.get_instance_id()}
 		if key != _built_for:
 			_built_for = key

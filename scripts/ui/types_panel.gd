@@ -5,6 +5,7 @@ extends Node
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 const FIELD_TYPES := [["text", "Texto"], ["number", "Número"], ["choice", "Escolha (lista)"], ["bool", "Sim/não"]]
 
+signal tutorial_requested  # o botão "?" do alto da janela
 signal type_requested(label: String)
 signal field_requested(label: String, type: String, unit: String, options: String, min_value: float, max_value: float, kinds: PackedStringArray)
 signal layer_requested(label: String, rgb: int, kinds: PackedStringArray)
@@ -42,6 +43,11 @@ func _ready() -> void:
 	var box := VBoxContainer.new()
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(box)
+	var help := Button.new()
+	help.text = "?  Como usar esta janela"
+	help.size_flags_horizontal = Control.SIZE_SHRINK_END
+	help.pressed.connect(func() -> void: tutorial_requested.emit())
+	box.add_child(help)
 	_message = Label.new()
 	_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_message.modulate = Color(1.0, 0.85, 0.4)

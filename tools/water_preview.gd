@@ -36,6 +36,7 @@ func _open() -> void:
 	var main = load("res://scenes/main.tscn").instantiate()
 	main.domains_db = ":memory:"
 	main.save_path = ""
+	main.options_path = ""
 	root.add_child(main)
 	current_scene = main
 	for index in MapLayers.LAYERS.size():

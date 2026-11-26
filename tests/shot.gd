@@ -50,6 +50,7 @@ func _run() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
 	main.domains_db = ":memory:"  # os cadastros do usuário não entram nos testes
 	main.save_path = ""  # o teste não lê nem grava o salvamento do usuário
+	main.options_path = ""
 	root.add_child(main)
 	for path in SCENE_SUITES:
 		if not await _run_suite(path, main, out):

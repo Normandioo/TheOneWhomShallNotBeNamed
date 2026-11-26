@@ -132,7 +132,7 @@ func run() -> void:
 
 	# Nome: a correção chega ao registro e à busca; nome vazio é desfeito.
 	hub.open(pais)
-	var name_edit: LineEdit = sheet._pages["Geral"].find_children("*", "LineEdit", true, false)[0]  # o primeiro campo da aba: o nome (dentro do cartão Identidade)
+	var name_edit: LineEdit = sheet._pages["Ficha"].find_children("*", "LineEdit", true, false)[0]  # o primeiro campo da aba: o nome (dentro do cartão Identidade)
 	name_edit.text = "Reino de Arên"
 	name_edit.text_submitted.emit("Reino de Arên")
 	if reg.Name(pais) != "Reino de Arên" or not search._list.get_item_text(search._ids.find(pais)).begins_with("Reino de Arên"):
@@ -142,11 +142,11 @@ func run() -> void:
 	if name_edit.text != "Reino de Arên" or reg.Name(pais) != "Reino de Arên":
 		return fail("nome vazio não pode ser aceito")
 	ok("corrigir o nome atualiza o registro e a busca; nome vazio é desfeito")
-	sheet._tab_buttons["Mapa"].pressed.emit()
+	sheet._tab_buttons["Território"].pressed.emit()
 	hub.open(pais)
-	if sheet._active_tab != "Mapa" or not sheet._pages["Mapa"].visible or sheet._pages["Geral"].visible:
+	if sheet._active_tab != "Território" or not sheet._pages["Território"].visible or sheet._pages["Ficha"].visible:
 		return fail("atualizar a mesma ficha deve preservar a aba e mostrar só o conteúdo dela")
-	sheet._tab_buttons["Geral"].pressed.emit()
+	sheet._tab_buttons["Ficha"].pressed.emit()
 	ok("abas separam o conteúdo e a ficha mantém a aba ativa ao atualizar")
 
 	# Nomes alternativos e etiquetas.
@@ -198,14 +198,14 @@ func run() -> void:
 	if reg.TerritoryParent(provincia) != outro_pais or reg.Sheet(provincia, hub.shown_t).links.filter(func(l): return l.outgoing and l.type == "provincia_de").size() != 1:
 		return fail("trocar de país deve substituir o vínculo, não somar")
 	hub.open(provincia)
-	var pickers: Array = (sheet._pages["Composição"].find_children("*", "VBoxContainer", true, false) + sheet._pages["Mapa"].find_children("*", "VBoxContainer", true, false)).filter(func(n): return n.get_script() == sheet.EntityPicker)
+	var pickers: Array = ((sheet._pages["Povo"].find_children("*", "VBoxContainer", true, false) if sheet.has_page("Povo") else []) + sheet._pages["Governo"].find_children("*", "VBoxContainer", true, false) + sheet._pages["Território"].find_children("*", "VBoxContainer", true, false)).filter(func(n): return n.get_script() == sheet.EntityPicker)
 	if pickers.size() < 2 or sheet._types.any(func(t): return t.code == "provincia_de" or t.code == "municipio_de"):
 		return fail("a ficha da província deve ter dois seletores (de cima e de baixo) e não repetir o vínculo na lista geral: %d" % pickers.size())
-	for aba in ["Geral", "Composição", "Mapa", "População"]:  # nenhuma aba pode alargar o painel (largura fixa): senão a ficha sai da tela
+	for aba in ["Ficha", "Governo", "Povo", "Território", "População"]:  # nenhuma aba pode alargar o painel (largura fixa): senão a ficha sai da tela
 		sheet._select_tab(aba)
 		if sheet.get_combined_minimum_size().x > SheetPanel.WIDTH:
 			return fail("a aba %s alarga a ficha para %d px (o máximo é %d)" % [aba, sheet.get_combined_minimum_size().x, SheetPanel.WIDTH])
-	sheet._select_tab("Geral")
+	sheet._select_tab("Ficha")
 	hub.set_parent(provincia, 0)
 	if reg.TerritoryParent(provincia) != 0:
 		return fail("tirar a província do país")
@@ -228,8 +228,8 @@ func run() -> void:
 	var cultura := _create(UiK.all_kinds().find("cultura"), "Cultura Arenesa")
 	reg.Link(pais, cultura, "cultura_presente")
 	hub.open(pais)
-	var textos: Array = _texts(sheet._pages["Composição"], [])
-	if not sheet._pages["Composição"].find_children("*", "Button", true, false).any(func(bt): return bt.text == "Cultura Arenesa") or not textos.has("à mão") or sheet._types.any(func(t): return t.code == "cultura_presente"):
+	var textos: Array = _texts(sheet._pages["Povo"], [])
+	if not sheet._pages["Povo"].find_children("*", "Button", true, false).any(func(bt): return bt.text == "Cultura Arenesa") or not textos.has("à mão") or sheet._types.any(func(t): return t.code == "cultura_presente"):
 		return fail("a cultura presente aparece em Povo e cultura (à mão) e sai da lista geral: %s" % [textos])
 	ok("povo e cultura: presença ligada à mão aparece com a origem, fora da lista geral")
 	for l in reg.Sheet(pais, hub.shown_t).links:

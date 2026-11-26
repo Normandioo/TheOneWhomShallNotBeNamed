@@ -177,6 +177,7 @@ func run() -> void:
 	r.Open(path)
 	_test_scores()
 	_test_auto()
+	_test_cover()
 	_test_golden()
 	r.Close()
 	_test_summary()
@@ -197,7 +198,7 @@ func _run_scene() -> void:
 		res.panel.generator.load_rule(t[1])
 		var start := Time.get_ticks_msec()
 		gen.preview(JSON.stringify(res.panel.generator.rule()))
-		if gen.plan == null or gen.plan.Count < mini(5, int(t[1].count)):
+		if gen.plan == null or gen.plan.Count < mini(5, int(t[1].get("count", 5))):
 			return fail("modelo '%s' nos mapas reais: %s (%s)" % [t[0], gen.plan.Count if gen.plan != null else -1, res.panel.generator.summary.text])
 		print("modelo %s: %d sugestões, %d km², %d ms" % [t[0], gen.plan.Count, roundi(gen.plan.AcceptedKm2()), Time.get_ticks_msec() - start])
 		gen.discard()
@@ -207,8 +208,19 @@ func _run_scene() -> void:
 	var wood: int = res.type_id
 	var forest: Dictionary = GeneratorPanel.TEMPLATES.filter(func(t): return t[0] == "Floresta")[0][1]
 	res.panel.generator.load_rule(forest)
+	if not res.panel.generator.covers() or res.panel.generator.auto_check.visible or res.panel.generator.spins.size_km.get_parent().visible:
+		return fail("o modelo Floresta cobre, sem pedir quantidade nem tamanho")
+	res.panel.generator.load_rule({})
+	if res.panel.generator.covers() or not res.panel.generator.auto_check.visible:
+		return fail("sem categoria a tela volta às manchas")
+	res.panel.generator.set_category("vegetal")
+	if not res.panel.generator.covers():
+		return fail("vegetação cobre quando a regra não diz")
+	res.panel.generator.load_rule(forest)
 	gen.preview(JSON.stringify(res.panel.generator.rule()))
 	await frames(3)
+	if not gen.plan.Cover:
+		return fail("a prévia da Floresta deveria ser cobertura")
 	var total: int = gen.plan.Count
 	if not editor.previewing or not res.panel.generator.apply_button.visible or reg.Occurrences(wood).size() != 0:
 		return fail("a prévia deveria estar na tela sem gravar")
@@ -546,6 +558,60 @@ func _test_auto() -> void:
 	if absf(r.OccurrenceReserve(int(first.id)).reserve - layer.AreaKm2(int(first.id)) * 10.0) > 1.0:
 		return fail("aplicar grava a quantidade de cada mancha: %s" % [r.OccurrenceReserve(int(first.id))])
 	ok("automático: %d manchas (manual: %d), cada uma do tamanho do lugar e com quantidade" % [many.Count, few.Count])
+
+
+## Cobertura: um trecho contínuo por sugestão, sem raio nem sorteio; vegetação e animal cobrem quando a regra não diz.
+func _test_cover() -> void:
+	var rock := Image.create(W, H, false, Image.FORMAT_RGB8)
+	rock.fill(SANDSTONE)
+	rock.fill_rect(Rect2i(300, 60, 90, 50), GRANITE)   # o trecho grande
+	rock.fill_rect(Rect2i(430, 140, 30, 20), GRANITE)  # o menor
+	rock.set_pixel(350, 12, GRANITE)                   # um pixel perto do polo: menos de 5.000 km²
+	var before: Dictionary = maps
+	maps = {"Bedrock.png": rock}
+	var made = r.CreateResourceType("Mata")
+	var type: int = made.Id
+	var rule := {"rocks": ["intrusiva"], "output": "area", "count": 3, "size_km": 100.0, "seed": 1, "density": 10.0}
+	var json := JSON.stringify(rule)
+	if r.CoversArea(type, json) or _plan(type, rule, _new_layer()).Cover:
+		return fail("sem categoria, o normal são manchas")
+	r.SetResourceType(type, "Mata", "", "animal", "", 0x00ff00)
+	if not r.CoversArea(type, json):
+		return fail("animal cobre quando a regra não diz")
+	r.SetResourceType(type, "Mata", "", "vegetal", "", 0x00ff00)
+	var layer := _new_layer()
+	var plan = _plan(type, rule, layer)
+	if plan.Error != "" or not plan.Cover or plan.Count != 2:
+		return fail("cobertura: dois trechos, o pontinho fica de fora (%s, %d)" % [plan.Error, plan.Count])
+	var big: Dictionary = plan.Proposal(0)
+	var small: Dictionary = plan.Proposal(1)
+	if big.km2 <= small.km2 or small.km2 < 5000.0 or absf(big.reserve - big.km2 * 10.0) > 1e-6 * big.km2:
+		return fail("o maior primeiro, com a quantidade do trecho inteiro: %s %s" % [big, small])
+	var other := rule.duplicate()
+	other.merge({"seed": 99, "size_km": 2000.0, "count": 1}, true)
+	if _proposals(plan) != _proposals(_plan(type, other, layer)) or _plan(type, other, layer).AcceptedKm2() != plan.AcceptedKm2():
+		return fail("semente, raio e quantidade não mudam a cobertura")
+	var patchy := rule.duplicate()
+	patchy.spread = "manchas"
+	var points := rule.duplicate()
+	points.output = "ponto"
+	if _plan(type, patchy, layer).Cover or _plan(type, patchy, layer).AcceptedKm2() >= plan.AcceptedKm2() or _plan(type, points, layer).Cover:
+		return fail("pedir manchas ou pontos vale mais que a categoria")
+	if r.CheckResourceRule('{"spread": "tudo"}') == "":
+		return fail("jeito desconhecido de se espalhar é recusado")
+	plan.Toggle(1)
+	if r.ApplyGeneration(plan, layer).is_empty() or r.Occurrences(type).size() != 1 or absf(layer.AreaKm2(int(r.Occurrences(type)[0].id)) - big.km2) > 1.0:
+		return fail("aplicar pinta o trecho inteiro: %s" % [r.Occurrences(type)])
+	if r.ResourceRuleOf(type).contains('"spread":"cobertura"'):
+		return fail("a regra do recurso continua valendo pela categoria: " + r.ResourceRuleOf(type))
+	var again = _plan(type, rule, layer)
+	if again.Count != 1 or again.SuppressedCount != 1 or again.ReplacedCount != 1 or _proposals(again)[0] != _proposals(plan)[0]:
+		return fail("o trecho tirado não volta e o outro se repete: %d, %d fora" % [again.Count, again.SuppressedCount])
+	r.SetResourceType(type, "Mata", "", "mineral", "", 0x00ff00)
+	if _plan(type, rule, _new_layer()).Cover:
+		return fail("mineral continua em manchas")
+	maps = before
+	ok("cobertura: segue o contorno, ignora semente e raio, vale para vegetação e animal, e tirar um trecho não derruba o outro")
 
 
 func _test_summary() -> void:

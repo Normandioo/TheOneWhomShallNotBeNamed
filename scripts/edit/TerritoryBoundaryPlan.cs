@@ -11,6 +11,10 @@ public partial class TerritoryBoundaryPlan : RefCounted
     internal TerritoryBoundary? Previous;
     internal TerritoryBoundary Next = new(0, 0, 0, Array.Empty<Vector3>(), Array.Empty<int>());
     internal int[][] Choices = Array.Empty<int[]>();  // os pedaços separados que encostam no selecionado
+    internal int[][] FreedChoices = Array.Empty<int[]>();  // num redesenho de borda, o que sai do selecionado em cada escolha
+    internal int[] Freed => Choice < FreedChoices.Length ? FreedChoices[Choice] : Array.Empty<int>();
+    /// O traço vira a borda: além de ganhar área, o selecionado pode perder a que passa do traço.
+    public bool IsRedraw { get; internal set; }
 
     public int PathId => Next.Id;
     public int SourceOwner => Next.Source;

@@ -17,6 +17,7 @@ var clock
 var navigate := Callable()  # sai do pincel ou da pintura antes de esperar um clique
 var focus_map := Callable()
 var settlement_id := 0
+var _return_to_place := false  # a tela de receitas foi aberta de dentro de um povoado
 var _waiting := ""        # "" | "create" | "move"
 var _new := {}            # o povoado que o próximo clique cria
 
@@ -33,17 +34,30 @@ func setup(domain_hub, settlement_panel, settlement_layer, world_terrain, territ
 	clock.register(self)
 	panel.settlement_chosen.connect(func(id: int) -> void:
 		cancel_click()
+		_return_to_place = false
 		settlement_id = id
 		panel.show_screen("povoado")
 		refresh())
 	panel.back_requested.connect(func() -> void:
 		cancel_click()
+		if _return_to_place and panel.recipes_box.visible and settlement_id != 0:
+			_open_place()
+			return
+		_return_to_place = false
 		settlement_id = 0
 		panel.show_screen("lista")
 		refresh())
 	panel.recipes_requested.connect(func() -> void:
 		cancel_click()
+		_return_to_place = false
 		panel.show_screen("receitas")
+		refresh())
+	panel.new_activity_requested.connect(func() -> void:
+		cancel_click()
+		_return_to_place = true
+		panel.new_recipe()
+		panel.show_screen("receitas")
+		panel.show_message("Preencha a receita e salve: você volta para o povoado com ela escolhida.")
 		refresh())
 	panel.create_requested.connect(func(new_name: String, workers: int) -> void:
 		if new_name.strip_edges() == "":
@@ -134,7 +148,7 @@ func refresh() -> void:
 		panel.show_catalog(goods, hub.registry.Recipes())
 		panel.show_settlements(rows, settlement_id)
 		var shown: int = clock.shown()
-		if settlement_id != 0:
+		if settlement_id != 0 and not panel.recipes_box.visible:
 			panel.show_place(_settlement(), hub.registry.Activities(settlement_id), hub.registry.StockAt(settlement_id, shown),
 				hub.registry.SettlementCapabilities(settlement_id), Calendar.format(shown, false))
 		var countries = territories.layer("pais") if territories != null else null
@@ -200,8 +214,11 @@ func _save_recipe(id: int, data: Dictionary) -> void:
 		saved_id = int(made) if made != null else 0
 	else:
 		hub.registry.UpdateRecipe(id, data.name, data.kind, data.output_id, data.output_qty, data.labor_days, inputs)
-	if saved_id == 0 or (id != 0 and before == _fingerprint() and data.get("capability", "") == "" and requirements.is_empty() and groups.is_empty()):
-		panel.show_message(why if saved_id == 0 else "")
+	if saved_id == 0:  # o formulário fica como está, para corrigir
+		panel.show_message(why)
+		return
+	if id != 0 and before == _fingerprint() and data.get("capability", "") == "" and requirements.is_empty() and groups.is_empty():
+		panel.show_message("")
 		refresh()
 		return
 	var cap := 0
@@ -210,6 +227,21 @@ func _save_recipe(id: int, data: Dictionary) -> void:
 		cap = int(made_cap) if made_cap != null else 0
 	hub.registry.SetRecipeExtras(saved_id, cap, requirements, groups)
 	panel.show_message("")
+	if id == 0:
+		panel.new_recipe()
+	if id == 0 and _return_to_place and settlement_id != 0:
+		_open_place()
+		panel.choose_recipe(saved_id)
+		panel.show_message("Atividade \"%s\" criada. Diga quantas pessoas e clique em Adicionar." % String(data.name).strip_edges())
+	else:
+		refresh()
+
+
+## Volta da tela de receitas para o povoado aberto.
+func _open_place() -> void:
+	_return_to_place = false
+	panel.show_message("")
+	panel.show_screen("povoado")
 	refresh()
 
 

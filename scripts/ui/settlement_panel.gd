@@ -8,6 +8,7 @@ signal settlement_chosen(id: int)
 signal back_requested
 signal create_requested(name: String, workers: int)  # o próximo clique no globo põe o povoado
 signal recipes_requested
+signal new_activity_requested                        # de dentro do povoado: criar uma receita nova e voltar para ele
 signal recipe_saved(id: int, data: Dictionary)       # id 0 = nova
 signal recipe_delete_requested(id: int)
 signal activity_added(recipe_id: int, workers: int)
@@ -33,6 +34,9 @@ var title: Label
 var back_button: Button
 var message: Label
 var list_box: VBoxContainer
+var place_button: Button
+var recipes_button: Button
+signal tutorial_requested  # o botão "?" do cabeçalho
 var settlements: ItemList
 var empty_list: Label
 var new_name: LineEdit
@@ -47,6 +51,7 @@ var results_box: VBoxContainer      # o que cada atividade fez no último mês, 
 var empty_activities: Label
 var activity_recipe: OptionButton
 var activity_workers: SpinBox
+var create_activity: Button
 var selected_box: VBoxContainer
 var selected_workers: SpinBox
 var stock: ItemList
@@ -99,6 +104,7 @@ func _init() -> void:
 	title = _heading(head, "POVOADOS")
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.clip_text = true
+	_button(head, "?", func() -> void: tutorial_requested.emit()).tooltip_text = "Ver como funcionam os povoados"
 	_button(head, "✕", func() -> void: closed.emit())
 	message = _note(box, "")
 	message.modulate = Color(1.0, 0.85, 0.4)
@@ -120,9 +126,10 @@ func _build_list(box: VBoxContainer) -> void:
 	var row := _row(list_box)
 	_label(row, "Trabalhadores").size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	new_workers = _spin(row, 0, 1000000, 1, "Trabalhadores")
-	_button(list_box, "Colocar no mapa", func() -> void: create_requested.emit(new_name.text, int(new_workers.value)))
+	place_button = _button(list_box, "Colocar no mapa", func() -> void: create_requested.emit(new_name.text, int(new_workers.value)))
 	list_box.add_child(HSeparator.new())
-	_button(list_box, "Receitas…", func() -> void: recipes_requested.emit()).tooltip_text = "O que se pode fazer: quanto trabalho, quais insumos, o que sai"
+	recipes_button = _button(list_box, "Receitas…", func() -> void: recipes_requested.emit())
+	recipes_button.tooltip_text = "O que se pode fazer: quanto trabalho, quais insumos, o que sai"
 	var fold := _button(list_box, "▸ Totais por país", Callable())
 	fold.toggle_mode = true
 	fold.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -172,6 +179,8 @@ func _build_place(box: VBoxContainer) -> void:
 	_button(add, "Adicionar", func() -> void:
 		if activity_recipe.selected >= 0 and not _recipes.is_empty():
 			activity_added.emit(int(_recipes[activity_recipe.selected].id), int(activity_workers.value)))
+	create_activity = _button(work, "＋ Criar uma atividade diferente…", func() -> void: new_activity_requested.emit())
+	create_activity.tooltip_text = "A lista acima mostra as receitas que já existem. Aqui você cria outra: o que se produz, com quanto trabalho e quais insumos."
 
 	var store := pages[1]
 	stock_title = _heading(store, "")
@@ -280,6 +289,8 @@ func _build_recipes(box: VBoxContainer) -> void:
 	var actions := _row(recipes_box)
 	_button(actions, "Salvar receita", _save_recipe)
 	recipe_delete = _button(actions, "Excluir", func() -> void: recipe_delete_requested.emit(_recipe_id))
+	recipe_delete.hide()  # o formulário começa em "Nova receita" (os menus de bens ainda estão vazios)
+	recipe_kind.select(1)
 
 
 ## "lista", "povoado" ou "receitas".
@@ -319,6 +330,7 @@ func show_catalog(goods: Array, recipe_rows: Array) -> void:
 	_goods = goods
 	_recipes = recipe_rows
 	var keep := _recipe_id
+	var chosen_output := recipe_output.selected
 	for menu in [stock_good, recipe_output]:
 		_fill(menu, goods.map(func(g): return _good_label(g)), false)
 	for pair in recipe_inputs + recipe_requirements:
@@ -329,7 +341,12 @@ func show_catalog(goods: Array, recipe_rows: Array) -> void:
 		var i := recipes.add_item("%s%s\n   %s" % [r.name, "" if r.ok else "  ⚠", r.text])
 		recipes.set_item_tooltip(i, r.text)
 	var current := recipe_rows.filter(func(r): return int(r.id) == keep)
-	_load_recipe(current[0] if not current.is_empty() else {})
+	if not current.is_empty():
+		_load_recipe(current[0])
+	elif keep != 0:
+		new_recipe()
+	else:  # uma receita nova pela metade: o que foi digitado fica, mesmo se o mês virar
+		recipe_output.select(mini(chosen_output, recipe_output.item_count - 1))
 
 
 ## Os totais de estoque por país (Registry.StockByCountry), em texto.
@@ -410,6 +427,18 @@ func _stock(sign: float) -> void:
 	stock_changed.emit(int(_goods[stock_good.selected].id), sign * qty, stock_note.text)
 
 
+## O formulário de receita em branco.
+func new_recipe() -> void:
+	_load_recipe({})
+
+
+## Deixa a receita escolhida no menu de "Nova atividade".
+func choose_recipe(id: int) -> void:
+	for i in _recipes.size():
+		if int(_recipes[i].id) == id:
+			activity_recipe.select(i)
+
+
 func _load_recipe(r: Dictionary) -> void:
 	_recipe_id = int(r.get("id", 0))
 	recipe_title.text = "Editar receita" if _recipe_id != 0 else "Nova receita"
@@ -437,7 +466,7 @@ func _load_recipe(r: Dictionary) -> void:
 
 func _save_recipe() -> void:
 	if recipe_output.selected < 0:
-		show_message("Crie os bens no painel Recursos antes.")
+		show_message("Crie os bens no painel Recursos antes." if _goods.is_empty() else "Escolha o bem que a receita produz.")
 		return
 	var inputs: Array = []
 	var group := 0

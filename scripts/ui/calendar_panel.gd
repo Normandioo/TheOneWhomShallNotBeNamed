@@ -8,6 +8,7 @@ const Calendar = preload("res://scripts/world/calendar.gd")
 
 signal create_requested(data: Dictionary)  # name, era_name, era_abbr, year, month, day, first, direction, day_hour, months
 signal closed
+signal tutorial_requested  # o botão "?" do cabeçalho
 
 const WIDTH := 480
 
@@ -44,6 +45,12 @@ func _init() -> void:
 	title.add_theme_font_size_override("font_size", 18)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
+	var help := Button.new()
+	help.text = "?"
+	help.custom_minimum_size.x = 30
+	help.tooltip_text = "Ver o que cada campo faz"
+	help.pressed.connect(func() -> void: tutorial_requested.emit())
+	head.add_child(help)
 	var close := Button.new()
 	close.text = "✕"
 	close.flat = true

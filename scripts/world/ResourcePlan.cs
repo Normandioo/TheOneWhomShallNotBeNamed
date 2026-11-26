@@ -28,6 +28,7 @@ public partial class ResourcePlan : RefCounted
     public int ReplacedCount => Replaced.Count;                    // geradas não fixadas que saem
     public int ProtectedCount { get; internal set; }               // manuais e fixadas, que ficam como estão
     public int SuppressedCount { get; internal set; }              // sugestões que o autor já tinha removido
+    public bool Cover { get; internal set; }                       // cobertura: um trecho contínuo por sugestão, em vez de manchas
     public bool IsArea => Rule.Output == "area";
     public bool Scored => Rule.Prefer.Length > 0;                  // a regra tem indícios: cada sugestão tem aptidão e motivos
 

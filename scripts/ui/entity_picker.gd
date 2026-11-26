@@ -15,6 +15,9 @@ var _list: ItemList
 var _ids: Array = []
 var _names: Array = []
 var picked_name := ""  # o nome do último escolhido (já preenchido quando `picked` chega)
+var picked_item := {}  # o resultado inteiro do último escolhido
+var _items: Array = []
+const UiKit = preload("res://scripts/ui/ui_kit.gd")
 
 
 func _init(placeholder := "buscar pelo nome", search_kind := "", lookup_fn := Callable(), excluded := []) -> void:
@@ -39,6 +42,7 @@ func _init(placeholder := "buscar pelo nome", search_kind := "", lookup_fn := Ca
 		if i >= 0 and i < _ids.size():
 			var id: int = _ids[i]
 			picked_name = _names[i]
+			picked_item = _items[i]
 			_edit.text = ""
 			_hide_list()
 			picked.emit.call_deferred(id))
@@ -51,10 +55,12 @@ func _refresh() -> void:
 	_list.clear()
 	_ids.clear()
 	_names.clear()
+	_items.clear()
 	for it in lookup.call(_edit.text, kind):
 		if int(it.id) in exclude:
 			continue
-		_list.add_item(String(it.name) if kind != "" else "%s · %s" % [it.name, it.kind])
+		_list.add_item(String(it.name) if kind != "" else "%s · %s" % [it.name, UiKit.entry_label(String(it.kind), String(it.get("label", "")))])
+		_items.append(it)
 		_ids.append(int(it.id))
 		_names.append(String(it.name))
 		if _ids.size() >= 30:

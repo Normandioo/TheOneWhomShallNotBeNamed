@@ -160,6 +160,7 @@ func run() -> void:
 	tpanel.land_only_changed.emit(true)
 	stop_all()
 	terr.start_painting(dravia)
+	tpanel.protect_check.button_pressed = false  # conquistar pede "Não invadir" desligado
 	tpanel.radius_changed.emit(1000.0)
 	tpanel.mode_changed.emit("pincel")
 	_stroke(5, 80, 3, 3.0)   # Dravia toma uma faixa do território de Aren
@@ -172,6 +173,7 @@ func run() -> void:
 	if territory.AreaKm2(dravia) >= de_dravia or aren_depois <= 0.0:
 		return fail("a borracha apaga só o território de quem está na barra (Dravia), e o de Aren fica")
 	terr.stop_painting()
+	tpanel.protect_check.button_pressed = true
 	ok("só em terra pela barra; conquista (pintar sobre outro país) e borracha só do país da barra")
 
 	# O balde dentro de um anel feito com o pincel.
@@ -290,8 +292,8 @@ func run() -> void:
 	if info.is_empty() or float(info.area_km2) <= 0.0 or int(info.country.get("id", 0)) != aren or terr.painting_territory:
 		return fail("terminar o rascunho abre o cartão com o país sugerido (%s)" % [info])
 	terr.draft_create("municipio", "Vila Nova", int(info.country.id))
-	var vila: int = hub.current()
-	if reg.Kind(vila) != "municipio" or reg.Name(vila) != "Vila Nova" or reg.TerritoryParent(vila) != aren or terr.drafting:
+	var vila: int = hub.sheet.open_division  # criada, ela aparece aberta na lista do país
+	if hub.current() != aren or reg.Kind(vila) != "municipio" or reg.Name(vila) != "Vila Nova" or reg.TerritoryParent(vila) != aren or terr.drafting:
 		return fail("criar pelo cartão faz o cadastro, liga ao país e encerra o rascunho")
 	var vila_km: float = terr.layer("municipio").AreaKm2(vila)
 	if vila_km <= 0.0 or terr.draft.AreaKm2(terr.DRAFT) != 0.0 or terr.territory_level != "municipio":

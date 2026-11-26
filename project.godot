@@ -72,6 +72,18 @@ area_on={
 "type": "float",
 "value": 0.0
 }
+wall_index={
+"type": "sampler2D",
+"value": "res://shaders/political_default.tres"
+}
+wall_segments={
+"type": "sampler2D",
+"value": "res://shaders/political_default.tres"
+}
+wall_on={
+"type": "float",
+"value": 0.0
+}
 coast_map={
 "type": "sampler2D",
 "value": "res://shaders/political_default.tres"

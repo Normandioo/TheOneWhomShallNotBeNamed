@@ -14,9 +14,17 @@ signal society_requested(name: String)
 signal calendars_requested
 signal types_requested
 signal rules_requested
+signal tutorial_requested  # o botão "?" do cabeçalho
 signal summary_changed(text: String)  # "4 países · 31 cadastros", para a barra de cima
 
 const WIDTH := 280
+var _summary := ""
+
+
+func summary() -> String:
+	return _summary
+
+
 const SOCIETY_ID := 100  # item do menu "Novo" que não é um tipo
 # As seções de categoria: [chave, ícone, nome, tipos que entram, peso da altura]. Os tipos que não estão aqui (criados pelo usuário) vão em "Outros".
 const CATEGORIES := [
@@ -51,15 +59,21 @@ func _init() -> void:
 	var head := HBoxContainer.new()
 	box.add_child(head)
 	var title := Label.new()
-	title.text = "Índice"
+	title.text = "Registros"
 	UiKit.style_heading(title)
 	title.add_theme_font_size_override("font_size", 18)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
+	var help := Button.new()
+	help.text = "?"
+	help.custom_minimum_size.x = 30
+	help.tooltip_text = "Ver o que cada botão dos Registros faz"
+	help.pressed.connect(func() -> void: tutorial_requested.emit())
+	head.add_child(help)
 	var fold := Button.new()
-	fold.icon = UiIcons.get_icon("chevron_left", 16)
+	fold.icon = UiIcons.get_icon("close", 16)
 	fold.flat = true
-	fold.tooltip_text = "Recolher o Índice · O"
+	fold.tooltip_text = "Fechar os Registros · O"
 	fold.pressed.connect(func() -> void: hide())
 	head.add_child(fold)
 	_query = LineEdit.new()
@@ -115,7 +129,8 @@ func refresh_kinds() -> void:
 	var kinds := UiKit.all_kinds()
 	_new_pop.clear()
 	for i in kinds.size():
-		_new_pop.add_item(UiKit.kind_label(kinds[i]), i)
+		if kinds[i] != "municipio":  # uma subdivisão nova começa no 1º nível; o 2º é uma dentro de outra
+			_new_pop.add_item(UiKit.short_label(kinds[i]), i)
 	_new_pop.add_separator()
 	_new_pop.add_item("Sociedade (país + cultura + etnia)", SOCIETY_ID)
 	_filter.clear()
@@ -130,7 +145,7 @@ func show_results(items: Array, selected_id: int = 0) -> void:
 	_list.clear()
 	_ids.clear()
 	for it in items:
-		var text: String = "%s  ·  %s" % [it.name, UiKit.kind_label(it.kind)]
+		var text: String = "%s  ·  %s" % [it.name, UiKit.entry_label(String(it.kind), String(it.get("label", "")))]
 		if it.match != "":
 			text += "  (%s)" % it.match
 		_list.add_item(text)
@@ -151,6 +166,7 @@ func _add_page(key: String, icon_name: String, page_name: String, kinds: Array, 
 	header.flat = true
 	header.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	header.icon = UiIcons.get_icon(icon_name, 16)
+	UiKit.tint_icon(header, icon_name)
 	header.add_theme_color_override("font_color", UiKit.BRASS)
 	header.add_theme_color_override("font_pressed_color", UiKit.BRASS)
 	header.add_theme_color_override("font_hover_color", UiKit.FOCUS)
@@ -209,9 +225,9 @@ func _kinds_of(page: Dictionary) -> Array:
 	return UiKit.all_kinds().filter(func(k: String) -> bool: return not k in taken)
 
 
-## Mostra as listas, uma por seção. rows: [{id, kind, name, parent}]; parent = o cadastro de nível acima (0 = nenhum).
-## Em Países, a província fica sob o país e o município sob a província; os que ficaram sem o de cima (o país apagado, por exemplo)
-## vão num grupo "Sem país ou província" no alto, à vista. O que estava aberto continua aberto. Não repete o evento de seleção.
+## Mostra as listas, uma por seção. rows: [{id, kind, name, parent, label}]; parent = o cadastro de nível acima (0 = nenhum).
+## Em Países, cada subdivisão fica sob o de cima, com o nome do tipo dela; as que ficaram sem o de cima (o país apagado, por exemplo)
+## vão num grupo "Sem lugar definido" no alto, à vista. O que estava aberto continua aberto. Não repete o evento de seleção.
 func show_hierarchy(rows: Array, selected_id: int = 0) -> void:
 	_tree_silent = true
 	var open := {}  # os cadastros que estavam abertos (expandidos) antes de refazer
@@ -237,21 +253,22 @@ func show_hierarchy(rows: Array, selected_id: int = 0) -> void:
 				var parent: TreeItem = _tree_items.get(int(r.parent)) if int(r.parent) != 0 else null
 				if parent == null and kind in ["provincia", "municipio"]:
 					if orphans == null:
-						orphans = _group(tree, root, "Sem país ou província", true)
+						orphans = _group(tree, root, "Sem lugar definido", true)
 					parent = orphans
 				elif parent == null and page.key == "outros":
 					if not groups.has(kind):
 						groups[kind] = _group(tree, root, UiKit.kind_label(kind), false)
 					parent = groups[kind]
 				var item := tree.create_item(parent if parent != null else root)
-				item.set_text(0, String(r.name))
+				var label := String(r.get("label", ""))
+				item.set_text(0, String(r.name) if label == "" else "%s · %s" % [r.name, label])
 				item.set_metadata(0, int(r.id))
 				_tree_items[int(r.id)] = item
 				_item_page[int(r.id)] = i
 		for kind in groups:
 			groups[kind].set_text(0, "%s (%d)" % [UiKit.kind_label(kind), mine.filter(func(r: Dictionary) -> bool: return r.kind == kind).size()])
 		if orphans != null:
-			orphans.set_text(0, "Sem país ou província (%d)" % orphans.get_child_count())
+			orphans.set_text(0, "Sem lugar definido (%d)" % orphans.get_child_count())
 		page.section.visible = not (page.key == "outros" and mine.is_empty())
 		if not page.get("user", false):  # sem escolha do usuário: aberta se tem cadastros, recolhida se está vazia
 			page.open = page.count > 0
@@ -263,7 +280,8 @@ func show_hierarchy(rows: Array, selected_id: int = 0) -> void:
 	select_in_hierarchy(selected_id)
 	_tree_silent = false
 	var countries := rows.filter(func(r: Dictionary) -> bool: return r.kind == "pais").size()
-	summary_changed.emit("%d países · %d cadastros" % [countries, rows.size()])
+	_summary = "%d países · %d cadastros" % [countries, rows.size()]
+	summary_changed.emit(_summary)
 
 
 ## Marca o cadastro escolhido na árvore, sem refazê-la: abre os de cima e a seção dele e rola até ele. Não repete o evento de seleção.

@@ -12,7 +12,7 @@ signal level_selected(level: String)  # "pais", "provincia" ou "municipio": qual
 var _countries: CheckBox
 var _level: OptionButton
 const LEVELS := ["pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma"]
-const LEVEL_MENU := ["Países", "Províncias", "Municípios", "Religiões", "Culturas", "Etnias", "Raças", "Idiomas"]
+const LEVEL_MENU := ["Países", "Subdivisões (1º nível)", "Subdivisões (2º nível)", "Religiões", "Culturas", "Etnias", "Raças", "Idiomas"]
 var _selection: Label
 
 

@@ -10,7 +10,7 @@ const SPACING_PX := 7.0
 ## Modos de fidelidade do traço: [nome, espaçamento das amostras (px de tela), passadas de estabilização]. A estabilização é uma média
 ## móvel nos pontos de controle (as pontas ficam): o caminho gravado já é o estabilizado, então reabrir e remodelar dá o mesmo resultado.
 const FIDELITY := [["Alta fidelidade", 3.0, 0], ["Equilibrado", SPACING_PX, 0], ["Suavizado", 14.0, 3]]
-const MAX_POINTS := 256
+const MAX_POINTS := 4096
 
 var dragging: bool:
 	get:
@@ -241,10 +241,11 @@ func _is_loop() -> bool:
 	return _points.size() >= 3 and _last_screen.distance_to(_first_screen) <= CLOSE_PX
 
 
-## O plano para estes pontos: {plan} ou {message}. Contorno fechado (terra livre de dentro) ou linha (corte de vizinho ou bolsão de terra livre).
+## O plano para estes pontos: {plan} ou {message}. Contorno fechado (terra livre de dentro) ou linha: de borda a borda do território, ela
+## vira a borda; senão, corte de vizinho ou bolsão de terra livre.
 func _make_plan(points: PackedVector3Array) -> Dictionary:
 	var loop := _is_loop()
-	var result: Dictionary = _territory.PlanLoopClaim(_owner, points, _id, land_only) if loop else _territory.PlanBoundaryClaimOn(_owner, points, _id, land_only)
+	var result: Dictionary = _territory.PlanLoopClaim(_owner, points, _id, land_only) if loop else _territory.PlanStroke(_owner, points, _id, land_only)
 	return _validate_plan(result)
 
 
@@ -321,14 +322,23 @@ func _start_open_plan(points: PackedVector3Array) -> void:
 		_job_points = points.duplicate()
 
 
+## O plano que está na prévia, à espera de confirmação (null = nenhum).
+func pending_plan():
+	return _plan
+
+
 ## Mostra no mapa o lado escolhido e diz o que vai acontecer.
 func _show_preview() -> void:
 	preview_changed.emit(_territory.PreviewImageOver(_plan, below))
 	var source: String = name_of.call(_plan.SourceOwner) if _plan.SourceOwner != 0 else "terra sem dono"
 	var text := "Prévia: ≈ %s km² de %s passam para %s. Solte o mouse para aplicar." % [
 		_thousands(roundi(_territory.PlanAreaKm2(_plan))), source, name_of.call(_plan.TargetOwner)]
+	if _plan.IsRedraw:
+		text = "Prévia: a borda de %s passa a ser o traço. Entram ≈ %s km²; saem ≈ %s km² (ficam sem dono). Solte o mouse para aplicar." % [
+			name_of.call(_plan.TargetOwner), _thousands(roundi(_territory.PlanAreaKm2(_plan))), _thousands(roundi(_territory.PlanFreedKm2(_plan)))]
 	if _plan.ChoiceCount > 1:
-		text += " Mais de um lado encosta: depois de soltar, \"Outro lado\" troca."
+		text += " Se saiu o lado errado, depois de soltar \"Outro lado\" troca." if _plan.IsRedraw \
+			else " Mais de um lado encosta: depois de soltar, \"Outro lado\" troca."
 	_panel.show_boundary_state(text)
 	_show_path()
 
@@ -375,7 +385,10 @@ func apply_preview() -> void:
 	if plan.ChoiceCount > 1:
 		_last_side = {"points": points, "id": applied_id, "choice": plan.Choice, "count": plan.ChoiceCount, "version": _territory.Version}
 	_panel.show_boundary_preview(false, plan.ChoiceCount > 1)
-	_refresh("Fronteira com %s atualizada.%s" % [neighbor, " Mais de um lado encostava: \"Outro lado\" troca." if plan.ChoiceCount > 1 else ""])
+	if plan.IsRedraw:
+		_refresh("A borda agora segue o traço.%s" % (" Se saiu o lado errado, \"Outro lado\" troca." if plan.ChoiceCount > 1 else ""))
+	else:
+		_refresh("Fronteira com %s atualizada.%s" % [neighbor, " Mais de um lado encostava: \"Outro lado\" troca." if plan.ChoiceCount > 1 else ""])
 
 
 ## Há uma prévia na tela (traço em andamento)?
@@ -474,7 +487,7 @@ func _refresh(message := "") -> void:
 		if dragging:
 			message = "Pare o mouse para ver a prévia; solte para aplicar."
 		elif _points.size() < 2:
-			message = "Saia da borda do território e volte a ela (por um vizinho ou por terra livre), ou desenhe um contorno fechado em terra livre. Pare o mouse para ver a prévia; solte para aplicar."
+			message = "Comece na borda do território (ou um pouco para dentro), trace por onde ela deve passar e termine nele de novo: a borda vira o traço. Ou desenhe um contorno fechado em terra livre. Pare o mouse para ver a prévia; solte para aplicar."
 		else:
 			message = "Arraste a linha ou os pontos para ajustar o traço."
 	_panel.show_boundary_state(message)

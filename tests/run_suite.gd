@@ -42,6 +42,7 @@ func _run() -> void:
 		main = load("res://scenes/main.tscn").instantiate()
 		main.domains_db = ":memory:"  # os cadastros do usuário não entram nos testes
 		main.save_path = ""  # o teste não lê nem grava o salvamento do usuário
+		main.options_path = ""  # nem as opções dele, e nenhum tutorial se oferece sozinho
 		root.add_child(main)
 	var suite = script.new()
 	suite.setup(self, main, out)

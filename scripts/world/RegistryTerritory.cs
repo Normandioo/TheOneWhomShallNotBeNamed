@@ -82,6 +82,17 @@ public partial class Registry
             id, kind + "_de", Forever) is object o ? Convert.ToInt64(o) : 0;
     }
 
+    /// TerritoryParent de todas as províncias e municípios numa consulta só: {id: o de cima}. Para quem precisa de muitos (a paleta do
+    /// mapa fazia várias consultas por cadastro, e num mundo grande isso aparecia a cada releitura de ficha).
+    public Godot.Collections.Dictionary TerritoryParents()
+    {
+        var parents = new Godot.Collections.Dictionary();
+        foreach (var r in _db.Rows("select r.src, r.dst from relation r join entity e on e.id = r.src " +
+                                   "where r.type = e.kind || '_de' and r.valid_to = @0 and e.kind in ('provincia', 'municipio') order by r.valid_from", Forever))
+            parents[Convert.ToInt64(r[0])] = Convert.ToInt64(r[1]);
+        return parents;
+    }
+
     /// Grava a camada dos países (substitui a anterior). Devolve o tamanho gravado, em bytes.
     public long SaveTerritory(Territory t) => SaveTerritoryLevel("pais", t);
 

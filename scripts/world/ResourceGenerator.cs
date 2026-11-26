@@ -45,6 +45,8 @@ public sealed class ResourceRule
     // Automático: quantas couberem nos lugares aptos (até MaxCount); SizeKm vira o tamanho MÁXIMO e cada mancha para onde o lugar
     // deixa de servir. Manchas menores que MinAutoKm2 não entram.
     public bool Auto { get; set; }
+    // Como as áreas se espalham: manchas em volta de centros, ou cobertura de tudo o que serve. "" = pela categoria do recurso.
+    public string Spread { get; set; } = "";                            // "" | manchas | cobertura
     // Quantidade por km² (na unidade do recurso), vezes a aptidão. 0 = sem quantidade (narrativa). Valor de projeto, sem calibração.
     public double Density { get; set; }
 
@@ -79,6 +81,7 @@ public sealed class ResourceRule
             !(r.SlopeMax > 0 && r.SlopeMax <= 90) ? "o declive máximo vai de 0 a 90 graus" :
             !(r.TreesMin >= 0 && r.TreesMin <= 100 && r.SoilMin >= 0 && r.SoilMin <= 100) ? "árvores e solo vão de 0 a 100" :
             r.Output is not ("area" or "ponto") ? "a saída é área ou ponto" :
+            r.Spread is not ("" or "manchas" or "cobertura") ? "o jeito de se espalhar é manchas ou cobertura" :
             r.Count < 1 || r.Count > ResourceGenerator.MaxCount ? $"a quantidade vai de 1 a {ResourceGenerator.MaxCount}" :
             !(r.SizeKm >= 10 && r.SizeKm <= 2000) ? "o tamanho vai de 10 a 2000 km" :
             !(r.Density >= 0 && double.IsFinite(r.Density)) ? "a quantidade por km² é zero ou mais" :
@@ -129,7 +132,8 @@ internal sealed class Proposal
 /// depois escolhe centros agrupados (um ruído de ~600 km na esfera) e cresce as manchas só dentro dos candidatos.
 internal static class ResourceGenerator
 {
-    public const int AlgorithmVersion = 4;  // 4: indício "perto da água" (sem ele, o resultado é o mesmo da 3)
+    public const int AlgorithmVersion = 5;  // 5: cobertura (sem ela, o resultado é o mesmo da 4)
+    public const double MinCoverKm2 = 5000;     // na cobertura, um trecho contínuo menor que isto fica de fora
     public const double BigRiver = 70;          // Waterflow (relativo, 0..100) a partir do qual é rio grande: ~3,7% da terra
     public const double MinAutoKm2 = 500;      // uma mancha automática menor que isto (uns 5 pixels) é ruído do mapa
     public const double PointKm2 = 100;        // a área que um ponto representa, para a quantidade
@@ -530,11 +534,75 @@ internal static class ResourceGenerator
     private static string Why(ResourceRule rule, BitArray[] factors, int pixel) =>
         string.Join("; ", rule.Prefer.Where((_, k) => factors[k][pixel]).Select(f => f.Name));
 
+    /// Cobertura: cada trecho contínuo de lugares aptos é uma sugestão, sem raio nem sorteio. Os maiores primeiro.
+    /// shortcut: além de MaxCount os menores ficam de fora; subir o limite exige alargar as faixas de donos da prévia.
+    private static List<Proposal> Coverage(ResourceRule rule, byte[] scores, BitArray[] factors, Terrain terrain, Func<int, bool> protectedPixels)
+    {
+        var seen = new BitArray(scores.Length);
+        var queue = new List<int>();
+        var patches = new List<(double Km2, int[] Pixels)>();
+        for (int start = 0; start < scores.Length; start++)
+        {
+            if (seen[start] || scores[start] == 0 || protectedPixels(start)) continue;
+            queue.Clear();
+            queue.Add(start);
+            seen[start] = true;
+            double km2 = 0;
+            for (int k = 0; k < queue.Count; k++)  // a própria lista é a fila da busca em largura
+            {
+                km2 += CellKm2(queue[k], terrain);
+                foreach (var (dx, dy) in Sides)
+                {
+                    int q = terrain.Neighbor(queue[k], dx, dy);
+                    if (q < 0 || seen[q] || scores[q] == 0 || protectedPixels(q)) continue;
+                    seen[q] = true;
+                    queue.Add(q);
+                }
+            }
+            if (km2 >= MinCoverKm2) patches.Add((km2, queue.ToArray()));
+        }
+        return patches.OrderByDescending(p => p.Km2).ThenBy(p => p.Pixels[0]).Take(MaxCount)
+            .Select(p => Patch(rule, p.Pixels, p.Km2, scores, factors, terrain)).ToList();
+    }
+
+    private static Proposal Patch(ResourceRule rule, int[] pixels, double km2, byte[] scores, BitArray[] factors, Terrain terrain)
+    {
+        double x = 0, y = 0, z = 0, fit = 0;
+        foreach (int p in pixels)
+        {
+            var v = VecOf(p, terrain);
+            double cell = CellKm2(p, terrain);
+            x += v.X * cell;
+            y += v.Y * cell;
+            z += v.Z * cell;
+            fit += cell * scores[p] / 100.0;
+        }
+        // O lugar da sugestão: o pixel do próprio trecho mais perto do meio dele (o mesmo trecho dá sempre o mesmo lugar).
+        int center = pixels[0];
+        double best = double.MinValue;
+        foreach (int p in pixels)
+        {
+            var v = VecOf(p, terrain);
+            double d = v.X * x + v.Y * y + v.Z * z;
+            if (d > best) (best, center) = (d, p);
+        }
+        var (lat, lon) = VecOf(center, terrain).ToLatLon();
+        // RadiusKm: o raio de um círculo do mesmo tamanho; é o alcance da supressão quando o autor tira o trecho.
+        return new Proposal { Center = center, Lat = lat, Lon = lon, RadiusKm = Math.Sqrt(km2 / Math.PI), Km2 = km2, Pixels = pixels,
+            Score = scores[center], Why = Why(rule, factors, center), Matched = Matched(factors, center), Reserve = fit * rule.Density };
+    }
+
+    private static readonly (int, int)[] Sides = { (-1, 0), (1, 0), (0, -1), (0, 1) };
+
+    private static double CellKm2(int pixel, Terrain t) => Territory.RowCellKm2(pixel / t.Size.X, t.Size.X, t.Size.Y);
+
     /// As sugestões. protectedPixels: onde o autor já tem área deste recurso. A proteção entra DEPOIS da escolha dos centros: assim
-    /// proteger ou suprimir uma sugestão não muda as outras.
-    public static List<Proposal> Generate(ResourceRule rule, Terrain terrain, Dictionary<string, byte[]> maps, Func<int, bool> protectedPixels)
+    /// proteger ou suprimir uma sugestão não muda as outras. cover: cobertura em vez de manchas (só vale para áreas).
+    public static List<Proposal> Generate(ResourceRule rule, Terrain terrain, Dictionary<string, byte[]> maps, Func<int, bool> protectedPixels,
+        bool cover = false)
     {
         var scores = Scores(rule, terrain, maps, out var factors);
+        if (cover && rule.Output == "area") return Coverage(rule, scores, factors, terrain, protectedPixels);
         var noise = new TerrainNoise();
         noise.SetSeed(rule.Seed);
         var centers = Centers(rule, scores, terrain, noise);

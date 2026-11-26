@@ -143,7 +143,11 @@ func _show_draft_marks(points: PackedVector3Array, color: Color) -> void:
 	for label in _draft_labels:
 		label.queue_free()
 	_draft_labels.clear()
+	# Um traço longo tem milhares de pontos: marca só alguns (todos continuam podendo ser arrastados).
+	var every := maxi(1, ceili(points.size() / 120.0))
 	for i in points.size():
+		if i % every != 0 and i != points.size() - 1:
+			continue
 		var mark := Label3D.new()
 		mark.text = "◉" if i == 0 else "●"
 		mark.billboard = BaseMaterial3D.BILLBOARD_ENABLED

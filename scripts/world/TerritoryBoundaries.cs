@@ -22,7 +22,7 @@ public partial class Territory
 {
     private sealed record CutPart(List<int> Pixels, bool MeetsTarget, int PreviousPixels, double Area);
 
-    private const int MaxBoundaryPoints = 256;
+    private const int MaxBoundaryPoints = 4096;  // um traço longo guarda todas as curvas (o lápis só rareia os pontos acima disto)
     private const int BoundaryFormat = 2;
     private static readonly (int X, int Y)[] BoundaryNeighbors = { (-1, 0), (1, 0), (0, -1), (0, 1) };
     private Dictionary<int, TerritoryBoundary> _boundaries = new();
@@ -32,6 +32,8 @@ public partial class Territory
     private float[]? _boundaryHeights;
     private Territory? _jobMask;
     private long _jobMaskVersion;
+    private Territory? _jobTaken;
+    private long _jobTakenVersion;
     private int _jobMaskOwner;
     private long _jobVersion;
 
@@ -55,18 +57,26 @@ public partial class Territory
         _jobVersion = Version;
         if (_maskLayer != null)
             snapshot._maskLayer = new Territory { B = (byte[])_maskLayer.B.Clone() };
+        _jobTaken = _takenLayer;
+        _jobTakenVersion = _takenLayer?.Version ?? 0;
+        if (_takenLayer != null)
+        {
+            snapshot._takenLayer = new Territory { B = (byte[])_takenLayer.B.Clone() };
+            snapshot._takenSelf = _takenSelf;
+        }
         var points = controls.ToArray();
         _openBoundaryJob = Task.Run(() =>
         {
             try
             {
-                var result = snapshot.PlanBoundaryClaimOn(target, points, id, landOnly);
+                var result = snapshot.PlanStroke(target, points, id, landOnly);
                 if (result.TryGetValue("plan", out var value)) value.As<TerritoryBoundaryPlan>().Map = null;
                 return result;
             }
             finally
             {
                 snapshot._maskLayer?.Dispose();
+                snapshot._takenLayer?.Dispose();
                 snapshot.Dispose();
             }
         });
@@ -79,8 +89,9 @@ public partial class Territory
         if (_openBoundaryJob is not { IsCompleted: true } job) return new();
         _openBoundaryJob = null;
         bool maskChanged = _maskLayer != _jobMask || _maskOwner != _jobMaskOwner ||
-            (_maskLayer?.Version ?? 0) != _jobMaskVersion;
+            (_maskLayer?.Version ?? 0) != _jobMaskVersion || _takenLayer != _jobTaken || (_takenLayer?.Version ?? 0) != _jobTakenVersion;
         _jobMask = null;
+        _jobTaken = null;
         if (job.IsFaulted || job.IsCanceled) return RefuseBoundary("Não consegui calcular a fronteira.");
         if (Version != _jobVersion || maskChanged)
             return RefuseBoundary("O mapa mudou durante o cálculo. Desenhe novamente.");
@@ -235,7 +246,7 @@ public partial class Territory
             .Select(c => c.Pixels.Where(p => Allowed(p) && (source != 0 || !landOnly || heights[p] >= 0f)).ToArray())
             .Where(px => px.Length > 0)
             .Select(px => { Array.Sort(px); return px; }).ToArray();
-        if (choices.Length == 0) return RefuseBoundary("O pedaço separado não tem terra que possa ser tomada.");
+        if (choices.Length == 0) return RefuseBoundary("O pedaço separado não tem terra que possa ser tomada." + TakenHint);
         var plan = new TerritoryBoundaryPlan
         {
             Map = this,
@@ -254,6 +265,7 @@ public partial class Territory
         void Set(int p, int owner) { bytes[p * 2] = (byte)owner; bytes[p * 2 + 1] = (byte)(owner >> 8); }
         foreach (int p in plan.Previous?.Pixels ?? Array.Empty<int>()) Set(p, plan.Next.Source);
         foreach (int p in plan.Next.Pixels) Set(p, plan.Next.Target);
+        foreach (int p in plan.Freed) Set(p, 0);
         return Image.CreateFromData(Size.X, Size.Y, false, Image.Format.Rg8, bytes);
     }
 
@@ -280,7 +292,7 @@ public partial class Territory
         if (plan.Map != this || plan.Version != Version || _stroke != null) return null;
         var planned = plan.Next;
         var next = new TerritoryBoundary(planned.Id, planned.Source, planned.Target, planned.Points, planned.Pixels);
-        if (_maskLayer != null && next.Pixels.Any(p => !Allowed(p))) return null;
+        if (Limited && next.Pixels.Any(p => !Allowed(p))) return null;
         var pixels = new List<int>();
         var before = new List<ushort>();
         // Mescla duas listas ordenadas para escrever cada célula no máximo uma vez.
@@ -300,6 +312,15 @@ public partial class Territory
             before.Add((ushort)current);
             Put(pixel, owner);
         }
+        foreach (int pixel in plan.Freed)  // o que o território tinha do outro lado do traço: fica sem dono
+        {
+            if (Get(pixel) != next.Target) continue;
+            pixels.Add(pixel);
+            before.Add((ushort)next.Target);
+            Put(pixel, 0);
+        }
+        // O registro que o desfazer devolve: o da remodelagem; num redesenho que reaproveita um traço guardado, o dele.
+        var replaced = plan.Previous ?? (plan.IsRedraw ? _boundaries.GetValueOrDefault(next.Id) : null);
         if (plan.Previous is { } previous)
         {
             for (int depth = 0; depth < next.Subdivisions.Length; depth++)
@@ -311,14 +332,23 @@ public partial class Territory
         // Fronteira nova (não a remodelagem de uma existente): o registro da anterior entre os mesmos dois lados sai. O território que ela mudou
         // fica como está; só deixa de poder ser reaberta por ela. O desfazer devolve o registro.
         var dropped = new List<TerritoryBoundary>();
-        if (plan.Previous == null)
+        // Só os cortes de vizinho: contornos e redesenhos em terra livre convivem (cada um é um trecho diferente da borda do mesmo país).
+        if (plan.Previous == null && next.Source != 0)
             foreach (var old in _boundaries.Values.Where(p => p.Id != next.Id && p.Target == next.Target && p.Source == next.Source).ToList())
             {
                 dropped.Add(old);
                 SetBoundary(old.Id, null);
             }
+        // Um redesenho passado por cima de um traço guardado aposenta o antigo, senão há dois registros da mesma borda.
+        if (plan.IsRedraw)
+            foreach (var old in _boundaries.Values.Where(p => p.Id != next.Id && p.Target == next.Target && p.Source == 0
+                         && CoveredBy(p.Points, next.Points)).ToList())
+            {
+                dropped.Add(old);
+                SetBoundary(old.Id, null);
+            }
         Touch();
-        return new TerritoryEdit(this, pixels.ToArray(), before.ToArray(), plan.Previous, next, dropped);
+        return new TerritoryEdit(this, pixels.ToArray(), before.ToArray(), replaced, next, dropped);
     }
 
     private HashSet<long> RasterizeBoundary(Vector3[] curve)
@@ -460,7 +490,8 @@ public partial class Territory
             if (!ValidBoundaryPoints(points)) throw new InvalidDataException("Pontos de fronteira inválidos.");
 
             int pixelsCount = reader.ReadInt32(), length = Size.X * Size.Y;
-            if (pixelsCount <= 0 || pixelsCount > length) throw new InvalidDataException("Área de fronteira inválida.");
+            // Zero vale: um redesenho de borda que só tirou área.
+            if (pixelsCount < 0 || pixelsCount > length) throw new InvalidDataException("Área de fronteira inválida.");
             var pixels = new int[pixelsCount];
             int previous = -1;
             for (int p = 0; p < pixels.Length; p++)
