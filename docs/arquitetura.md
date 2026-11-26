@@ -479,5 +479,10 @@ antes (conquista). Um redesenho passado inteiro sobre um traço guardado aposent
 
 O traço guarda até 4.096 pontos.
 
-Falta (próximas etapas): o clique, o balde e a área ainda são por pixel do mapa; não há "grudar no rio". O pincel redondo continua
+**Grudar no rio** (`RiverSnap.cs`, caixa na barra do lápis, desligada por padrão): ao desenhar um traço novo, cada ponto com um rio a até
+3–20 km (cresce com a altura da câmera) vai para o leito, e entre dois deles a linha anda pela rede de rios; uma entrada curta num
+afluente é retirada. Os trechos são os de `rivers_indexed.rgbaf` (satélite e "Rios em destaque"); a cor natural desenha outra rede
+(`build_rivers.py`) e pode divergir. Arrastar um ponto de um traço já aplicado não gruda.
+
+Falta (próximas etapas): o clique, o balde e a área ainda são por pixel do mapa. O pincel redondo continua
 preciso só até o pixel do mapa.

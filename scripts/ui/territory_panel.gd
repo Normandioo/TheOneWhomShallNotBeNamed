@@ -24,6 +24,7 @@ signal boundary_side_requested     # ver o outro lado do corte
 signal merge_requested(from_id: int)  # unir: o território inteiro de outro cadastro passa para este
 signal import_requested  # importar um PNG para a camada do nível que está sendo pintado
 signal fidelity_changed(index: int)  # modo de fidelidade do traço (TerritoryBoundaryTool.FIDELITY)
+signal snap_rivers_changed(on: bool)
 
 const ICONS := {"pincel": "territory", "balde": "bucket", "borracha": "eraser", "conta-gotas": "eyedropper", "fronteira": "border"}
 const MODES := [["pincel", "Pincel"], ["balde", "Balde"], ["borracha", "Borracha"], ["conta-gotas", "Conta-gotas"], ["fronteira", "Fronteira"]]
@@ -213,6 +214,11 @@ func _build_boundary_controls(row: HBoxContainer) -> void:
 	fidelity.tooltip_text = "Alta fidelidade segue cada tremida da mão; Suavizado amostra menos e estabiliza o traço."
 	fidelity.item_selected.connect(fidelity_changed.emit)
 	row.add_child(fidelity)
+	var snap := CheckBox.new()
+	snap.text = "Grudar no rio"
+	snap.tooltip_text = "O traço desenhado perto de um rio segue o leito dele, com as curvas. São os rios do satélite e de \"Rios em destaque\" (Sobreposições)."
+	snap.toggled.connect(snap_rivers_changed.emit)
+	row.add_child(snap)
 	_reset_boundary = Button.new()
 	_reset_boundary.text = "Redesenhar"
 	_reset_boundary.pressed.connect(func() -> void: boundary_reset_requested.emit())

@@ -6,6 +6,8 @@ extends RefCounted
 signal preview_changed(image)  # Image = mostrar o mapa como ficaria; null = voltar ao mapa de verdade
 
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
+const EvronMaps = preload("res://scripts/data/evron_maps.gd")
+const RiverSnap = preload("res://scripts/world/RiverSnap.cs")
 const SPACING_PX := 7.0
 ## Modos de fidelidade do traço: [nome, espaçamento das amostras (px de tela), passadas de estabilização]. A estabilização é uma média
 ## móvel nos pontos de controle (as pontas ficam): o caminho gravado já é o estabilizado, então reabrir e remodelar dá o mesmo resultado.
@@ -49,6 +51,10 @@ var _first_screen := Vector2.ZERO
 const CLOSE_PX := 30.0  # terminar a menos disto (px de tela) do começo fecha o contorno
 var _spacing := SPACING_PX
 var _stabilize := 0
+var snap_rivers := false  # "Grudar no rio": vale para o traço que está sendo desenhado (remodelar um ponto não gruda)
+var rivers_path := EvronMaps.directory() + "rivers_indexed.rgbaf"
+var _snap_in := PackedVector3Array()  # o último traço grudado (a prévia pede o mesmo a cada quadro)
+var _snap_out := PackedVector3Array()
 
 
 func setup(territory, map, panel, commands) -> void:
@@ -122,6 +128,7 @@ func press(dir: Vector3, screen: Vector2, altitude_km: float) -> void:
 	_preview_points = PackedVector3Array()
 	_moved_ms = Time.get_ticks_msec()
 	_altitude_km = altitude_km
+	_snap_in.clear()
 	if _id == 0 or _points.is_empty():
 		_capturing = true
 		_outside = false
@@ -194,7 +201,7 @@ func release() -> void:
 			_points.append(_tail)
 		if _points.size() < 2:
 			_points.clear()
-		_points = stabilized(_points, _stabilize)
+		_points = on_rivers(stabilized(_points, _stabilize))
 	_capturing = false
 	_handle = -1
 	_inserting = false
@@ -262,8 +269,19 @@ func _current_points() -> PackedVector3Array:
 	if _capturing:
 		if not pts.is_empty() and not _tail.is_equal_approx(pts[-1]) and pts.size() < MAX_POINTS:
 			pts.append(_tail)
-		pts = stabilized(pts, _stabilize)
+		pts = on_rivers(stabilized(pts, _stabilize))
 	return pts
+
+
+## O traço levado aos rios (com "Grudar no rio" ligado). O alcance cresce com a altura da câmera, de 3 a 20 km.
+func on_rivers(points: PackedVector3Array) -> PackedVector3Array:
+	if not snap_rivers or points.size() < 2:
+		return points
+	var reach := clampf(_altitude_km * 0.02, 3.0, 20.0)
+	if points != _snap_in:
+		_snap_in = points.duplicate()
+		_snap_out = RiverSnap.Snap(rivers_path, points, reach, MAX_POINTS)
+	return _snap_out
 
 
 ## A cada quadro (Main): com o botão apertado e o mouse parado por PAUSE_MS, mostra a prévia do traço como está.

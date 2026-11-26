@@ -94,6 +94,7 @@ func setup(domain_hub, t, stack, panel, more := {}, factory := Callable()) -> vo
 	boundary_tool.kind_of = owner_kind
 	boundary_tool.setup(territory, hub.map, panel, commands)
 	boundary_tool.record_edit = _record_edit
+	panel.snap_rivers_changed.connect(func(on: bool) -> void: boundary_tool.snap_rivers = on)
 	panel.mode_changed.connect(_set_territory_mode)
 	panel.radius_changed.connect(func(km: float) -> void: territory_radius = km)
 	panel.protect_changed.connect(set_territory_protect)
