@@ -21,6 +21,7 @@ var camera: GlobeCamera
 var tiles: TileLayer
 var places: PlaceLayer  # as presenças dos cadastros (discos e rótulos) sobre o globo
 var resources: PlaceLayer  # as ocorrências de recursos, numa camada própria
+var settlements: PlaceLayer  # os povoados da produção
 var _globe: MeshInstance3D
 var _material: ShaderMaterial
 
@@ -67,6 +68,9 @@ func _ready() -> void:
 	resources = PlaceLayer.new()
 	resources.radius = RADIUS
 	viewport.add_child(resources)
+	settlements = PlaceLayer.new()
+	settlements.radius = RADIUS
+	viewport.add_child(settlements)
 
 	camera = GlobeCamera.new()
 	camera.radius = RADIUS

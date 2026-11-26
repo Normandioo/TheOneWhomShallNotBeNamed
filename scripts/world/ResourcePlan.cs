@@ -34,11 +34,13 @@ public partial class ResourcePlan : RefCounted
 
     public double AcceptedKm2() => Proposals.Where(p => !p.Rejected).Sum(p => p.Km2);
 
+    public double AcceptedReserve() => Proposals.Where(p => !p.Rejected).Sum(p => p.Reserve);
+
     /// {lat, lon, km2, rejected, score, why}
     public Godot.Collections.Dictionary Proposal(int i)
     {
         var p = Proposals[i];
-        return new Godot.Collections.Dictionary { ["lat"] = p.Lat, ["lon"] = p.Lon, ["km2"] = p.Km2, ["rejected"] = p.Rejected, ["score"] = p.Score, ["why"] = p.Why };
+        return new Godot.Collections.Dictionary { ["lat"] = p.Lat, ["lon"] = p.Lon, ["km2"] = p.Km2, ["rejected"] = p.Rejected, ["score"] = p.Score, ["why"] = p.Why, ["reserve"] = p.Reserve };
     }
 
     public void Toggle(int i) => Proposals[i].Rejected = !Proposals[i].Rejected;

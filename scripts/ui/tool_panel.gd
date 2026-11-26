@@ -22,6 +22,7 @@ signal search_requested        # a caixa de busca: abre o Índice na aba Busca
 signal config_requested(which: String)  # "tipos", "regras" ou "calendarios"
 signal help_requested
 signal resources_toggled(open: bool)  # o painel de recursos
+signal settlements_toggled(open: bool)  # o painel dos povoados (produção)
 
 const NAVIGATE := -1
 const HEIGHT := 48
@@ -41,6 +42,7 @@ var _terrain_toggle: Button
 var _territory_toggle: Button
 var _navigate: Button
 var resources_toggle: Button
+var settlements_toggle: Button
 var _saved: Label
 var _counts: Label
 var _workspace: HBoxContainer
@@ -108,11 +110,17 @@ func _init(radius_km: float, strength_m: float, roughness_value := 0.5) -> void:
 	resources_toggle.tooltip_text = "Catálogo de recursos e ocorrências no mapa"
 	resources_toggle.toggled.connect(func(open: bool) -> void: resources_toggled.emit(open))
 	_workspace.add_child(resources_toggle)
+	settlements_toggle = Button.new()
+	settlements_toggle.text = "Povoados"
+	settlements_toggle.toggle_mode = true
+	settlements_toggle.tooltip_text = "Povoados: trabalhadores, atividades, estoques e receitas"
+	settlements_toggle.toggled.connect(func(open: bool) -> void: settlements_toggled.emit(open))
+	_workspace.add_child(settlements_toggle)
 	var search := Button.new()
-	search.text = "Buscar…            Ctrl F"
+	search.text = "Buscar…    Ctrl F"
 	search.icon = UiIcons.get_icon("search", 16)
 	search.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	search.custom_minimum_size = Vector2(250, 0)
+	search.custom_minimum_size = Vector2(170, 0)  # estreito: a barra tem de caber com a placa da data no meio
 	search.tooltip_text = "Buscar entidades, lugares e nomes · Ctrl+F"
 	search.pressed.connect(func() -> void: search_requested.emit())
 	_workspace.add_child(search)

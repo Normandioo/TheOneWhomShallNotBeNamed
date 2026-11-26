@@ -22,6 +22,7 @@ signal occurrence_saved(name: String, note: String)
 signal move_requested                      # o próximo clique no globo leva o ponto escolhido para lá
 signal duplicate_requested
 signal why_requested                       # "Por que aqui?" de uma sugestão aplicada
+signal reserve_saved(text: String)         # a quantidade da ocorrência ("" = desconhecida)
 signal fixed_toggled(on: bool)             # proteger uma sugestão gerada
 signal profile_requested(index: int)       # criar o recurso de um perfil
 signal preview_all_requested
@@ -64,6 +65,8 @@ var text_toggle: Button
 var _point_actions: Array = []   # mover e duplicar: só pontos
 var _paint_button: Button
 var why_button: Button
+var reserve_edit: LineEdit
+var reserve_line: Label
 var fixed_check: CheckButton
 var generator: GeneratorPanel
 var type_name: LineEdit
@@ -178,6 +181,12 @@ func _build_type(box: VBoxContainer) -> void:
 	fixed_check.tooltip_text = "Ligado, uma nova sugestão não troca nem apaga este item"
 	fixed_check.toggled.connect(func(on: bool) -> void: fixed_toggled.emit(on))
 	occurrence_box.add_child(fixed_check)
+	var reserve_row := _row(occurrence_box)
+	reserve_edit = _edit(reserve_row, "Quantidade (vazio = desconhecida)")
+	reserve_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	reserve_edit.tooltip_text = "Quanto há nesta ocorrência, na unidade do recurso. Sem quantidade, os povoados não extraem dela."
+	_button(reserve_row, "Salvar", func() -> void: reserve_saved.emit(reserve_edit.text))
+	reserve_line = _note(occurrence_box, "")
 	text_toggle = _button(occurrence_box, "Nome e anotação", Callable())
 	text_toggle.toggle_mode = true
 	var texts := _column(occurrence_box)
@@ -286,6 +295,10 @@ func show_occurrence(o: Dictionary) -> void:
 	why_button.visible = o.origin == "gerada"
 	fixed_check.visible = o.origin == "gerada"
 	fixed_check.set_pressed_no_signal(o.fixed)
+	var reserve: Dictionary = o.get("reserve_info", {})
+	reserve_edit.text = "" if reserve.is_empty() or is_nan(reserve.reserve) else _plain(reserve.reserve)
+	reserve_line.text = "Quantidade desconhecida: os povoados não extraem daqui." if reserve.is_empty() or is_nan(reserve.reserve) else \
+		"Restam %s de %s (%s já extraídos)." % [_plain(reserve.left), _plain(reserve.reserve), _plain(reserve.extracted)]
 	var point: bool = o.kind == "ponto"
 	_paint_button.visible = not point
 	for button in _point_actions:
@@ -312,6 +325,10 @@ static func describe(o: Dictionary, label: String) -> String:
 	if o.origin == "gerada":
 		parts.append("protegida" if o.fixed else "sugerida")
 	return " · ".join(parts)
+
+
+static func _plain(v: float) -> String:
+	return _thousands(roundi(v)) if absf(v - roundi(v)) < 0.005 else ("%.2f" % v).replace(".", ",")
 
 
 static func _thousands(v: int) -> String:

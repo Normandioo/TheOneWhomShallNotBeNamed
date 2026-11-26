@@ -295,9 +295,10 @@ public partial class Registry
                 bool area = plan.IsArea;
                 // O motivo fica na anotação: quem abrir a ocorrência vê por que ela foi sugerida.
                 string? note = plan.Scored ? $"Aptidão {s.Score}: {s.Why}." : null;
-                long id = _db.Insert("insert into resource_occurrence(type_id, kind, lat, lon, origin, generation_id, gen_lat, gen_lon, gen_km, note) " +
-                    "values (@0, @1, @2, @3, 'gerada', @4, @5, @6, @7, @8)",
-                    type, area ? "area" : "ponto", area ? null : s.Lat, area ? null : s.Lon, generation, s.Lat, s.Lon, s.RadiusKm, note);
+                long id = _db.Insert("insert into resource_occurrence(type_id, kind, lat, lon, origin, generation_id, gen_lat, gen_lon, gen_km, note, reserve) " +
+                    "values (@0, @1, @2, @3, 'gerada', @4, @5, @6, @7, @8, @9)",
+                    type, area ? "area" : "ponto", area ? null : s.Lat, area ? null : s.Lon, generation, s.Lat, s.Lon, s.RadiusKm, note,
+                    s.Reserve > 0 ? s.Reserve : null);
                 if (area && id >= ResourcePlan.PreviewBase) throw new InvalidOperationException("o mundo chegou ao limite de áreas de recurso");
                 list.Add(Edit("resource_occurrence", OccurrenceColumns, id, null));
                 foreach (int p in s.Pixels) painted[p] = (int)id;

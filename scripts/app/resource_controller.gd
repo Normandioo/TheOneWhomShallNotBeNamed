@@ -96,6 +96,12 @@ func setup(domain_hub, resource_panel, place_layer, command_stack, territory_edi
 	panel.cancel_requested.connect(cancel_click)
 	panel.occurrence_saved.connect(func(n: String, note: String) -> void:
 		_apply("editar ocorrência", hub.registry.SetOccurrenceText(occurrence_id, n, note)))
+	panel.reserve_saved.connect(func(text: String) -> void:
+		var value: float = hub.parse_number(text) if text.strip_edges() != "" else NAN
+		if text.strip_edges() != "" and (is_nan(value) or value < 0.0):
+			panel.show_message("A quantidade é um número, zero ou mais (vazio = desconhecida).")
+			return
+		_apply("definir quantidade", hub.registry.SetOccurrenceReserve(occurrence_id, value)))
 	panel.duplicate_requested.connect(func() -> void:
 		var cmd = hub.registry.DuplicatePoint(occurrence_id)
 		if cmd != null:
@@ -356,6 +362,7 @@ func _occurrence() -> Dictionary:
 	if occurrence_id != 0 and type_id != 0:
 		for o in hub.registry.Occurrences(type_id):
 			if int(o.id) == occurrence_id:
+				o["reserve_info"] = hub.registry.OccurrenceReserve(occurrence_id)
 				return o
 	return {}
 

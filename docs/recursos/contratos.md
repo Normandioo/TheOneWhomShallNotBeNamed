@@ -20,27 +20,29 @@ quebrar. "Vale agora" = implementado na etapa 1. "Reservado" = decidido, ainda s
 - Uma ocorrência sobre várias regiões ou países é uma só. Dividir por país será participação espacial, nunca cópia.
 - Percurso (linha) e "referência a uma região" ainda não existem.
 
-## Unidades (reservado, etapa 3)
+## Unidades (vale agora, só o mínimo)
 
-- Massa em kg, água em m³, superfície em m² (hectare com conversão explícita), alimento também em energia alimentar,
-  trabalho em pessoas-dia, tempo em segundos do relógio universal.
-- Converter entre dimensões diferentes é recusado no cálculo. O cadastro narrativo aceita qualquer texto como unidade.
-- Não preenchido, desconhecido, não aplicável e zero são estados diferentes. Quantidade desconhecida não é estoque infinito.
+- Cada bem é um tipo de recurso, com a sua unidade (texto livre). Receitas, estoques e reservas usam a unidade do próprio bem:
+  não há conversão, e nunca se soma um bem com outro.
+- Trabalho em pessoas-dia. O mês tem a duração real (28 a 31 dias).
+- Reservado: massa em kg, água em m³, energia alimentar e conversões entre dimensões (recusadas no cálculo).
+- Não preenchido, desconhecido, não aplicável e zero são estados diferentes. Quantidade desconhecida não é estoque infinito: uma
+  ocorrência sem quantidade não pode ser extraída.
 
-## Tempo (reservado, etapa 3)
+## Tempo e produção (vale agora, etapa 3, primeira cadeia)
 
-- Instantes = `int64` de segundos universais; validade `[início, fim)`.
-- Catálogo e ocorrências da etapa 1 são cadastros editoriais, sem validade: mover para corrigir o mapa não é um acontecimento
-  do mundo.
-- O relógio é salvo em JSON, fora do SQLite. **Antes da etapa 3**, o estado de execução da simulação tem de ficar na mesma
-  transação dos estoques, para uma interrupção não repetir colheita, consumo ou entrega.
-
-## Proveniência (vale agora)
-
-- `origin` da ocorrência: `manual`, `importada` ou `gerada`. A etapa 1 só cria `manual`.
-- `state`: `narrativo` ou `simulado`. A etapa 1 só tem `narrativo`: nada é calculado, e a interface não finge calcular.
-- Camada do Gleba é dado de um mundo gerado, não levantamento. Toda derivação guardará algoritmo, versão, parâmetros,
-  camadas e data.
+- Instantes = `int64` de segundos universais. A produção é um módulo do relógio: na meia-noite do dia 1 de cada mês, processa o
+  mês que terminou. Consultar o passado não processa nada.
+- O mês processado fica em `production_run`, na mesma transação dos estoques. O relógio é salvo em outro arquivo: se ele voltar a
+  um mês já feito, o mês não se repete (o banco pode ficar à frente do relógio, nunca atrás).
+- Estoque = soma de `stock_movement` (produção, consumo, intervenção), nunca negativo. Reserva restante = quantidade do autor menos
+  o extraído (as movimentações com `occurrence_id`).
+- O que sai num mês só pode ser usado no mês seguinte. Dentro do povoado, a ordem das atividades decide quem fica com os
+  trabalhadores e os insumos. Entre povoados, só a reserva é disputada: se pedirem mais que ela, cada um leva a parte
+  proporcional ao que pediu.
+- Não há desfazer na configuração da produção nem nas intervenções: elas são histórico. Corrige-se com outra intervenção.
+- Ainda não existe: capacidades técnicas, instalações, cultivo sazonal, renovação (floresta, pesca), transporte, consumo pela
+  população, perdas no armazenamento.
 
 ## Proteções e geração (valem agora, etapa 2)
 

@@ -20,18 +20,21 @@ const ROCKS := [["sedimentar_clastica", "Sedimentar (arenito, argilito…)"], ["
 	["metamorfica", "Metamórfica (mármore, xisto…)"]]
 const CLIMATES := [["A", "Tropical"], ["B", "Árido"], ["C", "Temperado"], ["D", "Continental"], ["E", "Polar"]]
 const DEFAULTS := {"surface": "terra", "rocks": [], "climates": [], "elev_min": -13500.0, "elev_max": 9200.0, "slope_max": 90.0,
-	"trees_min": 0.0, "soil_min": 0.0, "output": "area", "count": 8, "size_km": 250.0, "seed": 1, "prefer": [], "min_score": 1}
+	"trees_min": 0.0, "soil_min": 0.0, "output": "area", "count": 8, "size_km": 250.0, "seed": 1, "prefer": [], "min_score": 1, "auto": true, "density": 1000.0}
+## Modelos sem recurso específico (os recursos com fontes estão em resource_profiles.gd). Saíram "Minério de montanha", "Jazida em rocha
+## sedimentar" e "Sal em região seca": genéricos demais (o segundo cobria quase metade da terra; o terceiro contava sílex como sal).
 const TEMPLATES := [
-	["Minério de montanha", {"rocks": ["intrusiva", "metamorfica"], "elev_min": 600.0, "output": "ponto", "count": 15, "size_km": 150.0}],
-	["Jazida em rocha sedimentar", {"rocks": ["sedimentar_clastica"], "output": "ponto", "count": 12, "size_km": 200.0}],
-	["Sal em região seca", {"rocks": ["sedimentar_quimica"], "climates": ["B"], "output": "ponto", "count": 10, "size_km": 200.0}],
 	["Floresta", {"trees_min": 40.0, "output": "area", "count": 12, "size_km": 300.0}],
-	["Solo de cultivo", {"climates": ["A", "C", "D"], "soil_min": 50.0, "slope_max": 2.0, "elev_min": 0.0, "elev_max": 2000.0,
-		"output": "area", "count": 12, "size_km": 250.0}],
+	["Solo de cultivo", {"climates": ["A", "C", "D"], "soil_min": 40.0, "slope_max": 2.0, "elev_min": 0.0, "elev_max": 2000.0,
+		"output": "area", "count": 12, "size_km": 250.0, "min_score": 40, "prefer": [
+			{"name": "Planície perto de rio grande", "water": ["rio", "lago"], "water_km": 30.0, "slope_max": 1.0, "weight": 60},
+			{"name": "Clima temperado", "climates": ["C"], "weight": 40}]}],
 	["Pesca costeira", {"surface": "mar", "elev_min": -200.0, "elev_max": 0.0, "output": "area", "count": 12, "size_km": 250.0}],
 ]
 
 var template: OptionButton
+var auto_check: CheckButton
+var _manual: Array = []   # o que só vale fora do automático
 var advanced_toggle: Button
 var tests_toggle: Button
 var _into: Control        # onde _spin e _choice põem o que criam
@@ -71,12 +74,21 @@ func _init() -> void:
 		if i > 0:
 			var rule: Dictionary = all_templates()[i - 1][1].duplicate(true)
 			rule["seed"] = int(spins.seed.value)
+			if not rule.has("auto"):  # os modelos também começam no automático
+				rule.merge({"auto": true, "density": DEFAULTS.density})
 			load_rule(rule)
 			template.select(i))
 	add_child(template)
-	_spin("count", "Quantos lugares", 1, 200, 1)
-	_spin("size_km", "Tamanho (km)", 10, 2000, 10)
-	spins.size_km.tooltip_text = "Áreas: raio aproximado de cada mancha. Pontos: distância mínima entre eles."
+	auto_check = CheckButton.new()
+	auto_check.text = "Automático"
+	auto_check.tooltip_text = "O programa põe quantas couberem nos lugares que servem, cada mancha do tamanho do lugar, e calcula a quantidade"
+	auto_check.toggled.connect(func(_on: bool) -> void: _sync_auto())
+	add_child(auto_check)
+	_manual.append(_spin("count", "Quantos lugares", 1, 200, 1))
+	_spin("size_km", "Tamanho máximo (km)", 10, 2000, 10)
+	spins.size_km.tooltip_text = "Áreas: raio de cada mancha (no automático, o máximo). Pontos: distância mínima entre eles."
+	_spin("density", "Quantidade por km²", 0, 1000000000, 1)
+	spins.density.tooltip_text = "Na unidade do recurso, multiplicada pela aptidão. 0 = sem quantidade. Valor de escolha sua: não foi calibrado."
 	var preview := _button(self, "Ver no mapa (prévia)", func() -> void: preview_requested.emit(JSON.stringify(rule())))
 	preview.add_theme_stylebox_override("normal", UiKit.active_style())
 	summary = _note(self, "")
@@ -176,7 +188,8 @@ func rule() -> Dictionary:
 		"climates": [] if sea else climates.keys().filter(func(k): return climates[k].button_pressed),
 		"elev_min": spins.elev_min.value, "elev_max": spins.elev_max.value, "slope_max": spins.slope_max.value,
 		"trees_min": 0.0 if sea else spins.trees_min.value, "soil_min": 0.0 if sea else spins.soil_min.value,
-		"count": int(spins.count.value), "size_km": spins.size_km.value, "seed": int(spins.seed.value)}
+		"count": int(spins.count.value), "size_km": spins.size_km.value, "seed": int(spins.seed.value),
+		"auto": auto_check.button_pressed, "density": spins.density.value}
 	var prefer: Array = [] if sea else _prefer.duplicate(true)
 	for i in prefer.size():
 		prefer[i]["weight"] = int(weights[i].value)
@@ -249,6 +262,9 @@ func _show_factors() -> void:
 ## Preenche o formulário; o que a regra não diz volta ao padrão.
 func load_rule(saved: Dictionary) -> void:
 	var r := DEFAULTS.duplicate()
+	if not saved.is_empty() and not saved.has("auto"):
+		r.auto = false
+		r.density = 0.0
 	r.merge(saved, true)
 	surface.select(1 if r.surface == "mar" else 0)
 	output.select(1 if r.output == "ponto" else 0)
@@ -258,6 +274,8 @@ func load_rule(saved: Dictionary) -> void:
 		climates[k].button_pressed = k in r.climates
 	for k in spins:
 		spins[k].value = r[k]
+	auto_check.set_pressed_no_signal(bool(r.auto))
+	_sync_auto()
 	_prefer = r.prefer.duplicate(true)
 	if template.item_count > 0:
 		template.select(0)
@@ -272,6 +290,11 @@ func show_preview(text: String, can_apply := false) -> void:
 	summary.visible = text != ""
 	apply_button.visible = can_apply
 	discard_button.visible = can_apply
+
+
+func _sync_auto() -> void:
+	for control in _manual:
+		control.visible = not auto_check.button_pressed
 
 
 func show_suppressions(count: int) -> void:

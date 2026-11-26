@@ -45,6 +45,8 @@ const ResourcePanel = preload("res://scripts/ui/resource_panel.gd")
 const ResourceController = preload("res://scripts/app/resource_controller.gd")
 const GeneratorController = preload("res://scripts/app/generator_controller.gd")
 const WhyCard = preload("res://scripts/ui/why_card.gd")
+const SettlementPanel = preload("res://scripts/ui/settlement_panel.gd")
+const ProductionController = preload("res://scripts/app/production_controller.gd")
 const RulesController = preload("res://scripts/app/rules_controller.gd")
 const TypesController = preload("res://scripts/app/types_controller.gd")
 const WorldFiles = preload("res://scripts/app/world_files.gd")
@@ -78,6 +80,7 @@ var domains: DomainHub                # as fichas (busca, ficha, calendários) e
 var territories: TerritoryEditor      # pintar território, camadas, paleta e seleção do mapa
 var resources := ResourceController.new()
 var generator := GeneratorController.new()
+var production := ProductionController.new()
 var rules := RulesController.new()
 var types := TypesController.new()
 var world_files := WorldFiles.new()
@@ -200,7 +203,22 @@ func _ready() -> void:
 		_layout())
 	resources.navigate = func() -> void: set_tool(ToolPanel.NAVIGATE)
 	resources.focus_map = globe.focus
-	tool_panel.resources_toggled.connect(resources.set_open)
+	tool_panel.resources_toggled.connect(func(open: bool) -> void:
+		if open:
+			production.set_open(false)  # um painel lateral por vez
+		resources.set_open(open))
+	var settlement_panel := SettlementPanel.new()
+	hud.add_child(settlement_panel)
+	_dock["settlements"] = settlement_panel
+	settlement_panel.visibility_changed.connect(func() -> void:
+		tool_panel.settlements_toggle.set_pressed_no_signal(settlement_panel.visible)
+		_layout())
+	production.navigate = func() -> void: set_tool(ToolPanel.NAVIGATE)
+	production.focus_map = globe.focus
+	tool_panel.settlements_toggled.connect(func(open: bool) -> void:
+		if open:
+			resources.set_open(false)
+		production.set_open(open))
 	var territory_panel := TerritoryPanel.new()
 	hud.add_child(territory_panel)
 	_dock["territory"] = territory_panel
@@ -246,6 +264,8 @@ func _ready() -> void:
 	territories.setup(domains, territory, commands, territory_panel, {}, _new_layer)  # lê a camada dos países e manda a paleta; as outras sob demanda
 	territories.area_palette_changed.connect(material.set_area_palette)
 	resources.setup(domains, resource_panel, globe.resources, commands, territories)  # depois do editor: usa as camadas dele
+	production.setup(domains, settlement_panel, globe.settlements, terrain, territories, clock)  # registra-se no relógio
+	production.month_processed.connect(func(_end: int) -> void: resources.refresh())  # a reserva mostrada mudou
 	if domains.usable:
 		generator.setup(resources, resource_panel.generator, terrain)
 		var why_card := WhyCard.new()  # "Por que aqui?": no meio do espaço livre, embaixo
@@ -498,11 +518,12 @@ func _layout() -> void:
 		index.size = Vector2(SearchPanel.WIDTH, bottom - top)
 		left += SearchPanel.WIDTH
 	var free_right: float = width - SheetPanel.WIDTH if _dock["sheet"].visible else width
-	var resource_dock: Control = _dock.get("resources")
-	if resource_dock != null and resource_dock.visible:  # à direita, encostado na ficha quando ela está aberta
-		free_right -= ResourcePanel.WIDTH
-		resource_dock.position = Vector2(free_right, top)
-		resource_dock.size = Vector2(ResourcePanel.WIDTH, bottom - top)
+	for key in ["resources", "settlements"]:  # à direita, encostados na ficha quando ela está aberta
+		var side: Control = _dock.get(key)
+		if side != null and side.visible:
+			free_right -= side.custom_minimum_size.x
+			side.position = Vector2(free_right, top)
+			side.size = Vector2(side.custom_minimum_size.x, bottom - top)
 	var lift := 0.0  # a barra de edição de baixo (relevo ou território) fica no meio do espaço livre; a legenda sobe acima dela
 	for bar in [_dock.get("territory"), tool_panel.edit_bar, _dock.get("region_card"), _dock.get("why_card")]:
 		if bar != null and bar.visible:
@@ -595,6 +616,7 @@ func _show_political(on: bool) -> void:
 func set_tool(op: int) -> void:
 	if op != ToolPanel.NAVIGATE:
 		resources.cancel_click()
+		production.cancel_click()
 	if territories.painting_territory:  # escolher uma ferramenta da barra sai do modo pintar território
 		territories.stop_painting()
 	if brush.active:
@@ -668,6 +690,8 @@ func _on_clock_changed() -> void:
 
 
 func select(n: Vector3) -> void:
+	if production.click(n):
+		return
 	if resources.click(n, maxf(20.0, globe.camera_altitude_km() * 0.02)):
 		return
 	selected_dir = n

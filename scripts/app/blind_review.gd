@@ -38,6 +38,7 @@ func start(rule: String) -> void:
 	var parsed: Dictionary = JSON.parse_string(rule)
 	parsed.output = "ponto"  # o que se julga é o lugar
 	parsed.count = PER_GROUP
+	parsed.auto = false  # julga-se toda a área que a regra aceita, não só o núcleo do automático
 	var made = generator.make_plan(resources.type_id, JSON.stringify(parsed))
 	if made == null:
 		return

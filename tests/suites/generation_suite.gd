@@ -176,6 +176,7 @@ func run() -> void:
 	ok("pontos no mar com distância mínima; reabrir conserva a regra")
 	r.Open(path)
 	_test_scores()
+	_test_auto()
 	_test_golden()
 	r.Close()
 	_test_summary()
@@ -358,7 +359,7 @@ func _run_profiles() -> void:
 		return fail("sair da aba Sugerir fecha a prévia")
 	res.panel.show_tab(res.panel.TAB_SUGGEST)
 	var rule: String = JSON.stringify(res.panel.generator.rule())
-	if JSON.parse_string(rule).prefer.size() != 3 or JSON.parse_string(rule).min_score != 60:
+	if JSON.parse_string(rule).prefer.size() != 4 or JSON.parse_string(rule).min_score != 60:
 		return fail("o formulário deveria mostrar os indícios do perfil: " + rule)
 	start = Time.get_ticks_msec()
 	res.panel.generator.stability_requested.emit(rule)
@@ -521,6 +522,30 @@ func _test_golden() -> void:
 	if not GoldenSet.report(GoldenSet.measure(open.slice(0, 3), PackedInt32Array([1, 1, 1])), all, false, false).contains("poucas respostas"):
 		return fail("com poucas respostas não compara")
 	ok("gabarito: última resposta vale, terço reservado estável, aceitar tudo vale 50% e melhora ou piora")
+
+
+## Automático: cabem mais manchas, cada uma do tamanho do lugar, e cada uma traz a quantidade (área × densidade × aptidão).
+func _test_auto() -> void:
+	var type: int = r.CreateResourceType("Granito automático").Id
+	var manual := {"rocks": ["granito"], "output": "area", "count": 6, "size_km": 600.0, "seed": 7}
+	var auto := manual.duplicate()
+	auto.merge({"auto": true, "density": 10.0})
+	var few = _plan(type, manual, _new_layer())
+	var many = _plan(type, auto, _new_layer())
+	if many.Error != "" or many.Count <= few.Count or many.AcceptedKm2() <= few.AcceptedKm2():
+		return fail("o automático deveria pôr mais manchas e cobrir mais: %d/%d" % [many.Count, few.Count])
+	for i in many.Count:
+		var p: Dictionary = many.Proposal(i)
+		if p.km2 < 500.0 or absf(p.reserve - p.km2 * 10.0) > 1e-6 * p.km2:
+			return fail("mancha pequena demais ou quantidade errada: %s" % [p])
+	if _plan(type, manual, _new_layer()).Proposal(0).reserve != 0.0:
+		return fail("sem densidade, sem quantidade")
+	var layer := _new_layer()
+	r.ApplyGeneration(many, layer)
+	var first: Dictionary = r.Occurrences(type)[0]
+	if absf(r.OccurrenceReserve(int(first.id)).reserve - layer.AreaKm2(int(first.id)) * 10.0) > 1.0:
+		return fail("aplicar grava a quantidade de cada mancha: %s" % [r.OccurrenceReserve(int(first.id))])
+	ok("automático: %d manchas (manual: %d), cada uma do tamanho do lugar e com quantidade" % [many.Count, few.Count])
 
 
 func _test_summary() -> void:

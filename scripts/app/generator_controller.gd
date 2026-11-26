@@ -432,6 +432,8 @@ func _show() -> void:
 		var parts: Array[String] = ["%d de %d sugestões" % [made.AcceptedCount(), made.Count]]
 		if made.IsArea:
 			parts[0] += " · %d km²" % roundi(made.AcceptedKm2())
+		if made.AcceptedReserve() > 0.0:
+			parts.append("quantidade total %s" % resources.panel._plain(made.AcceptedReserve()))
 		parts.append("substitui %d geradas" % made.ReplacedCount)
 		parts.append("preserva %d suas" % made.ProtectedCount)
 		if made.SuppressedCount > 0:

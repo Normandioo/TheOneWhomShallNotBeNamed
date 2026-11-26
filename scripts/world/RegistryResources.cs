@@ -79,7 +79,7 @@ public partial class Registry
 
     static readonly string[] TypeColumns = { "world_id", "name", "description", "category", "unit", "rgb", "created_at", "rule" };
     static readonly string[] OccurrenceColumns =
-        { "world_id", "type_id", "name", "kind", "lat", "lon", "origin", "state", "note", "created_at", "fixed", "generation_id", "gen_lat", "gen_lon", "gen_km" };
+        { "world_id", "type_id", "name", "kind", "lat", "lon", "origin", "state", "note", "created_at", "fixed", "generation_id", "gen_lat", "gen_lon", "gen_km", "reserve" };
 
     /// O prefixo da camada pintável de um recurso: "recurso:<id do tipo>".
     public const string ResourceLevelPrefix = "recurso:";
@@ -119,6 +119,7 @@ public partial class Registry
     {
         long uses = Convert.ToInt64(_db.Scalar("select count(*) from resource_occurrence where type_id = @0", id));
         if (uses > 0) throw new ArgumentException($"o recurso {id} tem {uses} ocorrência(s): exclua-as antes");
+        CheckGoodUnused(id);
         return Remove("resource_type", TypeColumns, id);
     }
 

@@ -299,6 +299,20 @@ e o raciocínio de cada método estão em `docs/alternativas-fronteiras.md`.
   exploração (etapa 3 em diante); percurso (linha) e referência a uma região; ver vários recursos ao mesmo tempo; abrir uma
   ocorrência a partir de uma ficha.
 
+## Produção (etapa 3, primeira cadeia; migração 20)
+
+- Contratos de tempo, estoque e reserva: `docs/recursos/contratos.md`.
+- **Banco:** `settlement` (povoado: lugar, trabalhadores, alcance), `recipe` + `recipe_input` (extração de uma ocorrência ao alcance
+  ou fabricação com insumos; trabalho em pessoas-dia), `activity` (receita + pessoas + ordem), `stock_movement` (o histórico do
+  estoque), `production_run` (os meses feitos) e `production_result` (o que cada atividade fez e por quê). `resource_occurrence.reserve`
+  é a quantidade do autor; sem ela a ocorrência é narrativa.
+- **Cálculo** (`RegistryProduction.RunMonth`): ciclos = o menor entre trabalho, insumos e reserva ao alcance; consome e produz na
+  mesma transação em que registra o mês.
+- **Tela:** botão "Povoados" (`ui/settlement_panel.gd` + `app/production_controller.gd`, que também é o módulo do relógio): lista,
+  povoado com as abas Atividades, Estoque e Editar, e a tela de Receitas. A quantidade de cada ocorrência é dada no painel Recursos,
+  aba No mapa. Um painel lateral por vez.
+- **Ainda não feito:** os itens do fim da seção "Tempo e produção" dos contratos.
+
 ## Testes
 
 ```

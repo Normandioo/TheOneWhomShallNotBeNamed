@@ -16,6 +16,8 @@ public sealed class ResourceFactor
     public string[] Provinces { get; set; } = Array.Empty<string>();  // orogeno | derrames (calibração: hipótese)
     public string[] Volcanoes { get; set; } = Array.Empty<string>();  // arco | colisao | rifte (hipótese)
     public double VolcanoKm { get; set; } = 300;                      // a até quantos km do vulcanismo
+    public string[] Water { get; set; } = Array.Empty<string>();     // perto de: lago | rio (grande) | mar
+    public double WaterKm { get; set; } = 30;
     public double SlopeMax { get; set; } = 90;
     public int Weight { get; set; } = 50;
 }
@@ -40,6 +42,11 @@ public sealed class ResourceRule
     public int Count { get; set; } = 8;
     public double SizeKm { get; set; } = 250;                           // área: raio aproximado; ponto: distância mínima entre eles
     public int Seed { get; set; } = 1;
+    // Automático: quantas couberem nos lugares aptos (até MaxCount); SizeKm vira o tamanho MÁXIMO e cada mancha para onde o lugar
+    // deixa de servir. Manchas menores que MinAutoKm2 não entram.
+    public bool Auto { get; set; }
+    // Quantidade por km² (na unidade do recurso), vezes a aptidão. 0 = sem quantidade (narrativa). Valor de projeto, sem calibração.
+    public double Density { get; set; }
 
     static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, Converters = { new WholeNumber() } };
 
@@ -74,6 +81,7 @@ public sealed class ResourceRule
             r.Output is not ("area" or "ponto") ? "a saída é área ou ponto" :
             r.Count < 1 || r.Count > ResourceGenerator.MaxCount ? $"a quantidade vai de 1 a {ResourceGenerator.MaxCount}" :
             !(r.SizeKm >= 10 && r.SizeKm <= 2000) ? "o tamanho vai de 10 a 2000 km" :
+            !(r.Density >= 0 && double.IsFinite(r.Density)) ? "a quantidade por km² é zero ou mais" :
             r.Prefer == null || r.Prefer.Length > 12 || r.Prefer.Any(f => !ValidFactor(f)) ? "há um indício inválido (nome, rochas, climas, províncias, vulcanismo, distância, declive ou peso)" :
             r.MinScore < 1 || r.MinScore > 100 ? "a aptidão mínima vai de 1 a 100" :
             r.Surface == "mar" && (r.Rocks.Length > 0 || r.Climates.Length > 0 || r.TreesMin > 0 || r.SoilMin > 0 || r.Prefer.Length > 0)
@@ -86,7 +94,8 @@ public sealed class ResourceRule
         && f.Climates != null && f.Climates.All(k => k is "A" or "B" or "C" or "D" or "E")
         && f.Provinces != null && f.Provinces.All(k => ResourceGenerator.ProvinceColors.ContainsKey(k))
         && f.Volcanoes != null && f.Volcanoes.All(k => ResourceGenerator.VolcanoColors.ContainsKey(k))
-        && f.VolcanoKm >= 10 && f.VolcanoKm <= 1000 && f.SlopeMax > 0 && f.SlopeMax <= 90 && f.Weight >= 1 && f.Weight <= 100;
+        && f.VolcanoKm >= 10 && f.VolcanoKm <= 1000
+        && f.Water != null && f.Water.All(k => k is "lago" or "rio" or "mar") && f.WaterKm >= 1 && f.WaterKm <= 500 && f.SlopeMax > 0 && f.SlopeMax <= 90 && f.Weight >= 1 && f.Weight <= 100;
 
     /// Os mapas que a regra precisa ler (a altitude vem do terreno, com as edições).
     public string[] Maps()
@@ -96,6 +105,8 @@ public sealed class ResourceRule
         if (Climates.Length > 0 || Prefer.Any(f => f.Climates.Length > 0)) maps.Add("Clima.png");
         if (Prefer.Any(f => f.Provinces.Length > 0)) maps.Add("Provincias geologicas.png");
         if (Prefer.Any(f => f.Volcanoes.Length > 0)) maps.Add("Vulcanismo.png");
+        if (Prefer.Any(f => f.Water.Contains("lago"))) maps.Add("Waterbodies.png");
+        if (Prefer.Any(f => f.Water.Contains("rio"))) maps.Add("Waterflow.png");
         if (TreesMin > 0) maps.Add("Vegetação.png");
         if (SoilMin > 0) maps.Add("Soil Richness.png");
         return maps.ToArray();
@@ -107,6 +118,7 @@ internal sealed class Proposal
     public int Center;
     public double Lat, Lon, Km2, RadiusKm;
     public int Score = 100;
+    public double Reserve;                     // a quantidade sugerida (0 = sem quantidade)
     public string Why = "";                    // os indícios que valem no centro
     public bool[] Matched = Array.Empty<bool>();  // por indício da regra: vale no centro?
     public int[] Pixels = Array.Empty<int>();  // só nas áreas
@@ -117,7 +129,10 @@ internal sealed class Proposal
 /// depois escolhe centros agrupados (um ruído de ~600 km na esfera) e cresce as manchas só dentro dos candidatos.
 internal static class ResourceGenerator
 {
-    public const int AlgorithmVersion = 2;  // 2: aptidão por indícios (sem indícios o resultado é o mesmo da 1)
+    public const int AlgorithmVersion = 4;  // 4: indício "perto da água" (sem ele, o resultado é o mesmo da 3)
+    public const double BigRiver = 70;          // Waterflow (relativo, 0..100) a partir do qual é rio grande: ~3,7% da terra
+    public const double MinAutoKm2 = 500;      // uma mancha automática menor que isto (uns 5 pixels) é ruído do mapa
+    public const double PointKm2 = 100;        // a área que um ponto representa, para a quantidade
     public const int MaxCount = 200;
     private const int Pool = 40000;  // quantos candidatos concorrem a centro
     private const float ClusterScale = 0.17f;  // o Fbm de TerrainNoise tem ~100 km: encolher a posição o leva a ~600 km
@@ -320,6 +335,7 @@ internal static class ResourceGenerator
             Filter(mask, maps["Provincias geologicas.png"], c => colors.Contains(c));
         }
         if (f.Volcanoes.Length > 0) mask.And(NearVolcano(f.Volcanoes, f.VolcanoKm, terrain, maps["Vulcanismo.png"]));
+        if (f.Water.Length > 0) mask.And(Near(WaterSources(f.Water, terrain, maps), f.WaterKm, terrain));
         if (f.SlopeMax < 90) FilterSlope(mask, f.SlopeMax, terrain);
         return mask;
     }
@@ -328,22 +344,66 @@ internal static class ResourceGenerator
     private static BitArray NearVolcano(string[] kinds, double km, Terrain terrain, byte[] rgb)
     {
         var colors = kinds.SelectMany(k => VolcanoColors[k]).ToHashSet();
+        var sources = new BitArray(terrain.Size.X * terrain.Size.Y);
+        for (int i = 0; i < sources.Length; i++) sources[i] = colors.Contains(Rgb(rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]));
+        return Near(sources, km, terrain);
+    }
+
+    /// Lagos (Waterbodies.png: o que não é o cinza de fundo), rios grandes (Waterflow.png ≥ BigRiver; o fluxo é relativo) e mar.
+    private static BitArray WaterSources(string[] kinds, Terrain terrain, Dictionary<string, byte[]> maps)
+    {
+        var water = new BitArray(terrain.Size.X * terrain.Size.Y);
+        var flow = new Dictionary<int, bool>();
+        for (int i = 0; i < water.Length; i++)
+        {
+            bool w = kinds.Contains("mar") && terrain.H[i] < 0f;
+            if (!w && kinds.Contains("lago"))
+            {
+                var b = maps["Waterbodies.png"];
+                int r = b[3 * i], g = b[3 * i + 1], bl = b[3 * i + 2];
+                w = !(r == g && g == bl && (r == 30 || r == 80));
+            }
+            if (!w && kinds.Contains("rio"))
+            {
+                var b = maps["Waterflow.png"];
+                int c = Rgb(b[3 * i], b[3 * i + 1], b[3 * i + 2]);
+                w = flow.TryGetValue(c, out bool big) ? big : flow[c] = ViridisIndex(c) >= BigRiver;
+            }
+            water[i] = w;
+        }
+        return water;
+    }
+
+    /// Os pixels a até km (pela superfície) de algum pixel de sources.
+    private static BitArray Near(BitArray sources, double km, Terrain terrain)
+    {
         var near = new BitArray(terrain.Size.X * terrain.Size.Y);
         // Uma frente só, a partir de todo o vulcanismo: cada pixel passa aos vizinhos a origem mais próxima, e a distância é medida
         // até ela pela esfera. Um pixel entra uma vez, na ordem da distância.
         var queue = new PriorityQueue<(int Pixel, int Source), double>();
-        var sources = new Dictionary<int, Vec>();
+        var origin = new Dictionary<int, Vec>();
         for (int i = 0; i < near.Length; i++)
         {
-            if (!colors.Contains(Rgb(rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]))) continue;
-            sources[i] = VecOf(i, terrain);
+            if (!sources[i]) continue;
+            near[i] = true;
+            // Só a borda da área de origem espalha: o interior (o mar inteiro, num lago grande) já está dentro, e partir de milhões
+            // de pixels tornava "perto do mar" lento (12 s por prévia). O resultado é o mesmo.
+            bool edge = false;
+            foreach (var (dx, dy, _) in Terrain.Neighbors)
+            {
+                int q = terrain.Neighbor(i, dx, dy);
+                if (q >= 0 && !sources[q]) { edge = true; break; }
+            }
+            if (!edge) continue;
+            near[i] = false;  // a frente o marca ao sair da fila
+            origin[i] = VecOf(i, terrain);
             queue.Enqueue((i, i), 0);
         }
         while (queue.TryDequeue(out var item, out _))
         {
             if (near[item.Pixel]) continue;
             near[item.Pixel] = true;
-            var from = sources[item.Source];
+            var from = origin[item.Source];
             foreach (var (dx, dy, _) in Terrain.Neighbors)
             {
                 int q = terrain.Neighbor(item.Pixel, dx, dy);
@@ -422,7 +482,9 @@ internal static class ResourceGenerator
             }
         }
         var ordered = best.UnorderedItems.OrderByDescending(x => x.Priority).ThenBy(x => x.Element).Select(x => x.Element);
-        double spacing = rule.Output == "area" ? 2 * rule.SizeKm : rule.SizeKm;
+        // No automático as manchas podem encostar (os pixels já tomados não se repetem): cabem mais.
+        double spacing = rule.Output == "area" && !rule.Auto ? 2 * rule.SizeKm : rule.SizeKm;
+        int wanted = rule.Auto ? MaxCount : rule.Count;
         var centers = new List<int>();
         var vectors = new List<Vec>();
         foreach (int p in ordered)
@@ -431,7 +493,7 @@ internal static class ResourceGenerator
             if (vectors.Any(o => Km(o, v) < spacing)) continue;
             centers.Add(p);
             vectors.Add(v);
-            if (centers.Count == rule.Count) break;
+            if (centers.Count == wanted) break;
         }
         return centers;
     }
@@ -484,7 +546,8 @@ internal static class ResourceGenerator
             var (lat, lon) = at.ToLatLon();
             if (rule.Output == "ponto")
             {
-                proposals.Add(new Proposal { Center = center, Lat = lat, Lon = lon, RadiusKm = rule.SizeKm / 2, Score = scores[center], Why = Why(rule, factors, center), Matched = Matched(factors, center) });
+                proposals.Add(new Proposal { Center = center, Lat = lat, Lon = lon, RadiusKm = rule.SizeKm / 2, Score = scores[center], Why = Why(rule, factors, center), Matched = Matched(factors, center),
+                    Reserve = rule.Density * PointKm2 * scores[center] / 100.0 });
                 continue;
             }
             if (protectedPixels(center) || !taken.Add(center)) continue;
@@ -502,7 +565,15 @@ internal static class ResourceGenerator
                 }
             }
             double km2 = pixels.Sum(p => Territory.RowCellKm2(p / terrain.Size.X, terrain.Size.X, terrain.Size.Y));
-            proposals.Add(new Proposal { Center = center, Lat = lat, Lon = lon, RadiusKm = rule.SizeKm, Km2 = km2, Pixels = pixels.ToArray(), Score = scores[center], Why = Why(rule, factors, center), Matched = Matched(factors, center) });
+            if (rule.Auto && km2 < MinAutoKm2)
+            {
+                foreach (int p in pixels) taken.Remove(p);
+                continue;
+            }
+            // A quantidade soma a aptidão de cada pixel: a parte mais apta da mancha vale mais.
+            double reserve = pixels.Sum(p => Territory.RowCellKm2(p / terrain.Size.X, terrain.Size.X, terrain.Size.Y) * scores[p] / 100.0) * rule.Density;
+            proposals.Add(new Proposal { Center = center, Lat = lat, Lon = lon, RadiusKm = rule.SizeKm, Km2 = km2, Pixels = pixels.ToArray(), Score = scores[center],
+                Why = Why(rule, factors, center), Matched = Matched(factors, center), Reserve = reserve });
         }
         return proposals;
     }
