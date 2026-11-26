@@ -79,7 +79,8 @@ public partial class Registry
 
     static readonly string[] TypeColumns = { "world_id", "name", "description", "category", "unit", "rgb", "created_at", "rule" };
     static readonly string[] OccurrenceColumns =
-        { "world_id", "type_id", "name", "kind", "lat", "lon", "origin", "state", "note", "created_at", "fixed", "generation_id", "gen_lat", "gen_lon", "gen_km", "reserve" };
+        { "world_id", "type_id", "name", "kind", "lat", "lon", "origin", "state", "note", "created_at", "fixed", "generation_id", "gen_lat", "gen_lon", "gen_km", "reserve",
+          "grade", "depth_m", "access", "renewal", "reserve_policy", "valid_from", "valid_to" };
 
     /// O prefixo da camada pintável de um recurso: "recurso:<id do tipo>".
     public const string ResourceLevelPrefix = "recurso:";

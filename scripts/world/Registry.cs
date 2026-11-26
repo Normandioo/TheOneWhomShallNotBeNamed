@@ -92,6 +92,7 @@ public partial class Registry : RefCounted
         PaintedShapesMigration,  // RegistryResources.cs
         GenerationMigration,  // RegistryGeneration.cs
         ProductionMigration,  // RegistryProduction.cs
+        DetailsMigration,  // RegistryDetails.cs
     };
 
     WorldDb _db = new();
@@ -102,7 +103,17 @@ public partial class Registry : RefCounted
         _db.Open(path);
         _openKey = Guid.NewGuid().ToString("N");
         _layerOf = null;
-        try { _db.Migrate(Migrations); }
+        try
+        {
+            long version = _db.SchemaVersion();
+            // Antes de mudar o esquema de um mundo que já existe, uma cópia dele ao lado (a migração não tem volta).
+            if (path != ":memory:" && version > 0 && version < Migrations.Length)
+            {
+                string copy = $"{path}.antes-v{version}";
+                if (!System.IO.File.Exists(copy)) _db.Run("vacuum into @0", copy);
+            }
+            _db.Migrate(Migrations);
+        }
         catch { _db.Close(); throw; }  // um banco recusado não fica aberto: as chamadas seguintes falham em vez de escrever nele
     }
 

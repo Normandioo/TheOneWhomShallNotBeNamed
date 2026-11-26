@@ -79,6 +79,8 @@ func show_type(type_id: int) -> void:
 		panel.load_rule(JSON.parse_string(saved) if saved != "" else {})
 		panel.show_review_result("")
 	panel.show_suppressions(resources.hub.registry.SuppressionCount(type_id))
+	if plan == null and resources.hub.registry.GenerationStale(type_id, terrain):
+		panel.show_preview("O relevo mudou depois da última sugestão aplicada: ela pode estar desatualizada. Peça a prévia de novo para refazê-la (o que é seu continua).")
 
 
 ## Cria o recurso de um perfil, já com a regra, num desfazer só. Um recurso com o mesmo nome não é alterado.
@@ -98,10 +100,12 @@ func add_profile(index: int) -> void:
 		created.Undo()
 		resources.panel.show_message("A regra do perfil não foi aceita (veja o log).")
 		return
+	var t: Dictionary = resources.hub.registry.ResourceTypes("").filter(func(x): return int(x.id) == int(created.Id))[0]
+	var labeled = resources.hub.registry.SetResourceType(created.Id, profile.name, "", profile.get("category", ""), profile.get("unit", ""), int(t.rgb))
 	resources.type_id = created.Id
 	resources.occurrence_id = 0
 	_loaded_type = -1
-	resources.push_batch("adicionar perfil %s" % profile.name, [created, ruled])
+	resources.push_batch("adicionar perfil %s" % profile.name, [created, ruled] + ([labeled] if labeled != null else []))
 	resources.show_map()
 	resources.panel.show_tab(resources.panel.TAB_SUGGEST)  # um modelo pronto já abre onde se pede a prévia
 

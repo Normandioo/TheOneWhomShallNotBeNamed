@@ -223,6 +223,21 @@ func _run_scene() -> void:
 	panel.show_tab(0)
 	main.globe.focus(EvronGeo.dir(0.0, 10.0), 1.6)
 	await save("povoado_atividades")
+	panel.show_tab(2)
+	panel.capability_name.text = "Fundir bronze"
+	panel.capability_level.value = 70
+	panel.capability_set.emit("Fundir bronze", 70)
+	if reg.SettlementCapabilities(village).size() != 1 or panel.capabilities.item_count != 1:
+		return fail("o povoado aprende uma capacidade pela tela")
+	panel.recipes_requested.emit()
+	panel.recipe_saved.emit(0, {"name": "Bronze", "kind": "fabricacao", "output_id": sal, "output_qty": 1.0, "labor_days": 5.0,
+		"inputs": [], "requirements": [], "capability": "Fundir bronze"})
+	var bronze: Array = Array(reg.Recipes()).filter(func(x): return x.name == "Bronze")
+	if bronze.size() != 1 or bronze[0].capability != "Fundir bronze":
+		return fail("a receita exige a capacidade pela tela: %s" % [bronze])
+	if panel.stock_title.text.begins_with("Estoque em") == false:
+		return fail("o estoque diz a data")
+	panel.back_requested.emit()
 	main.tool_panel.resources_toggle.button_pressed = true
 	if panel.visible or not main.resources.panel.visible:
 		return fail("um painel lateral por vez")

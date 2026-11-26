@@ -16,7 +16,8 @@ public partial class ResourcePlan : RefCounted
     internal ResourceRule Rule = new();
     internal List<Proposal> Proposals = new();
     internal long TypeId;
-    internal string Signature = "";   // o estado das ocorrências e supressões quando a prévia foi feita
+    internal string Signature = "";
+    internal string TerrainHash = "";  // o relevo que a prévia usou (Registry.GenerationStale compara com o de agora)   // o estado das ocorrências e supressões quando a prévia foi feita
     internal long LayerVersion;
     internal HashSet<int> ReplacedAreas = new();
     internal List<long> Replaced = new();

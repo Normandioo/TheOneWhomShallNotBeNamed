@@ -6,6 +6,7 @@ extends RefCounted
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 const ResourcePanel = preload("res://scripts/ui/resource_panel.gd")
 const TerritoryEditor = preload("res://scripts/app/territory_editor.gd")
+const Calendar = preload("res://scripts/world/calendar.gd")
 
 
 ## Vários comandos que são um só para o autor (apagar uma área com a pintura; aplicar uma geração).
@@ -73,6 +74,31 @@ func setup(domain_hub, resource_panel, place_layer, command_stack, territory_edi
 		occurrence_id = id
 		refresh())
 	panel.create_requested.connect(create_type)
+	panel.lookup = func(text: String) -> Array:
+		var found = hub.registry.Search(text, "", "", 0, hub.shown_t)
+		return found if found != null else []
+	panel.details_saved.connect(_save_details)
+	panel.knowledge_added.connect(func(entity: int, from_year: String, to_year: String, estimate: String, note: String) -> void:
+		var period := _period(from_year, to_year)
+		var value: float = hub.parse_number(estimate) if estimate.strip_edges() != "" else NAN
+		if period.is_empty() or (estimate.strip_edges() != "" and (is_nan(value) or value < 0.0)):
+			panel.show_message("Confira os anos (o primeiro antes do segundo) e a estimativa (um número, zero ou mais).")
+			return
+		hub.registry.AddKnowledge(occurrence_id, entity, period.from, period.to, value, note)
+		refresh())
+	panel.knowledge_removed.connect(func(id: int) -> void:
+		hub.registry.DeleteKnowledge(id)
+		refresh())
+	panel.right_added.connect(func(entity: int, kind: String, from_year: String, to_year: String, note: String) -> void:
+		var period := _period(from_year, to_year)
+		if period.is_empty():
+			panel.show_message("Confira os anos: o primeiro tem de vir antes do segundo.")
+			return
+		hub.registry.AddRight(occurrence_id, entity, kind, period.from, period.to, note)
+		refresh())
+	panel.right_removed.connect(func(id: int) -> void:
+		hub.registry.DeleteRight(id)
+		refresh())
 	panel.back_requested.connect(func() -> void:
 		leave_painting()
 		cancel_click()
@@ -127,15 +153,23 @@ func set_open(open: bool) -> void:
 	refresh()
 
 
-func create_type(type_name: String) -> void:
+func create_type(type_name: String, category := "") -> void:
 	leave_painting()
 	var cmd = hub.registry.CreateResourceType(type_name)
-	if cmd != null:
-		type_id = cmd.Id
-		occurrence_id = 0
-		panel.new_name.text = ""
-		panel.query.text = ""
-	_apply("criar recurso", cmd, "Dê um nome ao recurso.")
+	if cmd == null:
+		_apply("criar recurso", cmd, "Dê um nome ao recurso.")
+		return
+	type_id = cmd.Id
+	occurrence_id = 0
+	panel.new_name.text = ""
+	panel.query.text = ""
+	var steps: Array = [cmd]
+	if category != "":
+		var t: Dictionary = hub.registry.ResourceTypes("").filter(func(x): return int(x.id) == type_id)[0]
+		var categorized = hub.registry.SetResourceType(type_id, t.name, "", category, "", int(t.rgb))
+		if categorized != null:
+			steps.append(categorized)
+	push_batch("criar recurso", steps)
 	show_map()
 
 
@@ -345,6 +379,47 @@ func level() -> String:
 	return TerritoryEditor.RESOURCE + str(type_id)
 
 
+func _save_details(d: Dictionary) -> void:
+	var numbers := {}
+	for key in ["grade", "depth", "renewal"]:
+		numbers[key] = hub.parse_number(d[key]) if String(d[key]).strip_edges() != "" else NAN
+		if String(d[key]).strip_edges() != "" and (is_nan(numbers[key]) or numbers[key] < 0.0):
+			panel.show_message("Teor, profundidade e renovação são números, zero ou mais (vazio = não informado).")
+			return
+	var period := _period(d.from, d.to)
+	if period.is_empty():
+		panel.show_message("Confira os anos: o primeiro tem de vir antes do segundo.")
+		return
+	_apply("detalhes da ocorrência", hub.registry.SetOccurrenceDetails(occurrence_id, numbers.grade, numbers.depth, d.access, numbers.renewal,
+		d.policy, period.from, period.to), "O teor vai de 0 a 100%.")
+
+
+## Anos de texto -> {from, to} em segundos (vazio = sempre); {} se não vale.
+func _period(from_year: String, to_year: String) -> Dictionary:
+	var out := {"from": hub.ALWAYS, "to": hub.FOREVER}
+	for pair in [["from", from_year], ["to", to_year]]:
+		var text := String(pair[1]).strip_edges()
+		if text == "":
+			continue
+		if not text.is_valid_int():
+			return {}
+		out[pair[0]] = Calendar.to_seconds(int(text), 1, 1)
+	return out if out.from < out.to else {}
+
+
+static func _year_text(t: int) -> String:
+	if t == -9223372036854775807 - 1 or t == 9223372036854775807:
+		return ""
+	return str(Calendar.from_seconds(t).year)
+
+
+func _with_period(row: Dictionary) -> Dictionary:
+	var from := _year_text(row.from)
+	var to := _year_text(row.to)
+	row["period"] = "sempre" if from == "" and to == "" else ("desde o ano %s" % from if to == "" else ("até o ano %s" % to if from == "" else "anos %s a %s" % [from, to]))
+	return row
+
+
 ## Comandos já aplicados que valem um desfazer só.
 func push_batch(action: String, steps: Array) -> void:
 	panel.show_message("")
@@ -363,6 +438,14 @@ func _occurrence() -> Dictionary:
 		for o in hub.registry.Occurrences(type_id):
 			if int(o.id) == occurrence_id:
 				o["reserve_info"] = hub.registry.OccurrenceReserve(occurrence_id)
+				o["details"] = hub.registry.OccurrenceDetails(occurrence_id)
+				o["from_year"] = _year_text(o.details.valid_from)
+				o["to_year"] = _year_text(o.details.valid_to)
+				o["knowledge"] = Array(hub.registry.Knowledge(occurrence_id)).map(func(k): return _with_period(k))
+				o["rights"] = Array(hub.registry.Rights(occurrence_id)).map(func(r): return _with_period(r))
+				var countries = territories.layer("pais")
+				var map = territories.layer(level()) if o.kind == "area" else null
+				o["shares"] = hub.registry.OccurrenceShares(occurrence_id, map, countries) if map != null and countries != null else []
 				return o
 	return {}
 

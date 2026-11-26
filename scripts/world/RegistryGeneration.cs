@@ -37,7 +37,7 @@ public partial class Registry
         create index resource_suppression_type on resource_suppression(type_id);
         """;
 
-    static readonly string[] GenerationColumns = { "type_id", "algorithm", "rule", "layers", "created_at" };
+    static readonly string[] GenerationColumns = { "type_id", "algorithm", "rule", "layers", "created_at", "terrain_hash" };
     static readonly string[] SuppressionColumns = { "type_id", "lat", "lon", "radius_km", "generation_id", "created_at" };
 
     /// A regra gravada do recurso ("" = nenhuma).
@@ -259,6 +259,7 @@ public partial class Registry
                 else if (!protectedPoints.Any(q => Vec.Angle(q, at) * EvronGeo.RadiusKm <= Math.Min(p.RadiusKm, 100))) plan.Proposals.Add(p);
             }
             plan.Signature = GenerationSignature(typeId);
+            plan.TerrainHash = TerrainHash(terrain);
             plan.LayerVersion = layer.Version;
         }
         catch (ArgumentException e) { plan.Error = e.Message; }
@@ -278,8 +279,8 @@ public partial class Registry
             long type = plan.TypeId;
             string rule = plan.Rule.ToJson();
             list.Add(Change("resource_type", TypeColumns, type, () => _db.Run("update resource_type set rule = @0 where id = @1", rule, type)));
-            long generation = _db.Insert("insert into resource_generation(type_id, algorithm, rule, layers) values (@0, @1, @2, @3)",
-                type, ResourceGenerator.AlgorithmVersion, rule, JsonSerializer.Serialize(plan.Rule.Maps().Prepend("altitude")));
+            long generation = _db.Insert("insert into resource_generation(type_id, algorithm, rule, layers, terrain_hash) values (@0, @1, @2, @3, @4)",
+                type, ResourceGenerator.AlgorithmVersion, rule, JsonSerializer.Serialize(plan.Rule.Maps().Prepend("altitude")), plan.TerrainHash);
             list.Add(Edit("resource_generation", GenerationColumns, generation, null));
             foreach (long id in plan.Replaced) list.Add(Remove("resource_occurrence", OccurrenceColumns, id));
             if (plan.ReplacedAreas.Count > 0)

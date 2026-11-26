@@ -11,7 +11,12 @@ const ResourceProfiles = preload("res://scripts/ui/resource_profiles.gd")
 signal query_changed
 signal type_chosen(id: int)
 signal back_requested                      # voltar do recurso para a lista
-signal create_requested(name: String)
+signal create_requested(name: String, category: String)
+signal details_saved(data: Dictionary)     # teor, profundidade, acesso, renovação, política e anos de validade (texto)
+signal knowledge_added(entity_id: int, from_year: String, to_year: String, estimate: String, note: String)
+signal knowledge_removed(id: int)
+signal right_added(entity_id: int, kind: String, from_year: String, to_year: String, note: String)
+signal right_removed(id: int)
 signal type_saved(name: String, description: String, category: String, unit: String, color: Color)
 signal type_delete_requested
 signal area_requested                      # área nova: cria a ocorrência e entra na pintura
@@ -34,6 +39,11 @@ signal cancel_requested                    # Esc enquanto espera um clique
 signal closed
 
 const WIDTH := 320
+const CATEGORIES := [["mineral", "Minerais"], ["vegetal", "Vegetação"], ["animal", "Animal"], ["manufatura", "Manufatura"]]
+const UNITS := ["kg", "t", "m³", "L", "ha", "km²", "unidade", "cabeça", "kcal"]
+const ACCESS := [["", "Acesso não informado"], ["facil", "Acesso fácil"], ["medio", "Acesso médio"], ["dificil", "Acesso difícil"]]
+const POLICIES := [["normal", "A extração gasta a reserva"], ["reposicao", "Reposta pelo autor (magia): não acaba"], ["bloqueada", "Bloqueada: ninguém extrai"]]
+const RIGHTS := [["controle", "Controle"], ["acesso", "Acesso"], ["exploracao", "Exploração"]]
 const TABS := ["No mapa", "Sugerir", "Editar"]
 const TAB_MAP := 0
 const TAB_SUGGEST := 1
@@ -72,8 +82,19 @@ var generator: GeneratorPanel
 var type_name: LineEdit
 var type_color: ColorPickerButton
 var type_description: LineEdit
-var type_category: LineEdit
-var type_unit: LineEdit
+var type_category: OptionButton
+var type_unit: OptionButton
+var unit_other: LineEdit
+var new_category: OptionButton
+var shares_line: Label
+var details := {}                # controles dos detalhes da ocorrência
+var knowledge_list: ItemList
+var knowledge_ui := {}
+var rights_list: ItemList
+var rights_ui := {}
+var lookup := Callable()         # func(texto) -> [{id, name, kind}]: a busca de cadastros (o controlador liga)
+var _knowledge_ids: Array = []
+var _right_ids: Array = []
 var waiting := false             # esperando um clique no globo
 var _names := {}                 # id -> o nome mostrado na lista
 var _type := 0                   # o recurso na tela (para voltar à primeira aba quando troca)
@@ -124,8 +145,9 @@ func _build_list(box: VBoxContainer) -> void:
 	var create := _row(new_box)
 	new_name = _edit(create, "Nome do recurso novo")
 	new_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	new_name.text_submitted.connect(func(t: String) -> void: create_requested.emit(t))
-	_button(create, "Criar", func() -> void: create_requested.emit(new_name.text))
+	new_name.text_submitted.connect(func(t: String) -> void: create_requested.emit(t, _category_code(new_category)))
+	_button(create, "Criar", func() -> void: create_requested.emit(new_name.text, _category_code(new_category)))
+	new_category = _category_menu(new_box)
 	_note(new_box, "Ou comece de um modelo pronto:")
 	var ready := HFlowContainer.new()
 	new_box.add_child(ready)
@@ -187,6 +209,9 @@ func _build_type(box: VBoxContainer) -> void:
 	reserve_edit.tooltip_text = "Quanto há nesta ocorrência, na unidade do recurso. Sem quantidade, os povoados não extraem dela."
 	_button(reserve_row, "Salvar", func() -> void: reserve_saved.emit(reserve_edit.text))
 	reserve_line = _note(occurrence_box, "")
+	shares_line = _note(occurrence_box, "")
+	_build_details()
+	_build_people()
 	text_toggle = _button(occurrence_box, "Nome e anotação", Callable())
 	text_toggle.toggle_mode = true
 	var texts := _column(occurrence_box)
@@ -209,12 +234,21 @@ func _build_type(box: VBoxContainer) -> void:
 	type_color.custom_minimum_size = Vector2(40, 0)
 	type_color.tooltip_text = "Cor no mapa"
 	named.add_child(type_color)
-	_note(edit_page, "Opcionais")
-	type_description = _edit(edit_page, "Descrição")
-	type_category = _edit(edit_page, "Categoria (metal, mágico…)")
-	type_unit = _edit(edit_page, "Unidade (kg, m³…)")
+	_note(edit_page, "Categoria")
+	type_category = _category_menu(edit_page)
+	_note(edit_page, "Unidade (receitas, estoques e reservas usam só esta)")
+	type_unit = OptionButton.new()
+	type_unit.accessibility_name = "Unidade"
+	type_unit.add_item("Sem unidade")
+	for u in UNITS:
+		type_unit.add_item(u)
+	type_unit.add_item("Outra…")
+	edit_page.add_child(type_unit)
+	unit_other = _edit(edit_page, "Qual unidade")
+	type_unit.item_selected.connect(func(i: int) -> void: unit_other.visible = i == type_unit.item_count - 1)
+	type_description = _edit(edit_page, "Descrição (opcional)")
 	_button(edit_page, "Salvar", func() -> void:
-		type_saved.emit(type_name.text, type_description.text, type_category.text, type_unit.text, type_color.color))
+		type_saved.emit(type_name.text, type_description.text, _category_code(type_category), _unit_text(), type_color.color))
 	edit_page.add_child(HSeparator.new())
 	_button(edit_page, "Excluir recurso", func() -> void: type_delete_requested.emit()).tooltip_text = \
 		"Só funciona quando o recurso não está em lugar nenhum do mapa"
@@ -231,16 +265,26 @@ func show_tab(index: int) -> void:
 		generator.leave()
 
 
-## rows: o que Registry.ResourceTypes devolve.
+## rows: o que Registry.ResourceTypes devolve. Agrupados pelas categorias, cada uma com o título (que não se escolhe).
 func show_types(rows: Array, selected: int) -> void:
 	types.clear()
-	for t in rows:
-		var i := types.add_item("● %s  (%d)" % [t.name, t.count])
-		types.set_item_custom_fg_color(i, _color(t.rgb).lightened(0.2))
-		types.set_item_metadata(i, int(t.id))
-		types.set_item_tooltip(i, "Abrir %s (%d no mapa)" % [t.name, t.count])
-		if int(t.id) == selected:
-			types.select(i)
+	var groups := CATEGORIES.duplicate()
+	groups.append(["", "Sem categoria"])
+	for g in groups:
+		var mine := rows.filter(func(t): return t.category == g[0] if g[0] != "" else not CATEGORIES.any(func(c): return c[0] == t.category))
+		if mine.is_empty():
+			continue
+		var h := types.add_item(String(g[1]).to_upper())
+		types.set_item_selectable(h, false)
+		types.set_item_custom_fg_color(h, UiKit.BRASS)
+		types.set_item_metadata(h, 0)
+		for t in mine:
+			var i := types.add_item("   ● %s  (%d)" % [t.name, t.count])
+			types.set_item_custom_fg_color(i, _color(t.rgb).lightened(0.2))
+			types.set_item_metadata(i, int(t.id))
+			types.set_item_tooltip(i, "Abrir %s (%d no mapa)" % [t.name, t.count])
+			if int(t.id) == selected:
+				types.select(i)
 	types.visible = not rows.is_empty()
 	empty_list.visible = rows.is_empty() and query.text == ""
 
@@ -263,8 +307,11 @@ func show_type(t: Dictionary) -> void:
 		show_tab(TAB_MAP)
 	type_name.text = t.name
 	type_description.text = t.description
-	type_category.text = t.category
-	type_unit.text = t.unit
+	type_category.select(1 + CATEGORIES.map(func(c): return c[0]).find(t.category))
+	var known := UNITS.find(t.unit)
+	type_unit.select(0 if t.unit == "" else (1 + known if known >= 0 else type_unit.item_count - 1))
+	unit_other.text = t.unit if known < 0 else ""
+	unit_other.visible = type_unit.selected == type_unit.item_count - 1
 	type_color.color = _color(t.rgb)
 
 
@@ -299,10 +346,163 @@ func show_occurrence(o: Dictionary) -> void:
 	reserve_edit.text = "" if reserve.is_empty() or is_nan(reserve.reserve) else _plain(reserve.reserve)
 	reserve_line.text = "Quantidade desconhecida: os povoados não extraem daqui." if reserve.is_empty() or is_nan(reserve.reserve) else \
 		"Restam %s de %s (%s já extraídos)." % [_plain(reserve.left), _plain(reserve.reserve), _plain(reserve.extracted)]
+	_show_extra(o)
 	var point: bool = o.kind == "ponto"
 	_paint_button.visible = not point
 	for button in _point_actions:
 		button.visible = point
+
+
+func _build_details() -> void:
+	var body := _fold(occurrence_box, "Detalhes da ocorrência")
+	details.grade = _labeled(body, "Teor (%)")
+	details.depth = _labeled(body, "Profundidade (m)")
+	details.access = _options(body, ACCESS)
+	details.renewal = _labeled(body, "Renova por ano")
+	details.renewal.tooltip_text = "Quanto volta por ano depois de extraído (floresta, pesca). Nunca passa da quantidade dada."
+	details.policy = _options(body, POLICIES)
+	details.from = _labeled(body, "Existe desde o ano")
+	details.to = _labeled(body, "Deixa de existir no ano")
+	_note(body, "Anos vazios = sempre. Isto muda o mundo numa data; mover a área no mapa é só correção.").modulate = Color(1, 1, 1, 0.7)
+	_button(body, "Salvar detalhes", func() -> void:
+		details_saved.emit({"grade": details.grade.text, "depth": details.depth.text, "access": ACCESS[details.access.selected][0],
+			"renewal": details.renewal.text, "policy": POLICIES[details.policy.selected][0], "from": details.from.text, "to": details.to.text}))
+
+
+## "Quem conhece" e "Direitos": uma lista e o formulário de um novo, cada um.
+func _build_people() -> void:
+	var known := _fold(occurrence_box, "Quem conhece")
+	_note(known, "Um país, cultura ou outro cadastro sabe desta ocorrência, com a estimativa dele (pode errar).").modulate = Color(1, 1, 1, 0.7)
+	knowledge_list = _list(known, 80, "Quem conhece")
+	knowledge_ui = _picker(known)
+	knowledge_ui.estimate = _labeled(known, "Estimativa dele")
+	var krow := _row(known)
+	_button(krow, "Adicionar", func() -> void:
+		if knowledge_ui.who.selected >= 0:
+			knowledge_added.emit(int(knowledge_ui.who.get_item_metadata(knowledge_ui.who.selected)), knowledge_ui.from.text, knowledge_ui.to.text,
+				knowledge_ui.estimate.text, ""))
+	_button(krow, "Tirar o escolhido", func() -> void:
+		var i := knowledge_list.get_selected_items()
+		if not i.is_empty():
+			knowledge_removed.emit(_knowledge_ids[i[0]]))
+	var rights := _fold(occurrence_box, "Direitos")
+	_note(rights, "Controle, acesso e exploração são direitos diferentes: controlar não dá a exploração.").modulate = Color(1, 1, 1, 0.7)
+	rights_list = _list(rights, 80, "Direitos")
+	rights_ui = _picker(rights)
+	rights_ui.kind = _options(rights, RIGHTS)
+	var rrow := _row(rights)
+	_button(rrow, "Adicionar", func() -> void:
+		if rights_ui.who.selected >= 0:
+			right_added.emit(int(rights_ui.who.get_item_metadata(rights_ui.who.selected)), RIGHTS[rights_ui.kind.selected][0],
+				rights_ui.from.text, rights_ui.to.text, ""))
+	_button(rrow, "Tirar o escolhido", func() -> void:
+		var i := rights_list.get_selected_items()
+		if not i.is_empty():
+			right_removed.emit(_right_ids[i[0]]))
+
+
+## Escolher um cadastro pelo nome, e o período.
+func _picker(parent: Control) -> Dictionary:
+	var ui := {}
+	ui.search = _edit(parent, "Buscar país, cultura… pelo nome")
+	ui.who = OptionButton.new()
+	ui.who.fit_to_longest_item = false
+	ui.who.accessibility_name = "Quem"
+	parent.add_child(ui.who)
+	ui.search.text_changed.connect(func(text: String) -> void:
+		ui.who.clear()
+		if lookup.is_valid() and text.strip_edges() != "":
+			for e in lookup.call(text):
+				ui.who.add_item("%s (%s)" % [e.name, UiKit.kind_label(e.kind)])
+				ui.who.set_item_metadata(ui.who.item_count - 1, int(e.id))
+		if ui.who.item_count > 0:
+			ui.who.select(0))
+	ui.from = _labeled(parent, "Desde o ano (vazio = sempre)")
+	ui.to = _labeled(parent, "Até o ano (vazio = sempre)")
+	return ui
+
+
+func _show_extra(o: Dictionary) -> void:
+	var d: Dictionary = o.get("details", {})
+	if not d.is_empty():
+		details.grade.text = "" if is_nan(d.grade) else _plain(d.grade)
+		details.depth.text = "" if is_nan(d.depth_m) else _plain(d.depth_m)
+		details.access.select(maxi(ACCESS.map(func(x): return x[0]).find(d.access), 0))
+		details.renewal.text = "" if is_nan(d.renewal) else _plain(d.renewal)
+		details.policy.select(maxi(POLICIES.map(func(x): return x[0]).find(d.policy), 0))
+		details.from.text = o.get("from_year", "")
+		details.to.text = o.get("to_year", "")
+	knowledge_list.clear()
+	_knowledge_ids.clear()
+	for k in o.get("knowledge", []):
+		knowledge_list.add_item("%s · %s%s" % [k.entity, k.period, " · estima %s" % _plain(k.estimate) if not is_nan(k.estimate) else ""])
+		_knowledge_ids.append(int(k.id))
+	rights_list.clear()
+	_right_ids.clear()
+	for r in o.get("rights", []):
+		rights_list.add_item("%s · %s · %s" % [r.entity, RIGHTS.filter(func(x): return x[0] == r.kind)[0][1], r.period])
+		_right_ids.append(int(r.id))
+	var shares: Array = o.get("shares", [])
+	shares_line.text = "" if shares.is_empty() else "Por país: " + ", ".join(shares.map(func(x): return "%s %d%%" % [x.country, roundi(100 * x.share)]))
+	shares_line.visible = shares_line.text != ""
+
+
+func _fold(parent: Control, label: String) -> VBoxContainer:
+	var toggle := _button(parent, "▸ " + label, Callable())
+	toggle.toggle_mode = true
+	toggle.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	toggle.clip_text = true  # um título comprido não pode alargar o painel
+	toggle.tooltip_text = label
+	var body := _column(parent)
+	body.hide()
+	toggle.toggled.connect(func(open: bool) -> void:
+		body.visible = open
+		toggle.text = ("▾ " if open else "▸ ") + label)
+	return body
+
+
+func _labeled(parent: Control, label: String) -> LineEdit:
+	var row := _row(parent)
+	var l := Label.new()
+	l.text = label
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(l)
+	var e := LineEdit.new()
+	e.custom_minimum_size.x = 100
+	e.accessibility_name = label
+	row.add_child(e)
+	return e
+
+
+func _options(parent: Control, items: Array) -> OptionButton:
+	var o := OptionButton.new()
+	o.fit_to_longest_item = false
+	for it in items:
+		o.add_item(it[1])
+	parent.add_child(o)
+	return o
+
+
+func _category_menu(parent: Control) -> OptionButton:
+	var o := OptionButton.new()
+	o.accessibility_name = "Categoria"
+	o.add_item("Sem categoria")
+	for c in CATEGORIES:
+		o.add_item(c[1])
+	parent.add_child(o)
+	return o
+
+
+static func _category_code(menu: OptionButton) -> String:
+	return "" if menu.selected <= 0 else CATEGORIES[menu.selected - 1][0]
+
+
+func _unit_text() -> String:
+	if type_unit.selected <= 0:
+		return ""
+	if type_unit.selected == type_unit.item_count - 1:
+		return unit_other.text.strip_edges()
+	return UNITS[type_unit.selected - 1]
 
 
 ## A prévia de todos os recursos ("" = não há).

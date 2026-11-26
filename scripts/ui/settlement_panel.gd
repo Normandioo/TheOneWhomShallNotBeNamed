@@ -19,6 +19,7 @@ signal settlement_saved(name: String, workers: int, reach_km: float)
 signal move_requested
 signal focus_requested
 signal delete_requested
+signal capability_set(name: String, proficiency: int)   # o povoado sabe fazer (0 = tira)
 signal cancel_requested
 signal closed
 
@@ -26,6 +27,7 @@ const WIDTH := 340
 const TABS := ["Atividades", "Estoque", "Editar"]
 const KINDS := [["extracao", "Extrair de uma ocorrência"], ["fabricacao", "Fabricar com insumos"]]
 const INPUT_ROWS := 3
+const REQUIREMENT_ROWS := 2
 
 var title: Label
 var back_button: Button
@@ -48,6 +50,15 @@ var activity_workers: SpinBox
 var selected_box: VBoxContainer
 var selected_workers: SpinBox
 var stock: ItemList
+var stock_title: Label
+var capabilities: ItemList
+var capability_name: LineEdit
+var capability_level: SpinBox
+var totals: Label
+var recipe_capability: LineEdit
+var recipe_requirements: Array = []  # [OptionButton, LineEdit]
+var recipe_alternatives: Array = []  # CheckBox por linha de insumo (a primeira não tem)
+var _capability_names: Array = []
 var empty_stock: Label
 var stock_good: OptionButton
 var stock_qty: LineEdit
@@ -112,6 +123,14 @@ func _build_list(box: VBoxContainer) -> void:
 	_button(list_box, "Colocar no mapa", func() -> void: create_requested.emit(new_name.text, int(new_workers.value)))
 	list_box.add_child(HSeparator.new())
 	_button(list_box, "Receitas…", func() -> void: recipes_requested.emit()).tooltip_text = "O que se pode fazer: quanto trabalho, quais insumos, o que sai"
+	var fold := _button(list_box, "▸ Totais por país", Callable())
+	fold.toggle_mode = true
+	fold.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	totals = _note(list_box, "")
+	totals.hide()
+	fold.toggled.connect(func(open: bool) -> void:
+		totals.visible = open
+		fold.text = ("▾ " if open else "▸ ") + "Totais por país")
 
 
 func _build_place(box: VBoxContainer) -> void:
@@ -155,6 +174,7 @@ func _build_place(box: VBoxContainer) -> void:
 			activity_added.emit(int(_recipes[activity_recipe.selected].id), int(activity_workers.value)))
 
 	var store := pages[1]
+	stock_title = _heading(store, "")
 	empty_stock = _note(store, "O estoque está vazio.")
 	stock = _list(store, 170, "Estoque")
 	_heading(store, "Pôr ou tirar")
@@ -180,6 +200,21 @@ func _build_place(box: VBoxContainer) -> void:
 	edit_reach = _spin(r, 0, 1000, 1, "Alcance em km")
 	edit_reach.tooltip_text = "Até onde o povoado vai buscar um recurso para extrair"
 	_button(edit, "Salvar", func() -> void: settlement_saved.emit(edit_name.text, int(edit_workers.value), edit_reach.value))
+	edit.add_child(HSeparator.new())
+	_heading(edit, "Sabe fazer")
+	_note(edit, "Uma receita pode exigir que o povoado saiba algo. A prática (1 a 100%) multiplica o que o trabalho rende.").modulate = Color(1, 1, 1, 0.7)
+	capabilities = _list(edit, 90, "O que o povoado sabe fazer")
+	capability_name = _edit(edit, "O quê (ex.: Fundir bronze)")
+	var lv := _row(edit)
+	_label(lv, "Prática (%)").size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	capability_level = _spin(lv, 1, 100, 1, "Prática em %")
+	capability_level.value = 100
+	var cap_actions := _row(edit)
+	_button(cap_actions, "Adicionar ou mudar", func() -> void: capability_set.emit(capability_name.text, int(capability_level.value)))
+	_button(cap_actions, "Tirar o escolhido", func() -> void:
+		var i := capabilities.get_selected_items()
+		if not i.is_empty():
+			capability_set.emit(_capability_names[i[0]], 0))
 	var actions := _row(edit)
 	_button(actions, "Ver no mapa", func() -> void: focus_requested.emit())
 	_button(actions, "Mover", func() -> void: move_requested.emit())
@@ -212,8 +247,14 @@ func _build_recipes(box: VBoxContainer) -> void:
 	out.add_child(recipe_output)
 	recipe_labor = _edit(recipes_box, "Trabalho por vez (pessoas-dia)")
 	recipe_labor.tooltip_text = "Pessoas-dia: 10 = uma pessoa por 10 dias, ou 10 pessoas por um dia"
-	_label(recipes_box, "Insumos (opcionais)")
+	_label(recipes_box, "Insumos (gastos; opcionais)")
 	for i in INPUT_ROWS:
+		if i > 0:
+			var alt := CheckBox.new()
+			alt.text = "ou este no lugar do de cima"
+			alt.tooltip_text = "Marcado, este insumo substitui o de cima: usa-se o de cima e, se faltar, este"
+			recipes_box.add_child(alt)
+			recipe_alternatives.append(alt)
 		var row := _row(recipes_box)
 		var qty := _edit(row, "Quanto")
 		qty.custom_minimum_size.x = 90
@@ -223,6 +264,19 @@ func _build_recipes(box: VBoxContainer) -> void:
 		good.accessibility_name = "Insumo %d" % (i + 1)
 		row.add_child(good)
 		recipe_inputs.append([good, qty])
+	_label(recipes_box, "Instalações e ferramentas (não são gastas)")
+	for i in REQUIREMENT_ROWS:
+		var row := _row(recipes_box)
+		var cycles := _edit(row, "Vezes por mês, cada")
+		cycles.custom_minimum_size.x = 90
+		cycles.tooltip_text = "Quantas vezes por mês uma unidade (um forno, uma ferramenta) permite fazer a receita"
+		var good := OptionButton.new()
+		good.fit_to_longest_item = false
+		good.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		good.accessibility_name = "Instalação ou ferramenta %d" % (i + 1)
+		row.add_child(good)
+		recipe_requirements.append([good, cycles])
+	recipe_capability = _edit(recipes_box, "Exige saber (opcional, ex.: Fundir bronze)")
 	var actions := _row(recipes_box)
 	_button(actions, "Salvar receita", _save_recipe)
 	recipe_delete = _button(actions, "Excluir", func() -> void: recipe_delete_requested.emit(_recipe_id))
@@ -267,7 +321,7 @@ func show_catalog(goods: Array, recipe_rows: Array) -> void:
 	var keep := _recipe_id
 	for menu in [stock_good, recipe_output]:
 		_fill(menu, goods.map(func(g): return _good_label(g)), false)
-	for pair in recipe_inputs:
+	for pair in recipe_inputs + recipe_requirements:
 		_fill(pair[0], goods.map(func(g): return _good_label(g)), true)
 	_fill(activity_recipe, recipe_rows.map(func(r): return String(r.name)), false)
 	recipes.clear()
@@ -278,8 +332,22 @@ func show_catalog(goods: Array, recipe_rows: Array) -> void:
 	_load_recipe(current[0] if not current.is_empty() else {})
 
 
-## O povoado aberto: s = uma linha de Settlements; acts = Activities; items = Stock.
-func show_place(s: Dictionary, acts: Array, items: Array) -> void:
+## Os totais de estoque por país (Registry.StockByCountry), em texto.
+func show_totals(rows: Array) -> void:
+	var lines: Array[String] = []
+	for r in rows:
+		lines.append("%s · %s: %s%s" % [r.country, r.name, _number(r.qty), " " + r.unit if r.unit != "" else ""])
+	totals.text = "Nenhum estoque ainda." if lines.is_empty() else "\n".join(lines) + "\n(É uma soma dos povoados: não é um estoque à parte.)"
+
+
+## O povoado aberto: s = uma linha de Settlements; acts = Activities; items = o estoque na data; caps = SettlementCapabilities.
+func show_place(s: Dictionary, acts: Array, items: Array, caps: Array = [], date := "") -> void:
+	stock_title.text = "Estoque em " + date if date != "" else "Estoque"
+	capabilities.clear()
+	_capability_names.clear()
+	for c in caps:
+		capabilities.add_item("%s · prática %d%%" % [c.name, c.proficiency])
+		_capability_names.append(String(c.name))
 	if int(s.id) != _place:
 		_place = int(s.id)
 		show_tab(0)
@@ -352,11 +420,19 @@ func _load_recipe(r: Dictionary) -> void:
 	recipe_qty.text = _number(r.output_qty) if r.has("output_qty") else ""
 	recipe_labor.text = _number(r.labor_days) if r.has("labor_days") else ""
 	var ins: Array = r.get("inputs", [])
+	var ids := _goods.map(func(g): return int(g.id))
 	for i in INPUT_ROWS:
 		var good: OptionButton = recipe_inputs[i][0]
 		var qty: LineEdit = recipe_inputs[i][1]
-		good.select(0 if i >= ins.size() else 1 + _goods.map(func(g): return int(g.id)).find(int(ins[i].good_id)))
+		good.select(0 if i >= ins.size() else 1 + ids.find(int(ins[i].good_id)))
 		qty.text = "" if i >= ins.size() else _number(ins[i].qty)
+		if i > 0:
+			recipe_alternatives[i - 1].button_pressed = i < ins.size() and int(ins[i].group) != 0 and int(ins[i].group) == int(ins[i - 1].group)
+	var reqs: Array = r.get("requirements", [])
+	for i in REQUIREMENT_ROWS:
+		recipe_requirements[i][0].select(0 if i >= reqs.size() else 1 + ids.find(int(reqs[i].good_id)))
+		recipe_requirements[i][1].text = "" if i >= reqs.size() else _number(reqs[i].cycles)
+	recipe_capability.text = r.get("capability", "")
 
 
 func _save_recipe() -> void:
@@ -364,11 +440,23 @@ func _save_recipe() -> void:
 		show_message("Crie os bens no painel Recursos antes.")
 		return
 	var inputs: Array = []
-	for pair in recipe_inputs:
+	var group := 0
+	for i in INPUT_ROWS:
+		var pair: Array = recipe_inputs[i]
+		if pair[0].selected <= 0:
+			continue
+		var alt: bool = i > 0 and recipe_alternatives[i - 1].button_pressed and not inputs.is_empty()
+		if alt and int(inputs[-1].group) == 0:
+			group += 1
+			inputs[-1].group = group
+		inputs.append({"good_id": int(_goods[pair[0].selected - 1].id), "qty": _parse(pair[1].text), "group": group if alt else 0})
+	var requirements: Array = []
+	for pair in recipe_requirements:
 		if pair[0].selected > 0:
-			inputs.append({"good_id": int(_goods[pair[0].selected - 1].id), "qty": _parse(pair[1].text)})
+			requirements.append({"good_id": int(_goods[pair[0].selected - 1].id), "cycles": _parse(pair[1].text)})
 	recipe_saved.emit(_recipe_id, {"name": recipe_name.text, "kind": KINDS[recipe_kind.selected][0], "output_id": int(_goods[recipe_output.selected].id),
-		"output_qty": _parse(recipe_qty.text), "labor_days": _parse(recipe_labor.text), "inputs": inputs})
+		"output_qty": _parse(recipe_qty.text), "labor_days": _parse(recipe_labor.text), "inputs": inputs, "requirements": requirements,
+		"capability": recipe_capability.text.strip_edges()})
 
 
 static func _good_label(g: Dictionary) -> String:

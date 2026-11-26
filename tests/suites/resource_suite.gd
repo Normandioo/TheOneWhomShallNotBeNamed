@@ -4,6 +4,7 @@ extends "res://tests/test_suite.gd"
 
 const CommandStack = preload("res://scripts/edit/command_stack.gd")
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
+const Calendar = preload("res://scripts/world/calendar.gd")
 const Terrain = preload("res://scripts/world/Terrain.cs")
 const Territory = preload("res://scripts/world/Territory.cs")
 
@@ -161,10 +162,10 @@ func _run_scene() -> void:
 	await frames(2)
 	if not panel.visible or panel.type_box.visible or editor.territory_level != "pais":
 		return fail("o botão deveria abrir o painel sem recurso escolhido")
-	panel.create_requested.emit("")
+	panel.create_requested.emit("", "")
 	if panel.message.text == "" or reg.ResourceTypes("").size() != 0:
 		return fail("nome vazio deveria avisar e não criar")
-	panel.create_requested.emit("Ferro estelar")
+	panel.create_requested.emit("Ferro estelar", "mineral")
 	var ferro: int = res.type_id
 	if not panel.type_box.visible or editor.territory_level != "recurso:%d" % ferro:
 		return fail("o recurso criado deveria ficar escolhido, com o mapa dele")
@@ -196,7 +197,7 @@ func _run_scene() -> void:
 		return fail("o clique na área pintada deveria escolhê-la")
 
 	# Outro recurso, no mesmo lugar: camadas separadas.
-	panel.create_requested.emit("Solo fértil")
+	panel.create_requested.emit("Solo fértil", "vegetal")
 	var solo: int = res.type_id
 	panel.area_requested.emit()
 	var other: int = res.occurrence_id
@@ -204,6 +205,35 @@ func _run_scene() -> void:
 	editor.territory_end()
 	if editor.layer("recurso:%d" % solo).AreaKm2(other) <= 0.0 or editor.layer("recurso:%d" % ferro).AreaKm2(area) != painted:
 		return fail("recursos diferentes se sobrepõem sem apagar um ao outro")
+	panel.back_requested.emit()
+	await frames(2)
+	var heads: Array = []
+	for i in panel.types.item_count:
+		if not panel.types.is_item_selectable(i):
+			heads.append(panel.types.get_item_text(i))
+	if heads != ["MINERAIS", "VEGETAÇÃO"]:
+		return fail("a lista se separa nas categorias: %s" % [heads])
+	await save("recursos_categorias")
+	panel.type_chosen.emit(ferro)
+	panel.occurrence_chosen.emit(area)
+	panel.details.grade.text = "35"
+	panel.details.access.select(2)
+	panel.details_saved.emit({"grade": "35", "depth": "", "access": "medio", "renewal": "", "policy": "normal", "from": "3", "to": ""})
+	var detail: Dictionary = reg.OccurrenceDetails(area)
+	if detail.grade != 35.0 or detail.access != "medio" or detail.valid_from != Calendar.to_seconds(3, 1, 1):
+		return fail("os detalhes salvos pela tela: %s" % [detail])
+	main.undo()
+	if not is_nan(reg.OccurrenceDetails(area).grade):
+		return fail("Ctrl+Z desfaz os detalhes")
+	var reino: int = reg.Create("pais", "Reino de teste")
+	panel.knowledge_ui.search.text = "Reino de"
+	panel.knowledge_ui.search.text_changed.emit("Reino de")
+	panel.knowledge_added.emit(int(panel.knowledge_ui.who.get_item_metadata(0)), "", "", "120", "")
+	panel.right_added.emit(reino, "exploracao", "2", "", "")
+	if reg.Knowledge(area).size() != 1 or reg.Rights(area).size() != 1 or panel.knowledge_list.item_count != 1 or panel.rights_list.item_count != 1:
+		return fail("quem conhece e direitos pela tela")
+	reg.DeleteKnowledge(int(reg.Knowledge(area)[0].id))
+	reg.DeleteRight(int(reg.Rights(area)[0].id))
 	panel.type_chosen.emit(ferro)
 	if editor.painting_territory or editor.territory_level != "recurso:%d" % ferro:
 		return fail("escolher outro recurso encerra a pintura e troca o mapa")

@@ -75,6 +75,13 @@ func setup(domain_hub, settlement_panel, settlement_layer, world_terrain, territ
 			settlement_id = 0
 			panel.show_screen("lista")
 			refresh())
+	panel.capability_set.connect(func(cap_name: String, proficiency: int) -> void:
+		if cap_name.strip_edges() == "":
+			panel.show_message("Diga o que o povoado sabe fazer.")
+			return
+		var cap = hub.registry.CreateCapability(cap_name)
+		if cap != null:
+			_do(func(): hub.registry.SetSettlementCapability(settlement_id, int(cap), proficiency), ""))
 	panel.closed.connect(func() -> void: set_open(false))
 
 
@@ -126,8 +133,13 @@ func refresh() -> void:
 		var goods: Array = hub.registry.ResourceTypes("").map(func(t): return {"id": int(t.id), "name": t.name, "unit": t.unit})
 		panel.show_catalog(goods, hub.registry.Recipes())
 		panel.show_settlements(rows, settlement_id)
+		var shown: int = clock.shown()
 		if settlement_id != 0:
-			panel.show_place(_settlement(), hub.registry.Activities(settlement_id), hub.registry.Stock(settlement_id))
+			panel.show_place(_settlement(), hub.registry.Activities(settlement_id), hub.registry.StockAt(settlement_id, shown),
+				hub.registry.SettlementCapabilities(settlement_id), Calendar.format(shown, false))
+		var countries = territories.layer("pais") if territories != null else null
+		if countries != null:
+			panel.show_totals(hub.registry.StockByCountry(countries, terrain, shown))
 	layer.show_items([] if not panel.visible else rows.map(func(s): return {"place_id": int(s.id), "lat": s.lat, "lon": s.lon,
 		"radius_km": 0.0, "color": Color.WHITE if int(s.id) == settlement_id else Color(0.95, 0.85, 0.65), "label": "⌂ " + s.name}))
 
@@ -170,11 +182,35 @@ func _save_recipe(id: int, data: Dictionary) -> void:
 	if is_nan(float(data.output_qty)) or is_nan(float(data.labor_days)):
 		panel.show_message("Informe quanto a receita produz e quanto trabalho leva (em pessoas-dia).")
 		return
+	var requirements := PackedFloat64Array()
+	for q in data.get("requirements", []):
+		if is_nan(float(q.cycles)) or float(q.cycles) <= 0.0:
+			panel.show_message("Diga quantas vezes por mês cada instalação ou ferramenta permite fazer a receita.")
+			return
+		requirements.append_array([q.good_id, q.cycles])
+	var groups := PackedFloat64Array()
+	for i in data.inputs:
+		if int(i.get("group", 0)) != 0:
+			groups.append_array([i.good_id, i.group])
 	var why := "Confira a receita: nome, quantidades maiores que zero e um insumo que não seja o próprio bem produzido."
+	var before := _fingerprint()
+	var saved_id := id
 	if id == 0:
-		_do(func(): return hub.registry.CreateRecipe(data.name, data.kind, data.output_id, data.output_qty, data.labor_days, inputs), why)
+		var made = hub.registry.CreateRecipe(data.name, data.kind, data.output_id, data.output_qty, data.labor_days, inputs)
+		saved_id = int(made) if made != null else 0
 	else:
-		_do(func(): hub.registry.UpdateRecipe(id, data.name, data.kind, data.output_id, data.output_qty, data.labor_days, inputs), why)
+		hub.registry.UpdateRecipe(id, data.name, data.kind, data.output_id, data.output_qty, data.labor_days, inputs)
+	if saved_id == 0 or (id != 0 and before == _fingerprint() and data.get("capability", "") == "" and requirements.is_empty() and groups.is_empty()):
+		panel.show_message(why if saved_id == 0 else "")
+		refresh()
+		return
+	var cap := 0
+	if String(data.get("capability", "")) != "":
+		var made_cap = hub.registry.CreateCapability(data.capability)
+		cap = int(made_cap) if made_cap != null else 0
+	hub.registry.SetRecipeExtras(saved_id, cap, requirements, groups)
+	panel.show_message("")
+	refresh()
 
 
 ## Roda uma gravação do Registry. O C# recusa com exceção, que no GDScript vira só um erro no log: o sucesso é o banco ter mudado.

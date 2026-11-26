@@ -311,7 +311,12 @@ e o raciocínio de cada método estão em `docs/alternativas-fronteiras.md`.
 - **Tela:** botão "Povoados" (`ui/settlement_panel.gd` + `app/production_controller.gd`, que também é o módulo do relógio): lista,
   povoado com as abas Atividades, Estoque e Editar, e a tela de Receitas. A quantidade de cada ocorrência é dada no painel Recursos,
   aba No mapa. Um painel lateral por vez.
-- **Ainda não feito:** os itens do fim da seção "Tempo e produção" dos contratos.
+- **Migração 21** (`RegistryDetails.cs`): categorias e unidades; detalhes, validade e política das ocorrências; quem conhece; direitos;
+  divisão por país; capacidades (`capability`, `settlement_capability`); requisitos (`recipe_requirement`); insumos alternativos
+  (`recipe_input.alt_group`); renovação (`occurrence_state`); o relevo de cada geração (`resource_generation.terrain_hash`).
+- **Cópia antes de migrar:** ao abrir um mundo de versão anterior, `Registry.Open` grava `<banco>.antes-v<N>` antes de mudar o esquema.
+- **Ainda não feito:** os itens do fim da seção "Tempo e produção" dos contratos; proteção por campo; percurso e referência a região;
+  efeitos declarativos de recursos fictícios; cálculo em segundo plano.
 
 ## Testes
 

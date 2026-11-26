@@ -25,26 +25,26 @@ const PLAIN := {
 }
 
 const PROFILES := [
-	{"name": "Cobre", "about": "Cobre de pórfiro: rochas intrusivas intermediárias em arco vulcânico. Não cobre o cobre em rochas sedimentares.",
+	{"name": "Cobre", "category": "mineral", "unit": "t", "about": "Cobre de pórfiro: rochas intrusivas intermediárias em arco vulcânico. Não cobre o cobre em rochas sedimentares.",
 		"rule": {"output": "area", "count": 20, "size_km": 300.0, "auto": true, "density": 200.0, "min_score": 55, "prefer": [
 			{"name": "Granodiorito ou diorito", "rocks": ["granodiorito", "diorito"], "weight": 45},
 			{"name": "Andesito ou dacito", "rocks": ["andesito", "dacito"], "weight": 30},
 			{"name": "Cinturão de montanhas", "provinces": ["orogeno"], "weight": 25},
 			{"name": "Vulcanismo de arco a até 300 km", "volcanoes": ["arco"], "volcano_km": 300.0, "weight": 25}]}},
-	{"name": "Estanho", "about": "Estanho em granitos, em skarn e no cascalho dos rios que descem do granito.",
+	{"name": "Estanho", "category": "mineral", "unit": "t", "about": "Estanho em granitos, em skarn e no cascalho dos rios que descem do granito.",
 		"rule": {"output": "area", "count": 12, "size_km": 300.0, "auto": true, "density": 50.0, "min_score": 55, "prefer": [
 			{"name": "Granito", "rocks": ["granito"], "weight": 40},
 			{"name": "Skarn", "rocks": ["skarn"], "weight": 55},
 			{"name": "Cinturão de montanhas", "provinces": ["orogeno"], "weight": 30},
 			{"name": "Granito perto de rio grande", "rocks": ["granito"], "water": ["rio"], "water_km": 20.0, "weight": 30}]}},
-	{"name": "Ferro", "about": "Ferro de pântano, laterita, skarn e cinturões antigos. Os mapas não dão a idade das rochas.",
+	{"name": "Ferro", "category": "mineral", "unit": "t", "about": "Ferro de pântano, laterita, skarn e cinturões antigos. Os mapas não dão a idade das rochas.",
 		"rule": {"output": "area", "count": 25, "size_km": 300.0, "auto": true, "density": 500.0, "min_score": 50, "prefer": [
 			{"name": "Ferro de pântano", "climates": ["C", "D"], "water": ["lago", "rio"], "water_km": 20.0, "slope_max": 0.5, "weight": 55},
 			{"name": "Laterita", "climates": ["A"], "rocks": ["basalto", "picrobasalto", "gabro", "diorito", "andesito"], "slope_max": 1.0, "weight": 55},
 			{"name": "Skarn", "rocks": ["skarn"], "weight": 60},
 			{"name": "Rocha verde, xisto verde ou anfibolito", "rocks": ["rocha_verde", "xisto_verde", "anfibolito"], "weight": 50},
 			{"name": "Sílex", "rocks": ["silex"], "weight": 15}]}},
-	{"name": "Sal", "about": "Sal-gema, lagos de região seca e salinas de costa árida.",
+	{"name": "Sal", "category": "mineral", "unit": "t", "about": "Sal-gema, lagos de região seca e salinas de costa árida.",
 		"rule": {"output": "area", "count": 15, "size_km": 300.0, "auto": true, "density": 1000.0, "min_score": 60, "prefer": [
 			{"name": "Halita (sal-gema)", "rocks": ["halita"], "weight": 70},
 			{"name": "Lago em região árida", "climates": ["B"], "water": ["lago"], "water_km": 15.0, "weight": 60},

@@ -20,14 +20,18 @@ quebrar. "Vale agora" = implementado na etapa 1. "Reservado" = decidido, ainda s
 - Uma ocorrência sobre várias regiões ou países é uma só. Dividir por país será participação espacial, nunca cópia.
 - Percurso (linha) e "referência a uma região" ainda não existem.
 
-## Unidades (vale agora, só o mínimo)
+## Catálogo, unidades e ocorrências (vale agora; migração 21)
 
-- Cada bem é um tipo de recurso, com a sua unidade (texto livre). Receitas, estoques e reservas usam a unidade do próprio bem:
-  não há conversão, e nunca se soma um bem com outro.
-- Trabalho em pessoas-dia. O mês tem a duração real (28 a 31 dias).
-- Reservado: massa em kg, água em m³, energia alimentar e conversões entre dimensões (recusadas no cálculo).
-- Não preenchido, desconhecido, não aplicável e zero são estados diferentes. Quantidade desconhecida não é estoque infinito: uma
-  ocorrência sem quantidade não pode ser extraída.
+- Categorias: Minerais, Vegetação, Animal, Manufatura (ou nenhuma). Manufatura são os produtos fabricados; as outras, recursos naturais.
+- Cada bem tem uma unidade, de uma lista com dimensão (massa: kg, t; volume: m³, L; área: ha, km²; contagem: unidade, cabeça;
+  energia: kcal) ou "outra" (texto). Não há conversão: receitas, estoques e reservas usam só a unidade do próprio bem.
+- Trabalho em pessoas-dia; o mês tem a duração real (28 a 31 dias).
+- Ocorrência: teor (%), profundidade (m), acesso, renovação por ano, política da reserva (normal, reposta pelo autor, bloqueada) e
+  validade no tempo (existe de/até). Mudar a validade é uma mudança no mundo com data; mover no mapa é correção editorial.
+- Quem conhece (cadastro, período, estimativa própria) e direitos (controle, acesso, exploração, com período) são registros à parte,
+  sem desfazer, sem efeito automático na produção.
+- A divisão de uma área entre países é uma consulta pelo território pintado: a ocorrência e a reserva continuam uma só.
+- Não preenchido, desconhecido e zero são estados diferentes. Quantidade desconhecida não é estoque infinito.
 
 ## Tempo e produção (vale agora, etapa 3, primeira cadeia)
 
@@ -41,8 +45,12 @@ quebrar. "Vale agora" = implementado na etapa 1. "Reservado" = decidido, ainda s
   trabalhadores e os insumos. Entre povoados, só a reserva é disputada: se pedirem mais que ela, cada um leva a parte
   proporcional ao que pediu.
 - Não há desfazer na configuração da produção nem nas intervenções: elas são histórico. Corrige-se com outra intervenção.
-- Ainda não existe: capacidades técnicas, instalações, cultivo sazonal, renovação (floresta, pesca), transporte, consumo pela
-  população, perdas no armazenamento.
+- Capacidade: a receita pode exigir que o povoado saiba algo; a prática (1 a 100%) multiplica o rendimento do trabalho.
+- Instalações e ferramentas: bens do estoque que a receita exige e não gasta; cada unidade permite N vezes por mês.
+- Insumos alternativos: o primeiro é gasto e, se faltar, o seguinte cobre.
+- Renovação: a reserva volta (por ano × dias ÷ 365) até a quantidade dada; fica em `occurrence_state`, fora do desfazer.
+- Estoque numa data = a soma das movimentações até ela. Totais por país = soma dos povoados no território (consulta).
+- Ainda não existe: cultivo sazonal (etapa 6), transporte, consumo pela população, perdas no armazenamento, difusão de capacidades.
 
 ## Proteções e geração (valem agora, etapa 2)
 
