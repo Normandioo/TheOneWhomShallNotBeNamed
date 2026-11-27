@@ -1,6 +1,7 @@
 extends VBoxContainer
-## A parte "Gerar sugestões" do painel de recursos: um modelo para começar, as condições (todas ajustáveis), a prévia e o aplicar.
-## Os modelos são só pontos de partida: não criam recurso nem dizem o que existe no mundo.
+## A aba "Gerar" do painel de recursos, em três passos (onde procurar, como preencher, quanto há), e a prévia com o que entra e o que sai.
+## Os critérios do modelo ficam recolhidos e aparecem resumidos em etiquetas. Os botões Descartar e Aplicar vão em `footer`, que o
+## painel prende embaixo, fora da rolagem. Os modelos são só pontos de partida: não criam recurso nem dizem o que existe no mundo.
 
 signal preview_requested(rule: String)
 signal apply_requested
@@ -11,8 +12,10 @@ signal review_requested(rule: String)    # avaliação às cegas
 signal review_answered(value: String)    # sim | nao | talvez
 signal review_stopped
 signal golden_requested(rule: String, final_test: bool)  # comparar a regra com o gabarito do autor
+signal mode_changed      # entrou ou saiu da prévia
 
 const ResourceProfiles = preload("res://scripts/ui/resource_profiles.gd")
+const LayerPanel = preload("res://scripts/ui/layer_panel.gd")  # só para o separador de milhares
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 
 const ROCKS := [["sedimentar_clastica", "Sedimentar (arenito, argilito…)"], ["sedimentar_quimica", "Calcário, sílex e sais"],
@@ -22,7 +25,6 @@ const CLIMATES := [["A", "Tropical"], ["B", "Árido"], ["C", "Temperado"], ["D",
 const DEFAULTS := {"surface": "terra", "rocks": [], "climates": [], "elev_min": -13500.0, "elev_max": 9200.0, "slope_max": 90.0,
 	"trees_min": 0.0, "soil_min": 0.0, "output": "area", "count": 8, "size_km": 250.0, "seed": 1, "prefer": [], "min_score": 1, "auto": true, "density": 1000.0,
 	"spread": ""}
-const SPREADS := ["", "manchas", "cobertura"]  # na ordem do menu "Como se espalha"
 const COVER_CATEGORIES := ["vegetal", "animal"]  # o mesmo que Registry.CoversArea decide quando a regra não diz
 ## Modelos sem recurso específico (os recursos com fontes estão em resource_profiles.gd). Saíram "Minério de montanha", "Jazida em rocha
 ## sedimentar" e "Sal em região seca": genéricos demais (o segundo cobria quase metade da terra; o terceiro contava sílex como sal).
@@ -36,16 +38,32 @@ const TEMPLATES := [
 ]
 
 var template: OptionButton
-var auto_check: CheckButton
-var _manual: Array = []   # o que só vale fora do automático
+var amount_mode: OptionButton   # "Quantos couberem" (automático) ou "Eu escolho…"
+var cover_card: Button
+var some_card: Button
+var some_box: VBoxContainer     # o que só vale em "Alguns lugares"
+var form: VBoxContainer         # os três passos; some na prévia
+var preview_box: VBoxContainer
+var footer: HBoxContainer       # Descartar e Aplicar, presos embaixo pelo painel
+var previewing := false
+var unit := ""                  # a unidade do recurso aberto
+var _spread := ""               # "" = pela categoria | manchas | cobertura
+var _count_row: Control
+var _chips: HFlowContainer
+var _example: Label
+var _unit_label: Label
+var _preview_line: Label
+var _preview_stats: HBoxContainer
+var _preview_warning: Label
+var _preview_changes: VBoxContainer
+var _preview_hint: Label
+var _tests_box: VBoxContainer
 var advanced_toggle: Button
 var tests_toggle: Button
 var _into: Control        # onde _spin e _choice põem o que criam
 var surface: OptionButton
 var output: OptionButton
-var spread: OptionButton
 var category := ""  # a do recurso aberto: decide o jeito de se espalhar quando a regra não diz
-var _cover_note: Label
 var summary: Label
 var apply_button: Button
 var discard_button: Button
@@ -65,14 +83,12 @@ var review_facts: Label
 
 func _init() -> void:
 	add_theme_constant_override("separation", 8)
-	_into = self
+	form = _box(self, 10)
 
-	# O essencial: que lugar, quantos, de que tamanho, ver e aplicar.
-	_note(self, "O programa procura lugares nos mapas. Nada muda antes de você aplicar.")
-	_note(self, "Que tipo de lugar?")
+	_title(form, "1 · Onde procurar")
 	template = OptionButton.new()
 	template.fit_to_longest_item = false
-	template.accessibility_name = "Que tipo de lugar"
+	template.accessibility_name = "Modelo de lugar"
 	template.add_item("Escolha um modelo…")
 	for t in all_templates():
 		template.add_item(t[0])
@@ -84,36 +100,16 @@ func _init() -> void:
 				rule.merge({"auto": true, "density": DEFAULTS.density})
 			load_rule(rule)
 			template.select(i))
-	add_child(template)
-	auto_check = CheckButton.new()
-	auto_check.text = "Automático"
-	auto_check.tooltip_text = "O programa põe quantas couberem nos lugares que servem (cada mancha até o tamanho máximo) e calcula a quantidade"
-	auto_check.toggled.connect(func(_on: bool) -> void: _sync_auto())
-	add_child(auto_check)
-	_cover_note = _note(self, "Cobertura: pinta tudo o que serve, seguindo o contorno do mapa, um registro por trecho contínuo. Trechos com menos de 5.000 km² ficam de fora (no máximo 200, os maiores).")
-	_manual.append(_spin("count", "Quantos lugares", 1, 200, 1))
-	_spin("size_km", "Tamanho máximo (km)", 10, 2000, 10)
-	spins.size_km.tooltip_text = "Áreas: raio de cada mancha (no automático, o máximo). Pontos: distância mínima entre eles."
-	_spin("density", "Quantidade por km²", 0, 1000000000, 1)
-	spins.density.tooltip_text = "Na unidade do recurso, multiplicada pela aptidão. 0 = sem quantidade. Valor de escolha sua: não foi calibrado."
-	var preview := _button(self, "Ver no mapa (prévia)", func() -> void: preview_requested.emit(JSON.stringify(rule())))
-	preview.add_theme_stylebox_override("normal", UiKit.active_style())
-	summary = _note(self, "")
-	var row := HBoxContainer.new()
-	add_child(row)
-	apply_button = _button(row, "Aplicar", func() -> void: apply_requested.emit())
-	discard_button = _button(row, "Descartar", func() -> void: discard_requested.emit())
-	clear_button = _button(self, "", func() -> void: clear_requested.emit())
+	form.add_child(template)
+	_chips = HFlowContainer.new()
+	form.add_child(_chips)
 
-	# Recolhido: as condições da regra.
-	advanced_toggle = _section("Ajustes avançados")
+	# Recolhido: as condições da regra, logo abaixo das etiquetas que as resumem.
+	advanced_toggle = _fold(form, "Mudar critérios")
 	surface = _choice("Onde", ["Em terra", "No mar"])
 	surface.item_selected.connect(func(_i: int) -> void: _sync_surface())
 	output = _choice("Gerar", ["Áreas pintadas", "Pontos"])
 	output.item_selected.connect(func(_i: int) -> void: _sync_auto())
-	spread = _choice("Como se espalha", ["Pela categoria", "Manchas agrupadas", "Cobertura"])
-	spread.tooltip_text = "Pela categoria: vegetação e animal cobrem o que serve; o resto sai em manchas"
-	spread.item_selected.connect(func(_i: int) -> void: _sync_auto())
 	factors_box = VBoxContainer.new()
 	_into.add_child(factors_box)
 	_spin("min_score", "Aptidão mínima", 1, 100, 1)
@@ -136,9 +132,56 @@ func _init() -> void:
 	seed_row.tooltip_text = "Outro número sorteia outros lugares entre os que servem"
 	_button(seed_row, "Sortear", func() -> void: spins.seed.value = randi() % 1000000)
 
-	# Recolhido: os testes da regra.
-	_into = self
-	tests_toggle = _section("Testar a regra (avançado)")
+	_title(form, "2 · Como preencher")
+	var cards := HBoxContainer.new()
+	form.add_child(cards)
+	var group := ButtonGroup.new()
+	cover_card = _card(cards, group, "cobertura")
+	cover_card.tooltip_text = "Pinta tudo o que serve, seguindo o contorno do mapa: um lugar por trecho contínuo. Trechos com menos de 5.000 km² ficam de fora (no máximo 200, os maiores)."
+	some_card = _card(cards, group, "manchas")
+	some_card.tooltip_text = "Manchas separadas (ou pontos) entre os lugares que servem"
+	some_box = _box(form, 6)
+	_into = some_box
+	amount_mode = _choice("Quantos", ["Quantos couberem", "Eu escolho…"])
+	amount_mode.tooltip_text = "Quantos couberem: o programa põe todos os que cabem, até 200"
+	amount_mode.item_selected.connect(func(_i: int) -> void: _sync_auto())
+	_count_row = _spin("count", "Quantos lugares", 1, 200, 1)
+	_spin("size_km", "Tamanho de cada um (km)", 10, 2000, 10)
+	spins.size_km.tooltip_text = "Áreas: raio de cada mancha (em Quantos couberem, o máximo). Pontos: distância mínima entre eles."
+
+	_title(form, "3 · Quanto há (opcional)")
+	var amount := HBoxContainer.new()
+	form.add_child(amount)
+	var density := SpinBox.new()
+	density.min_value = 0
+	density.max_value = 1000000000
+	density.step = 1
+	density.accessibility_name = "Quantidade em cada km²"
+	density.tooltip_text = "Multiplicada pela nota do lugar. 0 = sem quantidade. É uma escolha sua: não foi calibrada."
+	amount.add_child(density)
+	spins["density"] = density
+	_unit_label = Label.new()
+	_unit_label.clip_text = true
+	_unit_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	_unit_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	amount.add_child(_unit_label)
+	_example = _note(form, "")
+	_example.modulate = Color(1, 1, 1, 0.7)
+
+	summary = _note(form, "")
+	var preview := _button(form, "Mostrar no mapa", func() -> void: preview_requested.emit(JSON.stringify(rule())))
+	preview.add_theme_stylebox_override("normal", UiKit.active_style())
+	preview.custom_minimum_size.y = 40
+	var safe := _note(form, "Nada muda antes de você aplicar.")
+	safe.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	safe.modulate = Color(1, 1, 1, 0.7)
+	clear_button = _button(form, "", func() -> void: clear_requested.emit())
+
+	_build_preview()
+
+	# Os testes da regra: aparecem com os critérios abertos; o resultado aparece também junto da prévia.
+	_tests_box = _box(self, 4)
+	tests_toggle = _fold(_tests_box, "Testar a regra (avançado)")
 	var tests := HFlowContainer.new()
 	_into.add_child(tests)
 	_button(tests, "Testar estabilidade", func() -> void: stability_requested.emit(JSON.stringify(rule())))
@@ -160,28 +203,97 @@ func _init() -> void:
 	result = _note(_into, "")
 	result.hide()
 	_into = self
+	advanced_toggle.toggled.connect(func(_open: bool) -> void: _sync_tests())
+
+	# As etiquetas e o exemplo acompanham qualquer mudança.
+	for spin in spins.values():
+		spin.value_changed.connect(func(_v: float) -> void: _refresh_texts())
+	for button in rocks.values() + climates.values():
+		button.toggled.connect(func(_on: bool) -> void: _refresh_texts())
 
 	load_rule({})
 	show_preview("")
 	show_suppressions(0)
 
 
-## Uma parte que abre e fecha; o que for criado a seguir (em _into) vai para dentro dela. Devolve o botão.
-func _section(label: String) -> Button:
-	_into = self
-	add_child(HSeparator.new())
-	var toggle := _button(self, "▸ " + label, Callable())
+func _build_preview() -> void:
+	preview_box = _box(self, 10)
+	var line := HBoxContainer.new()
+	preview_box.add_child(line)
+	_preview_line = Label.new()
+	_preview_line.clip_text = true
+	_preview_line.mouse_filter = Control.MOUSE_FILTER_PASS
+	_preview_line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_preview_line.add_theme_font_size_override("font_size", 13)
+	line.add_child(_preview_line)
+	_button(line, "mudar", func() -> void: discard_requested.emit()).flat = true
+	_title(preview_box, "Prévia no mapa")
+	_preview_stats = HBoxContainer.new()
+	preview_box.add_child(_preview_stats)
+	_preview_warning = _note(preview_box, "")
+	_preview_warning.add_theme_color_override("font_color", Color("#f2c46d"))
+	var changes := PanelContainer.new()
+	changes.add_theme_stylebox_override("panel", UiKit.card_style())
+	preview_box.add_child(changes)
+	_preview_changes = _box(changes, 4)
+	_preview_hint = _note(preview_box, "")
+	_preview_hint.modulate = Color(1, 1, 1, 0.7)
+
+	footer = HBoxContainer.new()
+	discard_button = _button(footer, "Descartar", func() -> void: discard_requested.emit())
+	apply_button = _button(footer, "Aplicar", func() -> void: apply_requested.emit())
+	apply_button.add_theme_stylebox_override("normal", UiKit.active_style())
+	for pair in [[discard_button, 1.0], [apply_button, 2.0]]:
+		pair[0].size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pair[0].size_flags_stretch_ratio = pair[1]
+		pair[0].custom_minimum_size.y = 40
+
+
+## Uma parte que abre e fecha dentro de parent; o que for criado a seguir (em _into) vai para dentro dela. Devolve o botão.
+func _fold(parent: Control, label: String) -> Button:
+	var toggle := _button(parent, "▸ " + label, Callable())
 	toggle.toggle_mode = true
+	toggle.flat = true
 	toggle.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", 4)
+	var body := _box(parent, 4)
 	body.hide()
-	add_child(body)
 	toggle.toggled.connect(func(open: bool) -> void:
 		body.visible = open
 		toggle.text = ("▾ " if open else "▸ ") + label)
 	_into = body
 	return toggle
+
+
+func _box(parent: Control, gap: int) -> VBoxContainer:
+	var b := VBoxContainer.new()
+	b.add_theme_constant_override("separation", gap)
+	parent.add_child(b)
+	return b
+
+
+func _title(parent: Control, text: String) -> void:
+	var l := Label.new()
+	l.text = text
+	UiKit.style_heading(l)
+	l.add_theme_font_size_override("font_size", 15)
+	parent.add_child(l)
+
+
+## Uma das duas opções de "Como preencher". Escolhida: fundo, borda e a bolinha cheia (não depende só da cor).
+func _card(parent: Control, group: ButtonGroup, value: String) -> Button:
+	var b := _button(parent, "", Callable())
+	b.toggle_mode = true
+	b.button_group = group
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.custom_minimum_size.y = 56
+	b.clip_text = true
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.add_theme_font_size_override("font_size", 14)
+	b.add_theme_stylebox_override("pressed", UiKit.active_style())
+	b.pressed.connect(func() -> void:
+		_spread = value
+		_sync_auto())
+	return b
 
 
 ## Saindo da aba: a prévia fecha e uma avaliação em andamento é encerrada, guardando as respostas.
@@ -200,7 +312,7 @@ func rule() -> Dictionary:
 		"elev_min": spins.elev_min.value, "elev_max": spins.elev_max.value, "slope_max": spins.slope_max.value,
 		"trees_min": 0.0 if sea else spins.trees_min.value, "soil_min": 0.0 if sea else spins.soil_min.value,
 		"count": int(spins.count.value), "size_km": spins.size_km.value, "seed": int(spins.seed.value),
-		"auto": auto_check.button_pressed, "density": spins.density.value, "spread": SPREADS[spread.selected]}
+		"auto": amount_mode.selected == 0, "density": spins.density.value, "spread": _spread}
 	var prefer: Array = [] if sea else _prefer.duplicate(true)
 	for i in prefer.size():
 		prefer[i]["weight"] = int(weights[i].value)
@@ -233,6 +345,7 @@ func show_review(question: String, facts: String) -> void:
 	review_facts.text = facts
 	if question != "":
 		show_review_result("")
+	_sync_tests()
 
 
 func show_review_result(text: String) -> void:
@@ -240,6 +353,7 @@ func show_review_result(text: String) -> void:
 	result.visible = text != ""
 	if text != "":
 		tests_toggle.button_pressed = true
+	_sync_tests()
 
 
 func _show_factors() -> void:
@@ -279,29 +393,205 @@ func load_rule(saved: Dictionary) -> void:
 	r.merge(saved, true)
 	surface.select(1 if r.surface == "mar" else 0)
 	output.select(1 if r.output == "ponto" else 0)
-	spread.select(maxi(SPREADS.find(r.spread), 0))
+	_spread = String(r.spread)
 	for k in rocks:
 		rocks[k].button_pressed = k in r.rocks
 	for k in climates:
 		climates[k].button_pressed = k in r.climates
 	for k in spins:
 		spins[k].value = r[k]
-	auto_check.set_pressed_no_signal(bool(r.auto))
-	_sync_auto()
+	amount_mode.select(0 if bool(r.auto) else 1)
 	_prefer = r.prefer.duplicate(true)
 	if template.item_count > 0:
 		template.select(0)
-		template.set_item_text(0, "Escolha um modelo…" if saved.is_empty() else "Regra atual deste recurso")
+		template.set_item_text(0, "Escolha um modelo…" if saved.is_empty() else "Critérios deste recurso")
 	_show_factors()
 	_sync_surface()
+	_sync_auto()
 
 
-## "" = não há prévia na tela.
-func show_preview(text: String, can_apply := false) -> void:
+## Um aviso na tela dos passos ("" = nenhum); fora da prévia.
+func show_preview(text: String) -> void:
 	summary.text = text
 	summary.visible = text != ""
-	apply_button.visible = can_apply
-	discard_button.visible = can_apply
+	_set_previewing(false)
+
+
+## A prévia. info: {count, total, area, km2, reserve, replaced, protected, suppressed, scored}
+func show_plan(info: Dictionary) -> void:
+	var chosen := template.get_item_text(template.selected) if template.selected > 0 else "Critérios deste recurso"
+	var parts: Array[String] = [chosen, "tudo que serve" if covers() else "alguns lugares"]
+	if spins.density.value > 0.0:
+		parts.append("%s por km²" % short_number(spins.density.value))
+	_preview_line.text = " · ".join(parts)
+	_preview_line.tooltip_text = _preview_line.text
+	clear_box(_preview_stats)
+	stat_card(_preview_stats, short_number(info.count), "lugar" if int(info.count) == 1 else "lugares")
+	if info.area:
+		stat_card(_preview_stats, short_number(info.km2), "km²")
+	if float(info.reserve) > 0.0:
+		stat_card(_preview_stats, short_number(info.reserve), plural_unit() if unit != "" else "quantidade")
+	var warning := ""
+	if int(info.total) == 0:
+		warning = "Nenhum lugar atende aos critérios."
+	elif int(info.count) < int(info.total):
+		warning = "Você tirou %d da prévia." % (int(info.total) - int(info.count))
+	elif int(info.total) >= 200:
+		warning = "200 é o máximo. Ficaram os maiores." if covers() else "200 é o máximo de uma geração."
+	_preview_warning.text = warning
+	_preview_warning.visible = warning != ""
+	fill_changes(_preview_changes, info)
+	_preview_hint.text = "Clique num lugar do mapa para saber por que ele está ali (e tirá-lo, se quiser).%s" % (
+		" O número é a nota, de 0 a 100." if info.scored else "")
+	_preview_hint.visible = int(info.total) > 0
+	apply_button.text = "Aplicar %d %s" % [info.count, "lugar" if int(info.count) == 1 else "lugares"]
+	summary.text = "%d de %d na prévia" % [info.count, info.total]  # fica escondido: é o que os testes mostram quando falham
+	summary.hide()
+	_set_previewing(true)
+
+
+func _set_previewing(on: bool) -> void:
+	previewing = on
+	form.visible = not on
+	preview_box.visible = on
+	apply_button.visible = on
+	discard_button.visible = on
+	_sync_tests()
+	mode_changed.emit()
+
+
+func _sync_tests() -> void:
+	_tests_box.visible = (advanced_toggle.button_pressed and not previewing) or result.visible or review_box.visible
+
+
+## "Se você aplicar": o que entra, o que sai e o que fica. info: {count, replaced, protected, suppressed}
+func fill_changes(box: Control, info: Dictionary) -> void:
+	clear_box(box)
+	_note(box, "Se você aplicar")
+	_note(box, "＋ entram %d" % info.count)
+	if int(info.replaced) > 0:
+		_note(box, "－ saem %d gerados antes" % info.replaced)
+	var kept := _note(box, "O que você fez à mão ou protegeu não muda%s." % (" (%d)" % info.protected if int(info.protected) > 0 else ""))
+	kept.add_theme_color_override("font_color", Color("#a9d6a0"))
+	if int(info.suppressed) > 0:
+		_note(box, "%d que você já tinha removido ficam de fora." % info.suppressed)
+
+
+## Um número grande da prévia, com o que ele conta embaixo.
+func stat_card(parent: Control, value: String, label: String) -> void:
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", UiKit.card_style())
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent.add_child(card)
+	var box := _box(card, 0)
+	for pair in [[value, 19], [label, 12]]:
+		var l := Label.new()
+		l.text = pair[0]
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.clip_text = true
+		l.mouse_filter = Control.MOUSE_FILTER_PASS
+		l.tooltip_text = pair[0]
+		l.add_theme_font_size_override("font_size", pair[1])
+		box.add_child(l)
+
+
+static func clear_box(box: Control) -> void:
+	for child in box.get_children():
+		box.remove_child(child)
+		child.queue_free()
+
+
+## 28009711 -> "28 mi"; 15098515221 -> "15,1 bi".
+static func short_number(v: float) -> String:
+	for step in [[1e9, 1e9, "bi"], [1e6, 1e6, "mi"], [1e4, 1e3, "mil"]]:
+		if v >= step[0]:
+			var x: float = v / step[1]
+			var text := str(roundi(x)) if x >= 100.0 else ("%.1f" % x).trim_suffix(".0").replace(".", ",")
+			return "%s %s" % [text, step[2]]
+	return LayerPanel._thousands(roundi(v))
+
+
+func plural_unit() -> String:
+	return unit + "s" if unit in ["unidade", "cabeça"] else unit
+
+
+func set_unit(value: String) -> void:
+	unit = value
+	_refresh_texts()
+
+
+## As etiquetas do que os critérios procuram, e o exemplo da quantidade.
+func _refresh_texts() -> void:
+	if _example == null or result == null:
+		return
+	clear_box(_chips)
+	for text in describe_rule(rule()):
+		var chip := Label.new()
+		chip.text = text
+		if text.contains("indício"):
+			chip.mouse_filter = Control.MOUSE_FILTER_PASS
+			chip.tooltip_text = "\n".join(_prefer.map(func(f): return "%s (+%d)" % [f.name, f.weight]))
+		chip.add_theme_font_size_override("font_size", 13)
+		chip.add_theme_color_override("font_color", Color("#b8cdf2"))
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color.TRANSPARENT
+		style.border_color = Color("#5d7fb0")
+		style.set_border_width_all(1)
+		style.set_corner_radius_all(9)
+		style.content_margin_left = 8
+		style.content_margin_right = 8
+		chip.add_theme_stylebox_override("normal", style)
+		_chips.add_child(chip)
+	var per: float = spins.density.value
+	_unit_label.text = "%s em cada km²" % plural_unit() if unit != "" else "em cada km²"
+	_unit_label.tooltip_text = _unit_label.text
+	if per <= 0.0:
+		_example.text = "Sem quantidade: os povoados não extraem destes lugares."
+	elif output.selected == 1:
+		_example.text = "Um ponto com nota 100 teria %s." % short_number(per * 100.0)  # um ponto vale 100 km² (ResourceGenerator.PointKm2)
+	else:
+		_example.text = "Um lugar de 10.000 km² com nota 100 teria %s." % short_number(per * 10000.0)
+
+
+## O que a regra procura, em poucas palavras.
+static func describe_rule(r: Dictionary) -> Array[String]:
+	var sea: bool = r.surface == "mar"
+	var out: Array[String] = []
+	if sea:
+		out.append("no mar")
+	if float(r.trees_min) > 0.0:
+		out.append("%d%% de árvores ou mais" % roundi(r.trees_min))
+	if float(r.soil_min) > 0.0:
+		out.append("solo fértil")
+	var slope: float = r.slope_max
+	if slope < 90.0:
+		out.append("quase plano" if slope <= 2.0 else "declive até %s°" % ("%.1f" % slope).trim_suffix(".0").replace(".", ","))
+	var low := roundi(r.elev_min)
+	var high := roundi(r.elev_max)
+	if sea:
+		if low > -13500:
+			out.append("até %s m de fundo" % LayerPanel._thousands(-low))
+	else:
+		var floor_set := low > -13500 and low != 0
+		if high < 9200 and floor_set:
+			out.append("de %s a %s m" % [LayerPanel._thousands(low), LayerPanel._thousands(high)])
+		elif high < 9200:
+			out.append("até %s m" % LayerPanel._thousands(high))
+		elif floor_set:
+			out.append("acima de %s m" % LayerPanel._thousands(low))
+	var climate_names: Array = CLIMATES.filter(func(c): return c[0] in r.climates).map(func(c): return String(c[1]).to_lower())
+	if not climate_names.is_empty():
+		var tail: String = climate_names.pop_back()
+		out.append("clima " + (tail if climate_names.is_empty() else ", ".join(climate_names) + " ou " + tail))
+	if r.rocks.size() == 1:
+		out.append(String(ROCKS.filter(func(x): return x[0] == r.rocks[0])[0][1]).get_slice(" (", 0).to_lower())
+	elif r.rocks.size() > 1:
+		out.append("%d tipos de rocha" % r.rocks.size())
+	if not r.prefer.is_empty():
+		out.append("%d %s" % [r.prefer.size(), "indício dá nota" if r.prefer.size() == 1 else "indícios dão nota"])
+	if out.is_empty() or (sea and out.size() == 1):
+		out.append("qualquer lugar do mar" if sea else "qualquer lugar em terra")
+	return out
 
 
 ## O recurso aberto mudou, ou a categoria dele.
@@ -312,19 +602,20 @@ func set_category(value: String) -> void:
 
 ## A tela vai gerar cobertura? Só em áreas.
 func covers() -> bool:
-	var chosen: String = SPREADS[spread.selected]
-	return output.selected == 0 and (chosen == "cobertura" or (chosen == "" and category in COVER_CATEGORIES))
+	return output.selected == 0 and (_spread == "cobertura" or (_spread == "" and category in COVER_CATEGORIES))
 
 
-## Na cobertura não há quantidade, tamanho nem sorteio.
+## Na cobertura não há quantos, tamanho nem sorteio.
 func _sync_auto() -> void:
 	var cover := covers()
-	_cover_note.visible = cover
-	auto_check.visible = not cover
-	for control in _manual:
-		control.visible = not cover and not auto_check.button_pressed
-	for key in ["size_km", "seed"]:
-		spins[key].get_parent().visible = not cover
+	cover_card.disabled = output.selected == 1  # pontos não cobrem
+	for pair in [[cover_card, cover, "Tudo que serve\n     segue o mapa"], [some_card, not cover, "Alguns lugares\n     separados"]]:
+		pair[0].set_pressed_no_signal(pair[1])
+		pair[0].text = ("●  " if pair[1] else "○  ") + pair[2]
+	some_box.visible = not cover
+	_count_row.visible = amount_mode.selected == 1
+	spins.seed.get_parent().visible = not cover
+	_refresh_texts()
 
 
 func show_suppressions(count: int) -> void:
@@ -336,6 +627,7 @@ func _sync_surface() -> void:
 	for control in _land_only + rocks.values():
 		control.visible = surface.selected == 0
 	factors_box.visible = surface.selected == 0
+	_refresh_texts()
 
 
 func _note(parent: Control, text: String) -> Label:

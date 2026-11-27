@@ -76,6 +76,7 @@ func show_type(type_id: int) -> void:
 	for t in resources.hub.registry.ResourceTypes(""):
 		if int(t.id) == type_id:
 			panel.set_category(String(t.category))
+			panel.set_unit(String(t.unit))
 	if type_id != _loaded_type:
 		_loaded_type = type_id
 		var saved: String = resources.hub.registry.ResourceRuleOf(type_id)
@@ -83,7 +84,7 @@ func show_type(type_id: int) -> void:
 		panel.show_review_result("")
 	panel.show_suppressions(resources.hub.registry.SuppressionCount(type_id))
 	if plan == null and resources.hub.registry.GenerationStale(type_id, terrain):
-		panel.show_preview("O relevo mudou depois da última sugestão aplicada: ela pode estar desatualizada. Peça a prévia de novo para refazê-la (o que é seu continua).")
+		panel.show_preview("O relevo mudou depois da última sugestão aplicada: ela pode estar desatualizada. Use Mostrar no mapa para refazê-la (o que é seu continua).")
 
 
 ## Cria o recurso de um perfil, já com a regra, num desfazer só. Um recurso com o mesmo nome não é alterado.
@@ -218,7 +219,7 @@ func preview_all() -> void:
 		resources.panel.show_all("Não deu para gerar: %s. Nada foi mudado." % ", ".join(failed))
 		return
 	if found.is_empty():
-		resources.panel.show_all("Nenhum recurso tem regra de sugestão ainda. Crie um por um modelo pronto, ou aplique uma sugestão num recurso.")
+		resources.panel.show_all("Nenhum recurso tem critérios de geração ainda. Crie um por um modelo pronto, ou gere num recurso.")
 		return
 	plans = found
 	_all = true
@@ -251,11 +252,15 @@ func apply() -> void:
 		if cmds.is_empty():
 			for i in range(steps.size() - 1, -1, -1):
 				steps[i].Undo()
-			_say(all, "O mundo mudou desde a prévia. Peça a prévia de novo.")
+			_say(all, "O mundo mudou desde a prévia. Use Mostrar no mapa de novo.")
 			return
 		steps.append_array(cmds)
 	resources.push_batch("gerar todos os recursos" if all else "gerar sugestões", steps)
-	_say(all, "Aplicado. Ctrl+Z desfaz a geração inteira.")
+	if all:
+		_say(all, "Aplicado. Ctrl+Z desfaz a geração inteira.")
+	else:  # o que acabou de entrar aparece na lista do recurso
+		resources.panel.show_tab(resources.panel.TAB_MAP)
+		resources.panel.show_message("Aplicado. Ctrl+Z desfaz a geração inteira.")
 
 
 func clear_suppressions() -> void:
@@ -407,8 +412,8 @@ func _prepare() -> void:
 func _entry(type_id: int, made) -> Dictionary:
 	for t in resources.hub.registry.ResourceTypes(""):
 		if int(t.id) == type_id:
-			return {"type": type_id, "name": t.name, "rgb": int(t.rgb), "plan": made}
-	return {"type": type_id, "name": "", "rgb": 0xffffff, "plan": made}
+			return {"type": type_id, "name": t.name, "rgb": int(t.rgb), "unit": String(t.unit), "plan": made}
+	return {"type": type_id, "name": "", "rgb": 0xffffff, "unit": "", "plan": made}
 
 
 func _say(all: bool, text: String) -> void:
@@ -420,13 +425,10 @@ func _say(all: bool, text: String) -> void:
 
 func _show() -> void:
 	if _all:
-		var lines: Array[String] = []
-		for entry in plans:
-			var made = entry.plan
-			lines.append("%s: %d de %d · substitui %d · preserva %d%s" % [entry.name, made.AcceptedCount(), made.Count, made.ReplacedCount,
-				made.ProtectedCount, " · %d removidas fora" % made.SuppressedCount if made.SuppressedCount > 0 else ""])
-		lines.append("Clique numa mancha ou num nome para ver por que ela está ali (e tirá-la, se quiser). Cada recurso tem a sua cor.")
-		resources.panel.show_all("\n".join(lines), true)
+		resources.panel.show_all_plan(plans.map(func(entry):
+			var numbers := _numbers(entry.plan)
+			numbers.merge({"name": entry.name, "rgb": entry.rgb, "unit": entry.unit})
+			return numbers))
 		# As áreas de todos, pintadas juntas, cada recurso na sua cor.
 		var made_plans: Array[ResourcePlanScript] = []
 		var colors: Array = []
@@ -439,21 +441,12 @@ func _show() -> void:
 		var made = entry.plan
 		var layer = resources.territories.layer(resources.level())
 		resources.territories.show_preview(made.PreviewImage(layer), made.PreviewPalette(entry.rgb, 0))
-		var parts: Array[String] = ["%d de %d sugestões" % [made.AcceptedCount(), made.Count]]
-		if made.IsArea:
-			parts[0] += " · %d km²" % roundi(made.AcceptedKm2())
-		if made.AcceptedReserve() > 0.0:
-			parts.append("quantidade total %s" % resources.panel._plain(made.AcceptedReserve()))
-		parts.append("substitui %d geradas" % made.ReplacedCount)
-		parts.append("preserva %d suas" % made.ProtectedCount)
-		if made.SuppressedCount > 0:
-			parts.append("%d já removidas ficam de fora" % made.SuppressedCount)
-		var text := " · ".join(parts) + "."
-		if made.Count == 0:
-			text += " Nenhum lugar atende às condições."
-		else:
-			text += " Clique numa sugestão no mapa para ver por que ela está ali (e tirá-la, se quiser)."
-		if made.Scored:
-			text += " O número é a aptidão (0 a 100); o motivo fica na anotação."
-		panel.show_preview(text, true)
+		panel.show_plan(_numbers(made))
 	resources.refresh()
+
+
+## Os números de uma prévia, para a tela.
+func _numbers(made) -> Dictionary:
+	return {"count": made.AcceptedCount(), "total": made.Count, "area": made.IsArea, "km2": made.AcceptedKm2() if made.IsArea else 0.0,
+		"reserve": made.AcceptedReserve(), "replaced": made.ReplacedCount, "protected": made.ProtectedCount,
+		"suppressed": made.SuppressedCount, "scored": made.Scored}

@@ -9,7 +9,37 @@ const Terrain = preload("res://scripts/world/Terrain.cs")
 const Territory = preload("res://scripts/world/Territory.cs")
 
 
+## Dois nomes no mesmo ponto: um fica por extenso e o outro vira só o símbolo; afastados, os dois aparecem; de longe a letra encolhe.
+func _test_crowded_labels() -> String:
+	var layer = main.globe.resources
+	var camera = main.globe.camera
+	var item := func(id: int, lon: float) -> Dictionary:
+		return {"place_id": id, "lat": 0.0, "lon": lon, "radius_km": 0.0, "color": Color.WHITE, "label": "◇ sugestão %d" % -id}
+	camera.look_at_dir(preload("res://scripts/data/evron_geo.gd").dir(0.0, 100.0), 1.2)
+	camera.snap()
+	layer.show_items([item.call(-1, 100.0), item.call(-2, 100.0)])
+	await frames(3)
+	if layer._labels[0].text != "◇ sugestão 1" or layer._labels[1].text != "◇":
+		return "no mesmo ponto: %s / %s" % [layer._labels[0].text, layer._labels[1].text]
+	var near_pixel: float = layer._labels[0].pixel_size
+	layer.show_items([item.call(-1, 100.0), item.call(-2, 108.0)])
+	await frames(3)
+	if layer._labels[1].text != "◇ sugestão 2":
+		return "afastados, os dois por extenso: %s" % layer._labels[1].text
+	camera.look_at_dir(preload("res://scripts/data/evron_geo.gd").dir(0.0, 100.0), 3.0)
+	camera.snap()
+	await frames(3)
+	if layer._labels[0].pixel_size >= near_pixel:
+		return "de longe a letra encolhe"
+	layer.show_items([])
+	return ""
+
+
 func run() -> void:
+	var crowded: String = await _test_crowded_labels()
+	if crowded != "":
+		return fail(crowded)
+	ok("nomes apertados viram só o símbolo, e de longe a letra encolhe")
 	var path := out_dir.path_join("resource_suite.db")
 	for ext in ["", "-journal", "-wal", "-shm"]:
 		DirAccess.remove_absolute(path + ext)
@@ -167,6 +197,8 @@ func _run_scene() -> void:
 		return fail("nome vazio deveria avisar e não criar")
 	panel.create_requested.emit("Ferro estelar", "mineral")
 	var ferro: int = res.type_id
+	if panel.delete_type_button.disabled:
+		return fail("um recurso fora do mapa pode ser excluído")
 	if not panel.type_box.visible or editor.territory_level != "recurso:%d" % ferro:
 		return fail("o recurso criado deveria ficar escolhido, com o mapa dele")
 	panel.area_requested.emit()
@@ -179,8 +211,14 @@ func _run_scene() -> void:
 	editor.territory_end()
 	await frames(3)
 	var painted: float = editor.territory.AreaKm2(area)
-	if painted <= 0.0 or layer.label_count != 1 or not panel.occurrences.get_item_text(0).contains("km²"):
+	if painted <= 0.0 or layer.label_count != 1 or not panel.occurrence_rows()[0].text.contains("km²"):
 		return fail("a pintura deveria aparecer no painel e no nome sobre o globo")
+	# O lugar escolhido abre na própria linha; clicar nela de novo fecha.
+	var first_row: Button = panel.occurrence_rows()[0]
+	if not panel.occurrence_box.is_visible_in_tree() or not first_row.text.begins_with("▾") or panel._detail.get_index() != first_row.get_index() + 1:
+		return fail("a área escolhida deveria estar aberta logo abaixo da linha dela")
+	if panel.occurrence_box.find_children("*", "Button", true, false).any(func(b): return b.text == "Salvar detalhes" and b.is_visible_in_tree()):
+		return fail("os detalhes começam guardados em Mais opções")
 	main.undo()
 	if editor.territory.AreaKm2(area) != 0.0:
 		return fail("Ctrl+Z desfaz a pincelada")
@@ -207,14 +245,24 @@ func _run_scene() -> void:
 		return fail("recursos diferentes se sobrepõem sem apagar um ao outro")
 	panel.back_requested.emit()
 	await frames(2)
-	var heads: Array = []
-	for i in panel.types.item_count:
-		if not panel.types.is_item_selectable(i):
-			heads.append(panel.types.get_item_text(i))
-	if heads != ["MINERAIS", "VEGETAÇÃO"]:
-		return fail("a lista se separa nas categorias: %s" % [heads])
+	var categories := func() -> Array: return panel.type_rows().map(func(row): return row.get_meta("category"))
+	if categories.call() != ["Minerais", "Vegetação"]:
+		return fail("a lista segue a ordem das categorias: %s" % [categories.call()])
+	panel.filter_buttons[2].pressed.emit()
+	if categories.call() != ["Vegetação"]:
+		return fail("o filtro mostra uma categoria: %s" % [categories.call()])
+	panel.filter_buttons[3].pressed.emit()
+	if not categories.call().is_empty() or not panel.empty_list.visible:
+		return fail("categoria sem recurso avisa")
+	panel.filter_buttons[0].pressed.emit()
 	await save("recursos_categorias")
 	panel.type_chosen.emit(ferro)
+	panel.occurrence_chosen.emit(area)
+	for row in panel.occurrence_rows():
+		if row.text.begins_with("▾"):
+			row.pressed.emit()
+	if res.occurrence_id != 0 or panel.occurrence_box.visible:
+		return fail("clicar de novo na linha aberta a fecha")
 	panel.occurrence_chosen.emit(area)
 	panel.details.grade.text = "35"
 	panel.details.access.select(2)

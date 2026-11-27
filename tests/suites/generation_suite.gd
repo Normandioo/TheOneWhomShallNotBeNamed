@@ -193,6 +193,14 @@ func _run_scene() -> void:
 	var reg = main.domains.registry
 	var editor = main.territories
 	res.set_open(true)
+	# Números curtos da prévia e o que as etiquetas dizem de um modelo.
+	var short: Array = [200.0, 812400.0, 28009711.0, 15098515221.51].map(func(v): return GeneratorPanel.short_number(v))
+	if short != ["200", "812 mil", "28 mi", "15,1 bi"]:
+		return fail("números curtos: %s" % [short])
+	var soil: Dictionary = GeneratorPanel.TEMPLATES.filter(func(t): return t[0] == "Solo de cultivo")[0][1]
+	var chips: Array = Array(GeneratorPanel.describe_rule(res.panel.generator.complete(soil)))
+	if chips != ["solo fértil", "quase plano", "até 2.000 m", "clima tropical, temperado ou continental", "2 indícios dão nota"]:
+		return fail("etiquetas do Solo de cultivo: %s" % [chips])
 	for t in GeneratorPanel.all_templates():
 		res.create_type(t[0])
 		res.panel.generator.load_rule(t[1])
@@ -208,10 +216,10 @@ func _run_scene() -> void:
 	var wood: int = res.type_id
 	var forest: Dictionary = GeneratorPanel.TEMPLATES.filter(func(t): return t[0] == "Floresta")[0][1]
 	res.panel.generator.load_rule(forest)
-	if not res.panel.generator.covers() or res.panel.generator.auto_check.visible or res.panel.generator.spins.size_km.get_parent().visible:
+	if not res.panel.generator.covers() or res.panel.generator.some_box.visible:
 		return fail("o modelo Floresta cobre, sem pedir quantidade nem tamanho")
 	res.panel.generator.load_rule({})
-	if res.panel.generator.covers() or not res.panel.generator.auto_check.visible:
+	if res.panel.generator.covers() or not res.panel.generator.some_box.visible:
 		return fail("sem categoria a tela volta às manchas")
 	res.panel.generator.set_category("vegetal")
 	if not res.panel.generator.covers():
@@ -224,6 +232,12 @@ func _run_scene() -> void:
 	var total: int = gen.plan.Count
 	if not editor.previewing or not res.panel.generator.apply_button.visible or reg.Occurrences(wood).size() != 0:
 		return fail("a prévia deveria estar na tela sem gravar")
+	res.panel.show_tab(res.panel.TAB_SUGGEST)
+	gen.preview(JSON.stringify(res.panel.generator.rule()))
+	await frames(3)
+	if res.panel.generator.form.visible or not res.panel.generator.apply_button.is_visible_in_tree() \
+			or res.panel.generator.apply_button.text != "Aplicar %d lugares" % total:
+		return fail("na prévia os passos saem e Aplicar fica embaixo: " + res.panel.generator.apply_button.text)
 	var first: Dictionary = gen.plan.Proposal(0)
 	main.globe.focus(EvronGeo.dir(first.lat, first.lon), 2.4)
 	var hit := Vector3.ZERO  # o centro de uma mancha pertence a ela
@@ -236,11 +250,15 @@ func _run_scene() -> void:
 	gen.card.toggle_button.pressed.emit()
 	if gen.plan.AcceptedCount() != total - 1 or gen.card.toggle_button.text != "Devolver à prévia":
 		return fail("o botão do cartão deveria tirar a sugestão")
+	if res.panel.generator.apply_button.text != "Aplicar %d lugares" % (total - 1):
+		return fail("o botão acompanha o que foi tirado: " + res.panel.generator.apply_button.text)
 	res.panel.generator.visible = true
 	await frames(8)
 	await save("geracao_previa")
 	res.panel.generator.apply_button.pressed.emit()
 	await frames(2)
+	if res.panel.tab != res.panel.TAB_MAP or not res.panel.message.text.begins_with("Aplicado") or res.panel._footer_slot.visible:
+		return fail("aplicar mostra a lista do que entrou: aba %d, '%s'" % [res.panel.tab, res.panel.message.text])
 	if editor.previewing or reg.Occurrences(wood).size() != total - 1 or reg.SuppressionCount(wood) != 1:
 		return fail("aplicar: %d ocorrências, %d supressões (%s)" % [reg.Occurrences(wood).size(), reg.SuppressionCount(wood), res.panel.generator.summary.text])
 	var area: int = int(reg.Occurrences(wood)[0].id)
@@ -279,7 +297,7 @@ func _run_profiles() -> void:
 	res.set_open(true)
 	res.panel.back_requested.emit()
 	res.panel.preview_all_requested.emit()
-	if gen.active() or not res.panel.all_summary.text.contains("Nenhum recurso tem regra de sugestão"):
+	if gen.active() or not res.panel.all_summary.text.contains("Nenhum recurso tem critérios de geração"):
 		return fail("sem regra não há o que gerar")
 	for i in ResourceProfiles.PROFILES.size():
 		res.panel.profile_requested.emit(i)
@@ -300,6 +318,9 @@ func _run_profiles() -> void:
 	for entry in gen.plans:
 		total += entry.plan.Count
 	print("gerar todos: %d sugestões em %d ms" % [total, elapsed])
+	if res.panel.browse_box.visible or not res.panel.all_apply_button.is_visible_in_tree() \
+			or res.panel.all_apply_button.text != "Aplicar %d lugares" % total:
+		return fail("a prévia de todos toma o lugar da lista, com Aplicar embaixo: " + res.panel.all_apply_button.text)
 	if not main.territories.previewing or gen.plans.any(func(e): return not e.plan.IsArea or e.plan.AcceptedKm2() <= 0.0):
 		return fail("os perfis geram áreas, e a prévia conjunta as pinta")
 	var spot: Dictionary = gen.plans[0].plan.Proposal(0)
@@ -318,7 +339,11 @@ func _run_profiles() -> void:
 	main.globe.focus(EvronGeo.dir(spot.lat, spot.lon), 3.0)
 	await frames(5)
 	await save("geracao_todos")
-	res.panel.apply_all_requested.emit()
+	if res.panel.all_apply_button.text != "Aplicar %d lugares" % (total - 1):
+		return fail("o botão de todos acompanha o que foi tirado: " + res.panel.all_apply_button.text)
+	res.panel.all_apply_button.pressed.emit()
+	if not res.panel.browse_box.visible or res.panel.all_actions.visible or not res.panel.all_summary.text.begins_with("Aplicado"):
+		return fail("aplicar todos volta à lista com o aviso: " + res.panel.all_summary.text)
 	if reg.Occurrences(0).size() != total - 1:
 		return fail("aplicar todos: %d de %d (%s)" % [reg.Occurrences(0).size(), total - 1, res.panel.all_summary.text])
 	main.undo()
@@ -359,6 +384,8 @@ func _run_profiles() -> void:
 	await save("menu_no_mapa")
 	res.panel.show_tab(res.panel.TAB_EDIT)
 	await frames(3)
+	if not res.panel.delete_type_button.disabled:
+		return fail("um recurso que está no mapa não oferece a exclusão")
 	await save("menu_editar")
 	res.panel.show_tab(res.panel.TAB_SUGGEST)
 	await frames(3)

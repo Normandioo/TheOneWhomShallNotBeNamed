@@ -1,6 +1,6 @@
 extends PanelContainer
-## O painel de recursos, em duas telas. A LISTA: buscar, escolher, criar e sugerir para todos. O RECURSO, com uma aba para cada
-## tarefa: "No mapa" (o que já existe e como acrescentar), "Sugerir" (generator_panel.gd) e "Editar" (o cadastro).
+## O painel de recursos, em duas telas. A LISTA: buscar, filtrar por categoria, escolher, criar e gerar todos. O RECURSO, com uma aba
+## para cada tarefa: "No mapa" (o que já existe, cada lugar abrindo na própria linha), "Gerar" (generator_panel.gd) e "Editar".
 ## Só mostra e pede: avisa por sinais; quem grava é o Registry, pelo resource_controller.
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
@@ -44,7 +44,7 @@ const UNITS := ["kg", "t", "m³", "L", "ha", "km²", "unidade", "cabeça", "kcal
 const ACCESS := [["", "Acesso não informado"], ["facil", "Acesso fácil"], ["medio", "Acesso médio"], ["dificil", "Acesso difícil"]]
 const POLICIES := [["normal", "A extração gasta a reserva"], ["reposicao", "Reposta pelo autor (magia): não acaba"], ["bloqueada", "Bloqueada: ninguém extrai"]]
 const RIGHTS := [["controle", "Controle"], ["acesso", "Acesso"], ["exploracao", "Exploração"]]
-const TABS := ["No mapa", "Sugerir", "Editar"]
+const TABS := ["No mapa", "Gerar", "Editar"]
 const TAB_MAP := 0
 const TAB_SUGGEST := 1
 const TAB_EDIT := 2
@@ -57,21 +57,40 @@ var suggest_button: Button
 var add_row: Control              # "Pintar área nova" e "Colocar ponto"
 signal tutorial_requested         # o botão "?" do cabeçalho
 var query: LineEdit
-var types: ItemList
+var types: VBoxContainer         # uma linha (botão) por recurso
+var filter_buttons: Array[Button] = []
+var category_filter := "*"       # "*" = todas as categorias
 var empty_list: Label
 var new_toggle: Button
 var new_box: VBoxContainer
 var new_name: LineEdit
 var all_summary: Label
-var all_actions: HBoxContainer
+var all_actions: HBoxContainer    # Descartar e Aplicar da prévia de todos, presos embaixo
+var all_apply_button: Button
+var all_previewing := false
+var browse_box: VBoxContainer     # a lista em si; some durante a prévia de todos
+var all_box: VBoxContainer        # a prévia de todos
+var _all_stats: HBoxContainer
+var _all_rows: VBoxContainer
+var _all_warning: Label
+var _all_changes: VBoxContainer
+var delete_type_button: Button
+var _delete_note: Label
 var type_box: VBoxContainer      # a tela de um recurso
 var tab_buttons: Array[Button] = []
 var pages: Array[VBoxContainer] = []
 var tab := TAB_MAP
-var occurrences: ItemList
+var occurrences: VBoxContainer   # uma linha (botão) por lugar; a escolhida abre logo abaixo dela
+var occurrence_filter: LineEdit
 var empty_occurrences: Label
 var occurrence_box: VBoxContainer
-var occurrence_title: Label
+var _detail: PanelContainer      # o cartão que leva occurrence_box para baixo da linha escolhida
+var more_toggle: Button          # "Mais opções": o que se usa pouco
+var _reserve_unit: Label
+var _dot: ColorRect              # a cor do recurso, no cabeçalho
+var _footer_slot: PanelContainer # Descartar e Aplicar, fora da rolagem
+var _types_rows: Array = []      # o que veio de show_types, para refiltrar
+var _selected_type := 0
 var occurrence_name: LineEdit
 var occurrence_note: LineEdit
 var text_toggle: Button
@@ -107,16 +126,23 @@ func _init() -> void:
 	visible = false
 	add_theme_stylebox_override("panel", UiKit.panel_style())
 	custom_minimum_size = Vector2(WIDTH, 0)
+	var shell := _column(self)
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	add_child(scroll)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	shell.add_child(scroll)
+	_footer_slot = PanelContainer.new()
+	_footer_slot.add_theme_stylebox_override("panel", UiKit.card_style())
+	_footer_slot.hide()
+	shell.add_child(_footer_slot)
 	var box := _column(scroll)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_theme_constant_override("separation", 10)
 
 	var head := _row(box)
-	back_button = _button(head, "‹ Voltar", func() -> void: back_requested.emit())
+	back_button = _button(head, "‹", func() -> void: back_requested.emit())
 	back_button.tooltip_text = "Voltar para a lista de recursos"
+	_dot = _square(head)
 	title = _heading(head, "RECURSOS")
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.clip_text = true
@@ -128,6 +154,10 @@ func _init() -> void:
 
 	_build_list(box)
 	_build_type(box)
+	var footers := _column(_footer_slot)
+	footers.add_child(generator.footer)
+	footers.add_child(all_actions)
+	generator.mode_changed.connect(_sync_footer)
 	show_type({})
 	show_occurrence({})
 	show_all("")
@@ -135,15 +165,30 @@ func _init() -> void:
 
 func _build_list(box: VBoxContainer) -> void:
 	list_box = _column(box)
-	query = _edit(list_box, "Buscar recurso")
+	browse_box = _column(list_box)
+	query = _edit(browse_box, "Buscar recurso")
 	query.text_changed.connect(func(_t: String) -> void: query_changed.emit())
-	types = _list(list_box, 300, "Recursos: clique para abrir")
-	types.item_selected.connect(func(i: int) -> void: type_chosen.emit(types.get_item_metadata(i)))
-	empty_list = _note(list_box, "Nenhum recurso ainda. Comece em \"+ Novo recurso\".")
+	var chips := HFlowContainer.new()
+	browse_box.add_child(chips)
+	var group := ButtonGroup.new()
+	for entry in [["*", "Todos"]] + CATEGORIES:
+		var chip := _button(chips, entry[1], func() -> void:
+			category_filter = entry[0]
+			_build_types())
+		chip.toggle_mode = true
+		chip.button_group = group
+		chip.add_theme_font_size_override("font_size", 13)
+		chip.add_theme_stylebox_override("pressed", UiKit.active_style())
+		filter_buttons.append(chip)
+	filter_buttons[0].set_pressed_no_signal(true)
+	empty_list = _note(browse_box, "")
+	types = _column(browse_box)
 
-	new_toggle = _button(list_box, "+ Novo recurso", Callable())
+	new_toggle = _button(browse_box, "＋ Novo recurso", Callable())
 	new_toggle.toggle_mode = true
-	new_box = _column(list_box)
+	new_toggle.add_theme_stylebox_override("normal", UiKit.active_style())
+	new_toggle.custom_minimum_size.y = 36
+	new_box = _column(browse_box)
 	new_box.hide()
 	new_toggle.toggled.connect(func(open: bool) -> void: new_box.visible = open)
 	var create := _row(new_box)
@@ -158,14 +203,34 @@ func _build_list(box: VBoxContainer) -> void:
 	for i in ResourceProfiles.PROFILES.size():
 		_button(ready, ResourceProfiles.PROFILES[i].name, func() -> void: profile_requested.emit(i)).tooltip_text = ResourceProfiles.PROFILES[i].about
 
-	list_box.add_child(HSeparator.new())
-	suggest_button = _button(list_box, "Sugerir para todos", func() -> void: preview_all_requested.emit())
+	suggest_button = _button(browse_box, "Gerar todos de uma vez", func() -> void: preview_all_requested.emit())
 	suggest_button.tooltip_text = \
-		"Mostra no mapa uma prévia dos recursos que já têm regra de sugestão. Nada muda antes de aplicar."
+		"Mostra no mapa uma prévia dos recursos que já têm critérios de geração. Nada muda antes de aplicar."
 	all_summary = _note(list_box, "")
-	all_actions = _row(list_box)
-	_button(all_actions, "Aplicar todos", func() -> void: apply_all_requested.emit())
-	_button(all_actions, "Descartar", func() -> void: discard_all_requested.emit())
+
+	all_box = _column(list_box)
+	all_box.add_theme_constant_override("separation", 10)
+	all_box.hide()
+	_heading(all_box, "Prévia de todos")
+	_all_stats = _row(all_box)
+	_all_rows = _column(all_box)
+	_all_rows.add_theme_constant_override("separation", 4)
+	_all_warning = _note(all_box, "")
+	_all_warning.add_theme_color_override("font_color", Color("#f2c46d"))
+	var changes := PanelContainer.new()
+	changes.add_theme_stylebox_override("panel", UiKit.card_style())
+	all_box.add_child(changes)
+	_all_changes = _column(changes)
+	_note(all_box, "Clique num lugar do mapa para saber por que ele está ali (e tirá-lo, se quiser). Cada recurso tem a sua cor.").modulate = Color(1, 1, 1, 0.7)
+
+	all_actions = HBoxContainer.new()
+	var drop := _button(all_actions, "Descartar", func() -> void: discard_all_requested.emit())
+	all_apply_button = _button(all_actions, "Aplicar", func() -> void: apply_all_requested.emit())
+	all_apply_button.add_theme_stylebox_override("normal", UiKit.active_style())
+	for pair in [[drop, 1.0], [all_apply_button, 2.0]]:
+		pair[0].size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pair[0].size_flags_stretch_ratio = pair[1]
+		pair[0].custom_minimum_size.y = 40
 
 
 func _build_type(box: VBoxContainer) -> void:
@@ -188,41 +253,67 @@ func _build_type(box: VBoxContainer) -> void:
 	add_row = add
 	_button(add, "Pintar área nova", func() -> void: area_requested.emit()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_button(add, "Colocar ponto", func() -> void: point_requested.emit()).tooltip_text = "Para um local pequeno, como uma mina"
-	empty_occurrences = _note(map_page, "Este recurso ainda não está no mapa. Pinte uma área, coloque um ponto ou use a aba Sugerir.")
-	occurrences = _list(map_page, 200, "Onde este recurso está: clique para ver as ações")
-	occurrences.item_selected.connect(func(i: int) -> void: occurrence_chosen.emit(occurrences.get_item_metadata(i)))
+	empty_occurrences = _note(map_page, "Ainda não está no mapa. Pinte uma área, coloque um ponto ou use a aba Gerar.")
+	occurrence_filter = _edit(map_page, "filtrar")
+	occurrence_filter.text_changed.connect(func(_t: String) -> void: _filter_occurrences())
+	occurrences = _column(map_page)
+	occurrences.add_theme_constant_override("separation", 3)
 
-	# As ações só aparecem para o item escolhido.
-	occurrence_box = _column(map_page)
-	occurrence_title = _heading(occurrence_box, "")
-	occurrence_title.clip_text = true
+	# As ações só aparecem para o item escolhido, logo abaixo da linha dele.
+	_detail = PanelContainer.new()
+	_detail.add_theme_stylebox_override("panel", UiKit.card_style())
+	occurrences.add_child(_detail)
+	occurrence_box = _column(_detail)
+	var reserve_row := _row(occurrence_box)
+	var amount_label := Label.new()
+	amount_label.text = "Quantidade"
+	reserve_row.add_child(amount_label)
+	reserve_edit = _edit(reserve_row, "não informada")
+	reserve_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	reserve_edit.tooltip_text = "Quanto há neste lugar, na unidade do recurso. Sem quantidade, os povoados não extraem dele."
+	_reserve_unit = Label.new()
+	reserve_row.add_child(_reserve_unit)
+	_button(reserve_row, "Salvar", func() -> void: reserve_saved.emit(reserve_edit.text))
+	reserve_line = _note(occurrence_box, "")
 	var actions := HFlowContainer.new()
 	occurrence_box.add_child(actions)
 	_button(actions, "Ver no mapa", func() -> void: focus_requested.emit())
 	_paint_button = _button(actions, "Pintar", func() -> void: paint_requested.emit())
 	_point_actions = [_button(actions, "Mover", func() -> void: move_requested.emit()),
 		_button(actions, "Duplicar", func() -> void: duplicate_requested.emit())]
-	why_button = _button(actions, "Por que aqui?", func() -> void: why_requested.emit())
 	_button(actions, "Excluir", func() -> void: delete_requested.emit())
 	fixed_check = CheckButton.new()
-	fixed_check.text = "Proteger de novas sugestões"
-	fixed_check.tooltip_text = "Ligado, uma nova sugestão não troca nem apaga este item"
+	fixed_check.text = "Proteger: gerar de novo não mexe neste"
+	fixed_check.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	fixed_check.add_theme_font_size_override("font_size", 13)
 	fixed_check.toggled.connect(func(on: bool) -> void: fixed_toggled.emit(on))
 	occurrence_box.add_child(fixed_check)
-	var reserve_row := _row(occurrence_box)
-	reserve_edit = _edit(reserve_row, "Quantidade (vazio = desconhecida)")
-	reserve_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	reserve_edit.tooltip_text = "Quanto há nesta ocorrência, na unidade do recurso. Sem quantidade, os povoados não extraem dela."
-	_button(reserve_row, "Salvar", func() -> void: reserve_saved.emit(reserve_edit.text))
-	reserve_line = _note(occurrence_box, "")
-	shares_line = _note(occurrence_box, "")
-	_build_details()
-	_build_people()
-	text_toggle = _button(occurrence_box, "Nome e anotação", Callable())
+	var links := _row(occurrence_box)
+	why_button = _button(links, "Por que aqui?", func() -> void: why_requested.emit())
+	why_button.flat = true
+	var gap := Control.new()
+	gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	links.add_child(gap)
+	more_toggle = _button(links, "Mais opções ▸", Callable())
+	more_toggle.toggle_mode = true
+	more_toggle.flat = true
+	more_toggle.tooltip_text = "Nome e anotação, teor e datas, quem conhece, direitos e a divisão por país"
+	var more := _column(occurrence_box)
+	more.hide()
+	more_toggle.toggled.connect(func(open: bool) -> void:
+		more.visible = open
+		more_toggle.text = "Mais opções ▾" if open else "Mais opções ▸")
+	shares_line = _note(more, "")
+	_build_details(more)
+	_build_people(more)
+	text_toggle = _button(more, "▸ Nome e anotação", Callable())
 	text_toggle.toggle_mode = true
-	var texts := _column(occurrence_box)
+	text_toggle.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	var texts := _column(more)
 	texts.hide()
-	text_toggle.toggled.connect(func(open: bool) -> void: texts.visible = open)
+	text_toggle.toggled.connect(func(open: bool) -> void:
+		texts.visible = open
+		text_toggle.text = ("▾ " if open else "▸ ") + "Nome e anotação")
 	occurrence_name = _edit(texts, "Nome (opcional)")
 	occurrence_note = _edit(texts, "Anotação")
 	_button(texts, "Salvar nome e anotação", func() -> void: occurrence_saved.emit(occurrence_name.text, occurrence_note.text))
@@ -230,34 +321,66 @@ func _build_type(box: VBoxContainer) -> void:
 	generator = GeneratorPanel.new()
 	pages[TAB_SUGGEST].add_child(generator)
 
-	var edit_page := pages[TAB_EDIT]
-	_note(edit_page, "Nome e cor no mapa")
-	var named := _row(edit_page)
-	type_name = _edit(named, "Nome do recurso")
-	type_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_build_edit(pages[TAB_EDIT])
+
+
+## A aba Editar: quem é o recurso, como ele é classificado, salvar; e, separado, excluir.
+func _build_edit(page: VBoxContainer) -> void:
+	page.add_theme_constant_override("separation", 8)
+	_section_title(page, "Identificação")
+	type_name = LineEdit.new()
+	_field(page, "Nome", type_name)
 	type_color = ColorPickerButton.new()
 	type_color.edit_alpha = false
-	type_color.custom_minimum_size = Vector2(40, 0)
-	type_color.tooltip_text = "Cor no mapa"
-	named.add_child(type_color)
-	_note(edit_page, "Categoria")
-	type_category = _category_menu(edit_page)
-	_note(edit_page, "Unidade (receitas, estoques e reservas usam só esta)")
+	type_color.custom_minimum_size = Vector2(0, 30)
+	_field(page, "Cor no mapa", type_color)
+	type_description = LineEdit.new()
+	type_description.placeholder_text = "opcional"
+	_field(page, "Descrição", type_description)
+
+	_section_title(page, "Classificação")
+	type_category = _category_menu(page)
+	_field(page, "Categoria", type_category)
 	type_unit = OptionButton.new()
-	type_unit.accessibility_name = "Unidade"
 	type_unit.add_item("Sem unidade")
 	for u in UNITS:
 		type_unit.add_item(u)
 	type_unit.add_item("Outra…")
-	edit_page.add_child(type_unit)
-	unit_other = _edit(edit_page, "Qual unidade")
+	_field(page, "Unidade", type_unit)
+	unit_other = LineEdit.new()
+	unit_other.placeholder_text = "qual unidade"
+	unit_other.accessibility_name = "Qual unidade"
+	page.add_child(unit_other)
 	type_unit.item_selected.connect(func(i: int) -> void: unit_other.visible = i == type_unit.item_count - 1)
-	type_description = _edit(edit_page, "Descrição (opcional)")
-	_button(edit_page, "Salvar", func() -> void:
+	_note(page, "Receitas, estoques e quantidades usam só esta unidade.").modulate = Color(1, 1, 1, 0.7)
+
+	var save := _button(page, "Salvar alterações", func() -> void:
 		type_saved.emit(type_name.text, type_description.text, _category_code(type_category), _unit_text(), type_color.color))
-	edit_page.add_child(HSeparator.new())
-	_button(edit_page, "Excluir recurso", func() -> void: type_delete_requested.emit()).tooltip_text = \
-		"Só funciona quando o recurso não está em lugar nenhum do mapa"
+	save.add_theme_stylebox_override("normal", UiKit.active_style())
+	save.custom_minimum_size.y = 40
+
+	page.add_child(HSeparator.new())
+	delete_type_button = _button(page, "Excluir recurso", func() -> void: type_delete_requested.emit())
+	_delete_note = _note(page, "")
+	_delete_note.modulate = Color(1, 1, 1, 0.7)
+
+
+func _section_title(parent: Control, text: String) -> void:
+	_heading(parent, text).add_theme_font_size_override("font_size", 15)
+
+
+## Uma linha do formulário: o nome do campo à esquerda e o controle ocupando o resto.
+func _field(parent: Control, label: String, control: Control) -> void:
+	var row := _row(parent)
+	var l := Label.new()
+	l.text = label
+	l.custom_minimum_size.x = 100
+	row.add_child(l)
+	if control.get_parent() != null:
+		control.get_parent().remove_child(control)
+	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	control.accessibility_name = label
+	row.add_child(control)
 
 
 ## Troca de aba. Sair de "Sugerir" fecha a prévia (e encerra uma avaliação, guardando as respostas).
@@ -269,30 +392,82 @@ func show_tab(index: int) -> void:
 		tab_buttons[i].set_pressed_no_signal(i == index)
 	if leaving:
 		generator.leave()
+	_sync_footer()
 
 
-## rows: o que Registry.ResourceTypes devolve. Agrupados pelas categorias, cada uma com o título (que não se escolhe).
+func _sync_footer() -> void:
+	var one := generator.previewing and type_box.visible and tab == TAB_SUGGEST
+	var all := all_previewing and list_box.visible
+	generator.footer.visible = one
+	all_actions.visible = all
+	_footer_slot.visible = one or all
+
+
+## rows: o que Registry.ResourceTypes devolve.
 func show_types(rows: Array, selected: int) -> void:
-	types.clear()
+	_types_rows = rows
+	_selected_type = selected
+	_build_types()
+
+
+## Uma linha por recurso, na ordem das categorias; o filtro de cima mostra uma só.
+func _build_types() -> void:
+	for child in types.get_children():
+		types.remove_child(child)
+		child.queue_free()
 	var groups := CATEGORIES.duplicate()
 	groups.append(["", "Sem categoria"])
 	for g in groups:
-		var mine := rows.filter(func(t): return t.category == g[0] if g[0] != "" else not CATEGORIES.any(func(c): return c[0] == t.category))
-		if mine.is_empty():
+		if category_filter != "*" and category_filter != g[0]:
 			continue
-		var h := types.add_item(String(g[1]).to_upper())
-		types.set_item_selectable(h, false)
-		types.set_item_custom_fg_color(h, UiKit.BRASS)
-		types.set_item_metadata(h, 0)
-		for t in mine:
-			var i := types.add_item("   ● %s  (%d)" % [t.name, t.count])
-			types.set_item_custom_fg_color(i, _color(t.rgb).lightened(0.2))
-			types.set_item_metadata(i, int(t.id))
-			types.set_item_tooltip(i, "Abrir %s (%d no mapa)" % [t.name, t.count])
-			if int(t.id) == selected:
-				types.select(i)
-	types.visible = not rows.is_empty()
-	empty_list.visible = rows.is_empty() and query.text == ""
+		for t in _types_rows:
+			if (t.category == g[0]) if g[0] != "" else not CATEGORIES.any(func(c): return c[0] == t.category):
+				_type_row(t, g[1])
+	var none := types.get_child_count() == 0
+	empty_list.visible = none and (query.text == "" or category_filter != "*")
+	empty_list.text = "Nenhum recurso nesta categoria." if not _types_rows.is_empty() else "Nenhum recurso ainda. Comece em ＋ Novo recurso."
+
+
+func _type_row(t: Dictionary, category: String) -> void:
+	var row := _button(types, "", func() -> void: type_chosen.emit(int(t.id)))
+	row.set_meta("id", int(t.id))
+	row.set_meta("category", category)
+	row.custom_minimum_size.y = 40
+	row.tooltip_text = "Abrir %s (%d no mapa)" % [t.name, t.count]
+	row.accessibility_name = "%s, %s, %d no mapa" % [t.name, category, t.count]
+	if int(t.id) == _selected_type:
+		row.add_theme_stylebox_override("normal", UiKit.active_style())
+	var line := HBoxContainer.new()
+	line.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	line.offset_left = 10
+	line.offset_right = -10
+	line.add_theme_constant_override("separation", 8)
+	row.add_child(line)
+	_square(line).color = _color(t.rgb)
+	for pair in [[String(t.name), 15, 1.0, true], [category, 12, 0.65, false],
+			["%d no mapa" % t.count if int(t.count) > 0 else "fora do mapa", 12, 0.65, false], ["›", 16, 1.0, false]]:
+		var l := Label.new()
+		l.text = pair[0]
+		l.add_theme_font_size_override("font_size", pair[1])
+		l.modulate.a = pair[2]
+		if pair[3]:
+			l.clip_text = true
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		line.add_child(l)
+	for node in [line] + line.get_children():
+		node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+
+func type_rows() -> Array:
+	return types.get_children()
+
+
+func _square(parent: Control) -> ColorRect:
+	var square := ColorRect.new()
+	square.custom_minimum_size = Vector2(14, 14)
+	square.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	parent.add_child(square)
+	return square
 
 
 ## O recurso aberto ({} = a tela da lista).
@@ -301,16 +476,27 @@ func show_type(t: Dictionary) -> void:
 	type_box.visible = open
 	list_box.visible = not open
 	back_button.visible = open
+	_dot.visible = open
+	if open:
+		_dot.color = _color(t.rgb)
+		tab_buttons[TAB_MAP].text = "%s · %d" % [TABS[TAB_MAP], int(t.get("count", 0))]
+		_reserve_unit.text = String(t.unit)
+	_sync_footer.call_deferred()
 	title.text = String(t.name).to_upper() if open else "RECURSOS"
 	if not open:
 		_type = 0
-		types.deselect_all()  # senão clicar de novo no mesmo recurso não o reabre
 		return
 	if int(t.id) != _type:
 		_type = int(t.id)
 		new_toggle.button_pressed = false
+		more_toggle.button_pressed = false
 		text_toggle.button_pressed = false
+		occurrence_filter.text = ""
 		show_tab(TAB_MAP)
+	var uses := int(t.get("count", 0))
+	delete_type_button.disabled = uses > 0  # o Registry recusa excluir um recurso que está no mapa
+	_delete_note.text = ("Está em %d %s no mapa. Exclua-%s antes." % [uses, "lugar" if uses == 1 else "lugares", "o" if uses == 1 else "os"]) if uses > 0 \
+		else "Dá para desfazer com Ctrl+Z."
 	type_name.text = t.name
 	type_description.text = t.description
 	type_category.select(1 + CATEGORIES.map(func(c): return c[0]).find(t.category))
@@ -322,27 +508,59 @@ func show_type(t: Dictionary) -> void:
 
 
 func show_occurrences(rows: Array, selected: int) -> void:
-	occurrences.clear()
+	for row in occurrence_rows():
+		occurrences.remove_child(row)
+		row.queue_free()
 	_names.clear()
 	var counts := {"area": 0, "ponto": 0}  # "Área 1, Área 2…" na ordem de criação: o número interno não diz nada ao autor
+	var at := 0
+	var open_at := -1
 	for o in rows:
 		counts[o.kind] += 1
-		_names[int(o.id)] = o.name if o.name != "" else "%s %d" % ["Área" if o.kind == "area" else "Ponto", counts[o.kind]]
-		var i := occurrences.add_item(describe(o, _names[int(o.id)]))
-		occurrences.set_item_tooltip(i, describe(o, _names[int(o.id)]))
-		occurrences.set_item_metadata(i, int(o.id))
-		if int(o.id) == selected:
-			occurrences.select(i)
+		var id := int(o.id)
+		_names[id] = o.name if o.name != "" else "%s %d" % ["Área" if o.kind == "area" else "Ponto", counts[o.kind]]
+		var chosen := id == selected
+		var row := Button.new()
+		row.text = ("▾  " if chosen else "▸  ") + describe(o, _names[id])
+		row.tooltip_text = describe(o, _names[id])
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.clip_text = true
+		row.add_theme_font_size_override("font_size", 14)
+		row.set_meta("id", id)
+		if chosen:
+			row.add_theme_stylebox_override("normal", UiKit.active_style())
+		row.pressed.connect(func() -> void: occurrence_chosen.emit(0 if chosen else id))
+		occurrences.add_child(row)
+		occurrences.move_child(row, at)
+		at += 1
+		if chosen:
+			open_at = at
+	# O cartão só muda de lugar (não sai da árvore), para não perder o foco de quem está digitando nele.
+	occurrences.move_child(_detail, open_at if open_at >= 0 else occurrences.get_child_count() - 1)
+	occurrence_filter.visible = rows.size() > 8
+	if not occurrence_filter.visible:
+		occurrence_filter.text = ""
+	_filter_occurrences()
 	occurrences.visible = not rows.is_empty()
 	empty_occurrences.visible = rows.is_empty()
+
+
+func occurrence_rows() -> Array:
+	return occurrences.get_children().filter(func(c): return c != _detail)
+
+
+func _filter_occurrences() -> void:
+	var wanted := occurrence_filter.text.strip_edges().to_lower()
+	for row in occurrence_rows():
+		row.visible = wanted == "" or row.tooltip_text.to_lower().contains(wanted)
 
 
 ## O item escolhido no mapa ({} = nenhum).
 func show_occurrence(o: Dictionary) -> void:
 	occurrence_box.visible = not o.is_empty()
+	_detail.visible = not o.is_empty()
 	if o.is_empty():
 		return
-	occurrence_title.text = _names.get(int(o.id), o.name)
 	occurrence_name.text = o.name
 	occurrence_note.text = o.note
 	why_button.visible = o.origin == "gerada"
@@ -350,8 +568,9 @@ func show_occurrence(o: Dictionary) -> void:
 	fixed_check.set_pressed_no_signal(o.fixed)
 	var reserve: Dictionary = o.get("reserve_info", {})
 	reserve_edit.text = "" if reserve.is_empty() or is_nan(reserve.reserve) else _plain(reserve.reserve)
-	reserve_line.text = "Quantidade desconhecida: os povoados não extraem daqui." if reserve.is_empty() or is_nan(reserve.reserve) else \
-		"Restam %s de %s (%s já extraídos)." % [_plain(reserve.left), _plain(reserve.reserve), _plain(reserve.extracted)]
+	reserve_line.visible = not reserve.is_empty() and not is_nan(reserve.reserve) and reserve.extracted > 0.0
+	if reserve_line.visible:
+		reserve_line.text = "Restam %s de %s (%s já extraídos)." % [_plain(reserve.left), _plain(reserve.reserve), _plain(reserve.extracted)]
 	_show_extra(o)
 	var point: bool = o.kind == "ponto"
 	_paint_button.visible = not point
@@ -359,8 +578,8 @@ func show_occurrence(o: Dictionary) -> void:
 		button.visible = point
 
 
-func _build_details() -> void:
-	var body := _fold(occurrence_box, "Detalhes da ocorrência")
+func _build_details(parent: Control) -> void:
+	var body := _fold(parent, "Teor, acesso e datas")
 	details.grade = _labeled(body, "Teor (%)")
 	details.depth = _labeled(body, "Profundidade (m)")
 	details.access = _options(body, ACCESS)
@@ -376,8 +595,8 @@ func _build_details() -> void:
 
 
 ## "Quem conhece" e "Direitos": uma lista e o formulário de um novo, cada um.
-func _build_people() -> void:
-	var known := _fold(occurrence_box, "Quem conhece")
+func _build_people(parent: Control) -> void:
+	var known := _fold(parent, "Quem conhece")
 	_note(known, "Um país, cultura ou outro cadastro sabe desta ocorrência, com a estimativa dele (pode errar).").modulate = Color(1, 1, 1, 0.7)
 	knowledge_list = _list(known, 80, "Quem conhece")
 	knowledge_ui = _picker(known)
@@ -391,7 +610,7 @@ func _build_people() -> void:
 		var i := knowledge_list.get_selected_items()
 		if not i.is_empty():
 			knowledge_removed.emit(_knowledge_ids[i[0]]))
-	var rights := _fold(occurrence_box, "Direitos")
+	var rights := _fold(parent, "Direitos")
 	_note(rights, "Controle, acesso e exploração são direitos diferentes: controlar não dá a exploração.").modulate = Color(1, 1, 1, 0.7)
 	rights_list = _list(rights, 80, "Direitos")
 	rights_ui = _picker(rights)
@@ -511,11 +730,77 @@ func _unit_text() -> String:
 	return UNITS[type_unit.selected - 1]
 
 
-## A prévia de todos os recursos ("" = não há).
-func show_all(text: String, can_apply := false) -> void:
+## Um aviso da geração de todos ("" = nenhum); fora da prévia.
+func show_all(text: String) -> void:
 	all_summary.text = text
 	all_summary.visible = text != ""
-	all_actions.visible = can_apply
+	_set_all_preview(false)
+
+
+## A prévia de todos. entries: [{name, rgb, unit, count, total, area, km2, reserve, replaced, protected, suppressed}]
+func show_all_plan(entries: Array) -> void:
+	var total := {"count": 0, "km2": 0.0, "replaced": 0, "protected": 0, "suppressed": 0}
+	var full: Array[String] = []
+	GeneratorPanel.clear_box(_all_rows)
+	for e in entries:
+		for key in total:
+			total[key] += e[key]
+		if int(e.total) >= 200:
+			full.append(String(e.name))
+		_all_row(e)
+	GeneratorPanel.clear_box(_all_stats)
+	generator.stat_card(_all_stats, str(entries.size()), "recurso" if entries.size() == 1 else "recursos")
+	generator.stat_card(_all_stats, GeneratorPanel.short_number(total.count), "lugar" if total.count == 1 else "lugares")
+	if total.km2 > 0.0:
+		generator.stat_card(_all_stats, GeneratorPanel.short_number(total.km2), "km²")
+	_all_warning.text = "Chegaram ao máximo de 200: %s." % ", ".join(full)
+	_all_warning.visible = not full.is_empty()
+	generator.fill_changes(_all_changes, total)
+	all_apply_button.text = "Aplicar %d %s" % [total.count, "lugar" if total.count == 1 else "lugares"]
+	all_summary.text = "%d lugares na prévia" % total.count  # fica escondido: é o que os testes mostram quando falham
+	all_summary.hide()
+	_set_all_preview(true)
+
+
+## Um recurso na prévia de todos: a cor, o nome e quantos entram; embaixo, a quantidade e o que sai.
+func _all_row(e: Dictionary) -> void:
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", UiKit.card_style())
+	_all_rows.add_child(card)
+	var body := _column(card)
+	body.add_theme_constant_override("separation", 0)
+	var line := _row(body)
+	_square(line).color = _color(e.rgb)
+	var name_label := Label.new()
+	name_label.text = e.name
+	name_label.clip_text = true
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line.add_child(name_label)
+	var amount := Label.new()
+	amount.text = "%d %s" % [e.count, "lugar" if int(e.count) == 1 else "lugares"]
+	line.add_child(amount)
+	var extra: Array[String] = []
+	if float(e.reserve) > 0.0:
+		var unit: String = e.unit
+		extra.append("%s %s" % [GeneratorPanel.short_number(e.reserve), unit + "s" if unit in ["unidade", "cabeça"] else unit])
+	if int(e.replaced) > 0:
+		extra.append("saem %d antigos" % e.replaced)
+	if not extra.is_empty():
+		var small := Label.new()
+		small.text = " · ".join(extra)
+		small.clip_text = true
+		small.tooltip_text = small.text
+		small.mouse_filter = Control.MOUSE_FILTER_PASS
+		small.add_theme_font_size_override("font_size", 12)
+		small.modulate.a = 0.65
+		body.add_child(small)
+
+
+func _set_all_preview(on: bool) -> void:
+	all_previewing = on
+	browse_box.visible = not on
+	all_box.visible = on
+	_sync_footer()
 
 
 func show_message(text: String) -> void:

@@ -32,6 +32,7 @@ scripts/
                      tiles de 512 px, composição das camadas para a tela e máscara, importação de PNG, fronteiras vetoriais e contornos
     RegistryTypes.cs / RegistryRules.cs / RegistryWorldFile.cs (C#, partes do Registry) tipos, campos e camadas como dados;
                      regras declarativas e fixações; o mundo como pasta .world
+    RegistryTerrain.cs (C#, parte do Registry) o relevo editado no banco, em blocos de 64 px (`terrain_tile`)
     RegistryResources.cs (C#, parte do Registry) catálogo de recursos e ocorrências; cada gravação devolve um ResourceEdit
     Vec.cs           (C#) vetor em double na esfera (distâncias)
     RegistryGeneration.cs / ResourceGenerator.cs / ResourcePlan.cs (C#) geração de sugestões: regra, candidatos, prévia e aplicar
@@ -267,7 +268,7 @@ e o raciocínio de cada método estão em `docs/alternativas-fronteiras.md`.
   da textura `coast_map` (`Terrain.CoastImage`, RGH: km até a costa e lago), recalculada fora da pincelada e só com a camada na tela. Em todas as
   camadas a fronteira vota com B-spline cúbica 4×4 (`political_owner`): curva, com largura constante em pixels de tela.
 - **GPU:** a camada inteira (16 MiB) volta à GPU, no máximo 10 vezes por segundo durante a pincelada e uma vez ao soltar (como a altitude).
-- **Ainda não feito (de propósito, para testar o método primeiro):** nome grande do país no centro, barra de população e ícones de cidades sobre o território; linha de costa; "território compartilhado" entre países;
+- **Ainda não feito (de propósito, para testar o método primeiro):** nome grande do país no centro, barra de população e ícones de cidades sobre o território; "território compartilhado" entre países;
   recalcular as camadas do Gleba que ficam desatualizadas; subir a resolução da camada (8K); a seleção por clique escolhe só o país (não a província); o desfazer não atravessa a exclusão de um país.
 
 ## Recursos (etapas 0 e 1 do plano `Plano_Recursos_Populacao_Economia_Evron_v1.pdf`)
@@ -280,7 +281,7 @@ e o raciocínio de cada método estão em `docs/alternativas-fronteiras.md`.
 - **Tela:** botão "Recursos" na barra de cima (`ui/resource_panel.gd` + `app/resource_controller.gd`). Com um recurso escolhido, o
   mapa mostra a camada dele (um de cada vez) pelo `TerritoryEditor`, sem as ações de país; fechar o painel volta ao mapa anterior.
   Os pontos e os nomes das áreas são um segundo `PlaceLayer`. Trocar de mapa no meio de uma pintura a encerra.
-- **Geração (etapa 2, migração 19):** "Gerar sugestões…" no painel. A regra combina superfície, classes de rocha (`Bedrock.png`),
+- **Geração (etapa 2, migração 19):** a aba "Gerar" do painel. A regra combina superfície, classes de rocha (`Bedrock.png`),
   grupos de Köppen (`Clima.png`), árvores (`Vegetação.png`), riqueza do solo (`Soil Richness.png`, confiança baixa), altitude e
   declive (do terreno, com as edições). Centros agrupados por ruído de ~600 km; manchas crescem só nos candidatos. Os seis modelos
   de `ui/generator_panel.gd` são pontos de partida, não conteúdo do mundo. Não há mapa de minério. Proteções em `contratos.md`.
@@ -288,9 +289,13 @@ e o raciocínio de cada método estão em `docs/alternativas-fronteiras.md`.
 - **Aptidão e perfis:** uma regra pode ter indícios com peso; a aptidão é a soma (até 100), com um mínimo. Sem indícios o resultado
   é o da versão 1. Os quatro perfis (cobre, estanho, ferro, sal) estão em `ui/resource_profiles.gd`, com as fontes e os limites em
   `docs/recursos/perfis.md`. "Gerar todos" faz a prévia dos recursos com regra e aplica num desfazer só.
-- **Menu:** duas telas. A lista (buscar, abrir, "+ Novo recurso", "Sugerir para todos") e o recurso com as abas "No mapa",
-  "Sugerir" e "Editar". Em "Sugerir" só o modelo, a quantidade, o tamanho e a prévia ficam à vista; as condições ficam em "Ajustes
-  avançados" e os testes em "Testar a regra (avançado)", recolhidos. Sair da aba fecha a prévia e encerra a avaliação, salvando-a.
+- **Menu:** duas telas. A lista (buscar, filtro por categoria, abrir, "＋ Novo recurso", "Gerar todos de uma vez") e o recurso com as
+  abas "No mapa" (cada lugar abre na própria linha; o que se usa pouco fica em "Mais opções"), "Gerar" e "Editar". "Gerar" tem três
+  passos: onde procurar (o modelo, com etiquetas do que ele procura, `GeneratorPanel.describe_rule`; as condições e os testes ficam
+  em "Mudar critérios"), como preencher (cobertura ou manchas) e quanto há. A prévia mostra o que entra e o que sai, com Descartar e
+  Aplicar presos embaixo, fora da rolagem. Sair da aba fecha a prévia e encerra a avaliação, salvando-a. Na lista, a prévia de
+  "Gerar todos" toma o lugar dos recursos, com uma linha por recurso e os mesmos botões presos embaixo. Em "Editar", excluir fica
+  desligado enquanto o recurso está no mapa.
 - **"Por que aqui?"** (`ui/why_card.gd`): clicar numa sugestão da prévia mostra os sinais e a soma em palavras simples, com o botão
   de tirar ou devolver; numa sugestão aplicada, o botão do painel explica pela regra da geração dela. Fica fora da avaliação às cegas.
 - **Testes do gerador na tela:** estabilidade (`Registry.RuleStability`) e avaliação às cegas (`app/blind_review.gd`).
@@ -373,18 +378,22 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>                         
   Vales 115 ms (2021) e 73 ms ao soltar o mouse (937). A primeira marca do programa paga a compilação JIT do C#.
 - A altitude volta para a GPU no máximo 10 vezes por segundo durante a pincelada e uma vez ao soltar: ~2 ms para
   copiar as linhas mexidas para a imagem e ~10 ms para enviar a textura inteira (32 MiB).
-- O histórico guarda 12 bytes por pixel mexido (índice, antes, depois) e para em 256 MiB: os comandos mais antigos
-  saem.
+- O histórico guarda 12 bytes por pixel mexido (índice, antes, depois) e para no teto da pilha (4% da RAM, entre 48 e
+  256 MiB): os comandos mais antigos saem.
 - O que muda com a edição: a camada Altitude, o relevo na luz de todas as camadas, a cor do mar no satélite
   experimental e a leitura do cursor. As imagens do Gleba (clima, biomas…) **não** mudam: são derivados que ficam
   desatualizados até haver recálculo (a proposta pede para marcá-los).
-- Ainda só em memória: fechar o programa perde as edições (a persistência em SQLite é o próximo passo).
+- **Gravação** (`RegistryTerrain.cs`, tabela `terrain_tile`): só os blocos de 64 × 64 pixels mexidos (`Terrain.EditedTiles`) vão ao
+  banco do mundo, numa transação, no salvamento automático (fora de uma pincelada), ao fechar e antes de exportar ou importar. Ao abrir,
+  `LoadTerrain` confere todos os blocos (mesma grade, tamanho válido) antes de aplicar algum; se um falhar, nada é gravado por cima
+  do relevo salvo nessa sessão. É o estado atual: o relevo não tem validade no tempo (consultar o passado não muda o terreno).
 
 ## Limites conhecidos (próximas etapas da E0)
 
 - O globo usa os mapas de 4096 px (9,77 km por pixel no equador): de perto fica borrado; os blocos existem, mas o
   dado de 16K disponível não tem mais detalhe que o de 4K.
-- Ainda não há banco (SQLite), histórico nem calendário: as edições ficam só em memória.
+- Relevo e território são gravados no banco, mas só no estado atual: não têm versões por data nem linhas alternativas
+  (os cadastros, nomes, vínculos e presenças têm validade; o mapa não).
 - As camadas são lidas de `data/evron/`, que não entra no export do Godot.
 - Erosão e rios rodam na grade de 4K (9,8 km por pixel): um vale de verdade não cabe num pixel, e por isso o rio
   ainda se interrompe nos platôs em degraus do Gleba. O passo seguinte é a altitude em blocos editáveis (a mesma

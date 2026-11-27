@@ -13,6 +13,11 @@ const HEIGHT := 1.0015       # fração do raio: ~12 km acima do globo, sobre o 
 const SEGMENTS := 72         # lados de cada anel
 const MAX_RING_STEP := 0.02  # rad (~165 km): o preenchimento é em anéis para acompanhar a curvatura
 const MAX_LABEL_LINES := 4
+const LABEL_PIXEL := 0.00045  # tamanho do nome de perto
+const FAR_SCALE := 0.65      # de longe o nome encolhe até esta fração
+const NEAR_KM := 1500.0      # altitude da câmera: daqui para baixo, tamanho cheio
+const FAR_KM := 9000.0       # daqui para cima, o menor
+const CELL := 12.0           # pixels da grade que diz onde já há nome
 
 var radius := 1.0            # raio do globo na cena (GlobeView.RADIUS)
 var item_count := 0          # presenças desenhadas
@@ -21,6 +26,7 @@ var label_count := 0         # lugares rotulados
 
 var _mesh_node: MeshInstance3D
 var _labels: Array[Label3D] = []
+var _laid_out: Array = []    # a vista da última arrumação dos nomes
 var _material: StandardMaterial3D
 var _draft_node: MeshInstance3D
 var _draft_labels: Array[Label3D] = []
@@ -42,18 +48,59 @@ func _init() -> void:
 	add_child(_draft_node)
 
 
-## Redesenha tudo. items: o que Registry.MapItems devolve (place_id, place, lat, lon, radius_km, layer, role, entity).
-## Esconde os nomes do outro lado do planeta (eles não têm teste de profundidade).
 func _process(_delta: float) -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null or _labels.is_empty():
 		return
+	var view := get_viewport().get_visible_rect().size
+	if _laid_out != [cam.global_transform, view]:
+		_laid_out = [cam.global_transform, view]
+		_lay_out(cam, view)
+
+
+## Esconde os nomes do outro lado do planeta (eles não têm teste de profundidade), encolhe todos de longe e, onde um cobriria outro,
+## deixa só o símbolo; símbolo que cairia em cima de um nome some. A ordem dos itens decide quem fica com o texto; aproximando, os
+## outros voltam.
+func _lay_out(cam: Camera3D, view: Vector2) -> void:
 	var eye := cam.global_position.normalized()
+	var altitude := (cam.global_position.length() / radius - 1.0) * EvronGeo.RADIUS_KM
+	var far := clampf(inverse_lerp(NEAR_KM, FAR_KM, altitude), 0.0, 1.0)
+	var pixel := LABEL_PIXEL * snappedf(lerpf(1.0, FAR_SCALE, far), 0.05)  # em degraus: o zoom não refaz os textos a cada quadro
+	var screen := pixel * view.y / (2.0 * tan(deg_to_rad(cam.fov) / 2.0))  # pixels da tela por pixel da fonte
+	var used := {}
+	var loose := {}  # os que ficaram só com o símbolo: onde cada um está na tela
 	for l in _labels:
 		l.visible = l.global_position.normalized().dot(eye) > 0.2
+		if not l.visible:
+			continue
+		l.pixel_size = pixel
+		var size: Vector2 = l.get_meta("size") * screen
+		var full: String = l.get_meta("text")
+		var at := cam.unproject_position(l.global_position)
+		var fits := _take(used, Rect2(at - Vector2(0, size.y / 2.0), size))
+		l.text = full if fits else (full[0] if full.length() > 1 and full[1] == " " else "•")
+		if not fits:
+			loose[l] = at
+	for l in loose:
+		l.visible = not used.has(Vector2i((loose[l] / CELL).floor()))
 
 
+## Marca as células da tela que o retângulo cobre; false (sem marcar) se alguma já tem nome.
+func _take(used: Dictionary, rect: Rect2) -> bool:
+	var cells: Array[Vector2i] = []
+	for x in range(floori(rect.position.x / CELL), ceili(rect.end.x / CELL)):
+		for y in range(floori(rect.position.y / CELL), ceili(rect.end.y / CELL)):
+			if used.has(Vector2i(x, y)):
+				return false
+			cells.append(Vector2i(x, y))
+	for c in cells:
+		used[c] = true
+	return true
+
+
+## Redesenha tudo. items: o que Registry.MapItems devolve (place_id, place, lat, lon, radius_km, layer, role, entity).
 func show_items(items: Array) -> void:
+	_laid_out = []
 	for l in _labels:
 		l.queue_free()
 	_labels.clear()
@@ -223,7 +270,7 @@ func _place_label(first: Dictionary, text: String) -> void:
 	label.text = text
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.fixed_size = true
-	label.pixel_size = 0.00045
+	label.pixel_size = LABEL_PIXEL
 	label.font_size = 32
 	label.outline_size = 10
 	label.outline_modulate = Color(0, 0, 0, 0.9)
@@ -231,5 +278,7 @@ func _place_label(first: Dictionary, text: String) -> void:
 	label.no_depth_test = true  # com teste de profundidade o relevo cortava o nome ao girar o globo; o lado de trás é escondido em _process
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	label.position = EvronGeo.dir(first.lat, first.lon) * radius * (HEIGHT + 0.0008)
+	label.set_meta("text", text)
+	label.set_meta("size", ThemeDB.fallback_font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size))
 	add_child(label)
 	_labels.append(label)

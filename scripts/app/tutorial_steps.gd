@@ -349,19 +349,19 @@ static func _resources(m) -> Array:
 		if not panel.list_box.visible:
 			panel.tab_buttons[index].pressed.emit()
 	return [
-		step("O catálogo", "Todos os recursos do mundo, por categoria. O número ao lado é quantas ocorrências há no mapa. A caixa de cima busca pelo nome.",
-			[these([panel])], "clique num recurso e volte com ‹ Voltar.", screen, {"prep": list}),
+		step("O catálogo", "Todos os recursos do mundo. Os botões de cima mostram uma categoria e a caixa busca pelo nome. Clique numa linha para abrir.",
+			[these([panel])], "clique num recurso e volte com ‹.", screen, {"prep": list}),
 		step("Novo recurso", "＋ Novo recurso cria um recurso seu, com nome e categoria.", [these([panel.new_toggle]), these([panel])],
 			"abra o formulário e feche sem criar.", Callable(), {"prep": list}),
-		step("Sugerir para todos", "Propõe no mapa uma prévia para todos os recursos que têm regra. Nada muda antes de Aplicar todos; Descartar desiste.",
+		step("Gerar todos de uma vez", "Propõe no mapa uma prévia para todos os recursos que já têm critérios. A prévia mostra o que entra e o que sai; embaixo, Aplicar grava e Descartar desiste.",
 			[these([panel.suggest_button]), these([panel])], "", Callable(), {"prep": list}),
-		step("Dentro de um recurso", "No mapa mostra o que existe, Sugerir propõe lugares e Editar muda o cadastro.", [these(panel.tab_buttons), these([panel])],
+		step("Dentro de um recurso", "No mapa mostra onde ele está, Gerar procura lugares nos mapas e Editar muda o cadastro.", [these(panel.tab_buttons), these([panel])],
 			"troque de aba.", screen, {"prep": go_tab.call(0)}),
-		step("No mapa", "Pintar área nova ou Colocar ponto (para um lugar pequeno, como uma mina). Na lista, clique numa ocorrência para ver, mover, duplicar, explicar ou excluir e dar a quantidade.",
-			[page.call(0), these([panel])], "clique numa ocorrência da lista.", Callable(), {"prep": go_tab.call(0), "tip": "Sem quantidade, os povoados não extraem da ocorrência."}),
-		step("Sugerir", "Um modelo para começar e condições que você ajusta. Ver no mapa mostra a prévia; Aplicar grava e Descartar desiste. Sortear escolhe outros lugares entre os que servem. Em vegetação e animal o normal é a cobertura: a prévia pinta tudo o que serve, seguindo o mapa.",
+		step("No mapa", "Pintar área nova ou Colocar ponto (para um lugar pequeno, como uma mina). Clique numa linha para abrir o lugar: quantidade, ver, pintar, excluir e proteger. Em Mais opções ficam nome, teor, datas, quem conhece e direitos.",
+			[page.call(0), these([panel])], "clique num lugar da lista.", Callable(), {"prep": go_tab.call(0), "tip": "Sem quantidade, os povoados não extraem do lugar."}),
+		step("Gerar", "Onde procurar: escolha um modelo; as etiquetas dizem o que ele procura e Mudar critérios abre as condições. Como preencher: Tudo que serve segue o mapa (trechos com menos de 5.000 km² ficam de fora; no máximo 200, os maiores); Alguns lugares faz manchas separadas. Quanto há é opcional. Mostrar no mapa abre a prévia; embaixo, Aplicar grava e Descartar desiste.",
 			[page.call(1), these([panel])], "peça uma prévia e descarte.", Callable(), {"prep": go_tab.call(1)}),
-		step("Editar", "Nome, categoria, cor e unidade do recurso, detalhes, quem o conhece e quem tem direito sobre ele. Excluir recurso apaga o cadastro.",
+		step("Editar", "Nome, cor, descrição, categoria e unidade do recurso; Salvar alterações grava. Excluir recurso só funciona quando ele não está no mapa.",
 			[page.call(2), these([panel])], "", Callable(), {"prep": go_tab.call(2)}),
 	]
 
