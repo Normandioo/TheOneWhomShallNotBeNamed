@@ -32,6 +32,7 @@ var _window: PanelContainer
 var _fields := {}  # year, day, hour, minute: SpinBox; month: OptionButton
 var _markers: Label
 var _go_buttons: Array[Button] = []  # "Avançar até": só vale fora da consulta
+var _shown := 0  # a data na tela, com que a janela do calendário abre preenchida
 
 
 func _init() -> void:
@@ -74,7 +75,7 @@ func _init() -> void:
 	_speed.custom_minimum_size = Vector2(84, 0)
 	_speed.tooltip_text = "Velocidade do tempo"
 	top.add_child(_speed)
-	var calendar_button := _button(top, "", func() -> void: _window.visible = not _window.visible)
+	var calendar_button := _button(top, "", _toggle_window)
 	calendar_button.icon = preload("res://assets/ui/clock.png")
 	calendar_button.tooltip_text = "Calendário: consultar uma data, avançar até ela e ver os marcos"
 
@@ -104,6 +105,7 @@ func _init() -> void:
 ## Mostra o estado do relógio (não guarda tempo próprio).
 func show_clock(clock) -> void:
 	var t: int = clock.shown()
+	_shown = t
 	_date.text = Calendar.format(t)
 	_date.modulate = Color(0.6, 0.85, 1.0) if clock.viewing else Color.WHITE
 	if clock.viewing:
@@ -126,6 +128,17 @@ func show_clock(clock) -> void:
 	for e in clock.events():
 		lines.append("%s  %s  %s" % ["✔" if e["fired"] else "·", Calendar.format(e["at"]), e["name"]])
 	_markers.text = "\n".join(lines) if lines.size() > 0 else "Nenhum marco cadastrado."
+
+
+## Abre ou fecha a janela do calendário. Ao abrir, os campos partem da data mostrada: para voltar, muda-se só o que difere.
+func _toggle_window() -> void:
+	_window.visible = not _window.visible
+	if not _window.visible:
+		return
+	var d := Calendar.from_seconds(_shown)
+	for f in ["year", "day", "hour", "minute"]:
+		_fields[f].value = d[f]
+	_fields["month"].select(d["month"] - 1)
 
 
 func show_message(text: String) -> void:
@@ -188,6 +201,7 @@ func _spin(box: Container, label: String, lo: int, hi: int, value: int) -> SpinB
 	s.min_value = lo
 	s.max_value = hi
 	s.value = value
+	s.select_all_on_focus = true  # digitar substitui o número; sem isto "2" num campo com "1" virava 12
 	box.add_child(s)
 	return s
 

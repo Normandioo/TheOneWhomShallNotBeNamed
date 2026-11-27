@@ -85,7 +85,58 @@ func run() -> void:
 	main.set_layer(0)
 	bar._window.visible = true
 	await save("3_barra_de_tempo")
+	await _go_back_by_hand(clock, bar)
 	ok("barra de tempo: abre pausada, avanços, consulta, retomar e pausar")
+
+
+## Voltar a uma data como o usuário: abrir a janela (vem na data mostrada), clicar no campo e digitar, sem selecionar nada antes.
+func _go_back_by_hand(clock, bar) -> void:
+	clock.advance_to(Calendar.to_seconds(14, 3, 9))
+	main.production.settlement_id = main.domains.registry.CreateSettlement("Vila do teste", 10.0, 40.0, 10)
+	main.production.panel.visible = true
+	main.production.panel.show_screen("povoado")
+	main.production.refresh()
+	bar._window.visible = false
+	bar.find_children("*", "Button", true, false).filter(func(b): return b.tooltip_text.begins_with("Calendário"))[0].pressed.emit()
+	await frames(5)
+	var d := Calendar.from_seconds(clock.now)
+	if [int(bar._fields["day"].value), bar._fields["month"].selected + 1, int(bar._fields["year"].value)] != [d["day"], d["month"], d["year"]]:
+		return fail("a janela do calendário deveria abrir na data mostrada")
+	var year: LineEdit = bar._fields["year"].get_line_edit()
+	await _click(year)
+	await send(_typed("2"))
+	await _click(_button_named(bar, "Consultar data"))
+	await frames(5)
+	if not clock.viewing or Calendar.from_seconds(clock.shown())["year"] != 2:
+		return fail("digitar 2 no ano e consultar deveria mostrar o ano 2, mostrou " + Calendar.format(clock.shown()))
+	await save("3_data_passada")
+	if main.production.panel.stock_title.text != "Estoque em " + Calendar.format(clock.shown(), false):
+		return fail("o painel de povoados deveria seguir a data consultada: " + main.production.panel.stock_title.text)
+	clock.exit_view()
+	if main.production.panel.stock_title.text != "Estoque em " + Calendar.format(clock.now, false):
+		return fail("ao voltar ao presente, o painel de povoados deveria voltar à data atual")
+	main.production.panel.visible = false
+
+
+func _click(c: Control) -> void:
+	var p := c.get_global_rect().get_center()
+	await send(motion(p, Vector2.ZERO))
+	await send(button(MOUSE_BUTTON_LEFT, true, p))
+	await send(button(MOUSE_BUTTON_LEFT, false, p))
+	await frames(2)
+
+
+func _typed(ch: String) -> InputEventKey:
+	var e := key(OS.find_keycode_from_string(ch))
+	e.unicode = ch.unicode_at(0)
+	return e
+
+
+func _button_named(bar: Node, text: String) -> Button:
+	for b in bar.find_children("*", "Button", true, false):
+		if b.text == text:
+			return b
+	return null
 
 
 func _layer_index(menu: String) -> int:

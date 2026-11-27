@@ -306,6 +306,7 @@ func _ready() -> void:
 	resources.setup(domains, resource_panel, globe.resources, commands, territories)  # depois do editor: usa as camadas dele
 	production.setup(domains, settlement_panel, globe.settlements, terrain, territories, clock)  # registra-se no relógio
 	production.month_processed.connect(func(_end: int) -> void: resources.refresh())  # a reserva mostrada mudou
+	clock.state_changed.connect(production.refresh)  # o estoque é o da data mostrada: entrar e sair da consulta o muda
 	if domains.usable:
 		generator.setup(resources, resource_panel.generator, terrain)
 		var why_card := WhyCard.new()  # "Por que aqui?": no meio do espaço livre, embaixo
@@ -388,7 +389,7 @@ func _ready() -> void:
 	time_bar.advance_seconds.connect(func(s: int) -> void: _command(clock.advance_by(s)))
 	time_bar.advance_months.connect(func(n: int) -> void: _command(clock.advance_months(n)))
 	time_bar.advance_to.connect(func(t: int) -> void:
-		_command(clock.advance_to(t), "Só dá para avançar até uma data depois do presente."))
+		_command(clock.advance_to(t), "Só dá para avançar até uma data depois do presente. Para ver uma data passada, use \"Consultar data\"."))
 	time_bar.view_date.connect(func(t: int) -> void: clock.enter_view(t))
 	time_bar.back_to_present.connect(clock.exit_view)
 	clock.event_fired.connect(func(e: Dictionary) -> void:
