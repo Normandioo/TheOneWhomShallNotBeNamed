@@ -2,3 +2,5 @@
 * text=auto eol=lf
 *.img binary
 *.rh binary
+# O cmd.exe espera CRLF.
+*.bat text eol=crlf

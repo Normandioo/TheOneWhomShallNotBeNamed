@@ -32,3 +32,65 @@ jobs:
 
       - name: Suíte do núcleo
         run: '"$GODOT" --headless --path . -s tests/run_suite.gd -- tests/suites/core_suite.gd'
+
+  # Só na main, e só depois de a suíte passar: exporta o jogo (sem os mapas) e publica uma release.
+  # Os atalhos dos playtesters (tools/launcher/) baixam sempre a release mais nova.
+  publicar:
+    needs: core
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    concurrency: publicar  # uma publicação por vez; a que espera é trocada pela mais nova
+    env:
+      GODOT_VERSION: 4.7.2
+      # O servidor de compilação do .NET fica vivo e segura o Godot depois de exportar.
+      DOTNET_CLI_USE_MSBUILD_SERVER: 'false'
+      MSBUILDDISABLENODEREUSE: '1'
+      UseSharedCompilation: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Godot .NET e modelos de exportação
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -fsSL -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_mono_linux_x86_64.zip"
+          unzip -q godot.zip -d "$RUNNER_TEMP/godot"
+          echo "GODOT=$(find "$RUNNER_TEMP/godot" -name 'Godot_v*_mono_linux.x86_64' -type f)" >> "$GITHUB_ENV"
+          curl -fsSL -o modelos.tpz "$base/Godot_v${GODOT_VERSION}-stable_mono_export_templates.tpz"
+          unzip -q modelos.tpz -d "$RUNNER_TEMP/modelos"
+          mkdir -p ~/.local/share/godot/export_templates
+          mv "$RUNNER_TEMP/modelos/templates" ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable.mono
+          rm godot.zip modelos.tpz
+
+      - name: Exportar e empacotar
+        run: |
+          dotnet build
+          "$GODOT" --headless --import --path .
+          mkdir -p saida/windows saida/linux saida/pacotes
+          "$GODOT" --headless --path . --export-release "Windows Playtest" "$PWD/saida/windows/Evron.exe"
+          "$GODOT" --headless --path . --export-release "Linux Playtest" "$PWD/saida/linux/Evron.x86_64"
+          # o Godot pode sair com 0 mesmo sem exportar: confere os arquivos
+          for f in windows/Evron.exe windows/Evron.pck windows/data_Evron_windows_x86_64/Evron.dll \
+                   linux/Evron.x86_64 linux/Evron.pck linux/data_Evron_linuxbsd_x86_64/Evron.dll; do
+            test -f "saida/$f" || { echo "faltou $f"; ls -R saida; exit 1; }
+          done
+          chmod +x saida/linux/Evron.x86_64 tools/launcher/evron.sh
+          tar -czf saida/pacotes/Evron-windows.tar.gz -C saida/windows .
+          tar -czf saida/pacotes/Evron-linux.tar.gz -C saida/linux .
+          echo "$GITHUB_SHA" > saida/pacotes/versao.txt
+          (cd tools/launcher && zip -q ../../saida/pacotes/Evron-atalho-windows.zip Evron.bat atualizar.ps1)
+          tar -czf saida/pacotes/Evron-atalho-linux.tar.gz -C tools/launcher evron.sh
+
+      - name: Publicar a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${GITHUB_RUN_NUMBER}" saida/pacotes/* --target "$GITHUB_SHA" --latest \
+            --title "Versão de teste ${GITHUB_RUN_NUMBER}" \
+            --notes "$(git log -1 --pretty=%B)"

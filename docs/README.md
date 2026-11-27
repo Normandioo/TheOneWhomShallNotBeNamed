@@ -2,6 +2,7 @@
 
 **Vivos (mantidos junto com o código):**
 - [arquitetura.md](arquitetura.md): estrutura do código, convenções, fluxo, testes, blocos, edição de terreno, calendário, temperatura.
+- [playtest.md](playtest.md): publicação automática e atalho de atualização dos playtesters.
 - [mapa-politico.md](mapa-politico.md): plano e protótipo do mapa político.
 - [alternativas-fronteiras.md](alternativas-fronteiras.md): alternativas estudadas para fronteiras.
 - [riscos-baixa-memoria.md](riscos-baixa-memoria.md): riscos de RAM/GPU em máquinas fracas e o estado de cada correção. Use o monitor F3 para medir.
