@@ -38,6 +38,8 @@ varying vec3 obj_pos;
 uniform float flat_map = 0.0;
 // Onde a água editada difere da do Gleba, costa e lagos (Terrain.CoastChangeImage): 1 = virou terra, 0,5 = virou água. Os mapas de imagem seguem a costa nova.
 uniform sampler2D coast_change : hint_default_black, filter_nearest, repeat_enable;
+// A mesma máscara com filtro e mipmaps: quanto de cada ponto mudou, sem os degraus de 10 km na borda da área editada.
+uniform sampler2D coast_change_soft : hint_default_black, filter_linear_mipmap, repeat_enable;
 
 vec3 altitude_color(float h) {
 	float t = h < 0.0 ? 0.5 + 0.5 * h / -SEA_FLOOR : 0.5 + 0.5 * h / PEAK;
@@ -308,13 +310,26 @@ void fragment() {
 		float c = mix(textureLod(temp_jan, tuv, 0.0).r, textureLod(temp_jul, tuv, 0.0).r, season_july);
 		col = textureLod(temp_ramp, vec2(clamp((c + 20.0) / 60.0, 0.0, 1.0), 0.5), 0.0).rgb;
 	}
-	// A costa editada nos mapas que vêm de imagem (o Gleba não sabe dela): o mar novo pela profundidade, a terra nova num tom neutro
-	// marcado como sem dado (a imagem não tem o que dizer ali; o mapa natural usa a cor da terra mais comum).
+	// A costa editada nos mapas que vêm de imagem (o Gleba não sabe dela). Onde a água mudou, a linha terra × água é a costa suavizada
+	// (a mesma do mapa político, não os pixels de 10 km); a água nova vai pela profundidade e a terra nova, no satélite, numa cor de terra
+	// pela altitude e latitude, e nos mapas de dados num tom neutro (sem dado). A área editada se funde ao resto em vez de terminar em degrau.
 	if (mode == 0 || mode == 2 || mode == 3) {
-		float chg = textureLod(coast_change, vec2(uv.x, clamp(uv.y, 0.0, 1.0)), 0.0).r;
-		if (chg > 0.25) {
+		vec2 cuv = vec2(uv.x, clamp(uv.y, 0.0, 1.0));
+		float changed = clamp(textureLod(coast_change_soft, cuv, 1.0).r * 2.5, 0.0, 1.0);
+		if (changed > 0.001) {
 			float lat = asin(clamp(n.y, -1.0, 1.0));
-			col = chg > 0.75 ? pow(vec3(0.58, 0.54, 0.42), vec3(2.2)) : pow(water_color(min(h, -30.0), lat), vec3(2.2));  // lago pintado: acima do mar, como água rasa
+			bool known;
+			float land = coast_land(uv, known);
+			if (!known) {
+				land = textureLod(coast_change, cuv, 0.0).r > 0.75 ? 1.0 : 0.0;
+			}
+			vec3 water = pow(water_color(min(h, -30.0), lat), vec3(2.2));  // lago pintado: acima do mar, como água rasa
+			vec3 ground = vec3(0.58, 0.54, 0.42);
+			if (mode == 2) {
+				ground = mix(vec3(0.31, 0.35, 0.19), vec3(0.47, 0.43, 0.35), smoothstep(300.0, 2500.0, h));
+				ground = mix(ground, vec3(0.86, 0.88, 0.91), max(smoothstep(62.0, 72.0, abs(degrees(lat))), smoothstep(4200.0, 5200.0, h)));
+			}
+			col = mix(col, mix(water, pow(ground, vec3(2.2)), land), changed);
 		}
 	}
 	if (mode == 4) {
