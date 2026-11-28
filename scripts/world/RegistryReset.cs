@@ -14,7 +14,8 @@ public partial class Registry
     const string LoosePlaces =
         "from place where not exists (select 1 from presence x where x.place_id = place.id) " +
         "and not exists (select 1 from population_estimate x where x.place_id = place.id) " +
-        "and not exists (select 1 from distribution x where x.place_id = place.id)";
+        "and not exists (select 1 from distribution x where x.place_id = place.id) " +
+        "and not exists (select 1 from settlement x where x.place_id = place.id)";  // a cidade de um povoado não está solta
 
     /// Marca os cadastros que vão sair numa tabela temporária e apaga, na ordem que as chaves permitem, tudo o que depende deles.
     /// Chamar dentro de uma transação. Devolve quantos cadastros saíram.

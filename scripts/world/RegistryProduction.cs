@@ -91,27 +91,91 @@ public partial class Registry
 
     // ---- povoados ----
 
+    // O povoado é a economia de uma cidade (um lugar 'assentamento'): aponta para ela, com o mesmo nome e o mesmo ponto. Os povoados que já
+    // existiam viram cidades novas no lugar deles (sem país: o autor liga depois, pela ficha). work_pct: a parte da população que trabalha,
+    // escolhida pelo autor (vazio = os trabalhadores foram digitados direto).
+    const string SettlementCityMigration = """
+        alter table settlement add column place_id integer references place(id);
+        alter table settlement add column work_pct real check (work_pct is null or (work_pct >= 0 and work_pct <= 100));
+        insert into place(name, kind, lat, lon, radius_km, note)
+            select name, 'assentamento', lat, lon, 0, 'evron:povoado:' || id from settlement;
+        update settlement set place_id = (select p.id from place p where p.note = 'evron:povoado:' || settlement.id);
+        update place set note = null where note like 'evron:povoado:%';
+        create unique index settlement_place on settlement(place_id) where place_id is not null;
+        """;
+
+    /// Um povoado num lugar novo: cria a cidade (o lugar) e a economia dela.
     public long CreateSettlement(string name, double lat, double lon, long workers)
     {
         CheckPoint(lat, lon);
         if (workers < 0) throw new ArgumentException("trabalhadores não podem ser negativos");
-        return _db.Insert("insert into settlement(name, lat, lon, workers) values (@0, @1, @2, @3)", Clean(name), lat, lon, workers);
+        name = Clean(name);
+        return _db.Tx(() =>
+        {
+            long place = AddPlace(name, "assentamento", lat, lon, 0, "");
+            return _db.Insert("insert into settlement(name, lat, lon, workers, place_id) values (@0, @1, @2, @3, @4)", name, lat, lon, workers, place);
+        });
     }
 
+    /// A economia de uma cidade que já existe (com o nome e o ponto dela). Recusa um lugar que não é cidade ou que já tem povoado.
+    public long CreateSettlementInCity(long placeId, long workers)
+    {
+        if (workers < 0) throw new ArgumentException("trabalhadores não podem ser negativos");
+        var p = _db.Rows("select name, lat, lon, kind from place where id = @0", placeId);
+        if (p.Count == 0 || Str(p[0][3]) != "assentamento") throw new ArgumentException("o lugar não é uma cidade");
+        if (_db.Scalar("select 1 from settlement where place_id = @0", placeId) != null) throw new ArgumentException("esta cidade já tem economia");
+        return _db.Insert("insert into settlement(name, lat, lon, workers, place_id) values (@0, @1, @2, @3, @4)",
+            Str(p[0][0]), Convert.ToDouble(p[0][1]), Convert.ToDouble(p[0][2]), workers, placeId);
+    }
+
+    /// As cidades (lugares 'assentamento'), por nome: {place_id, name, country ("" = sem país), population (NaN = sem número na data),
+    /// settlement_id (0 = ainda sem economia)}. population: a estimativa exata mais recente até t.
+    public Array<Dictionary> Cities(long t) => new(_db.Rows("""
+            select p.id, p.name,
+                   coalesce((select n.name from presence x join entity e on e.id = x.entity_id join entity_name n on n.entity_id = e.id
+                             where x.place_id = p.id and e.kind = 'pais' and n.role = 'principal' and n.valid_from <= @0 and @0 < n.valid_to limit 1), ''),
+                   (select x.low from population_estimate x where x.place_id = p.id and x.t <= @0 and x.level is null and x.low = x.high
+                    order by x.t desc, x.id desc limit 1),
+                   coalesce((select s.id from settlement s where s.place_id = p.id), 0)
+            from place p where p.kind = 'assentamento' order by p.name collate nocase, p.id
+            """, t).Select(r => new Dictionary
+        {
+            ["place_id"] = Convert.ToInt64(r[0]), ["name"] = Str(r[1]), ["country"] = Str(r[2]),
+            ["population"] = r[3] == null ? double.NaN : Convert.ToDouble(r[3]), ["settlement_id"] = Convert.ToInt64(r[4]),
+        }));
+
     /// Nome, trabalhadores e alcance (km até onde o povoado chega para extrair). Menos trabalhadores que os já postos em atividades é
-    /// aceito: no mês, as atividades de cima na lista ficam com eles e as de baixo ficam sem.
+    /// aceito: no mês, as atividades de cima na lista ficam com eles e as de baixo ficam sem. O nome é o da cidade: muda nos dois.
     public void SetSettlement(long id, string name, long workers, double reachKm)
     {
         if (workers < 0) throw new ArgumentException("trabalhadores não podem ser negativos");
         if (!(reachKm >= 0 && reachKm <= 1000)) throw new ArgumentException("o alcance vai de 0 a 1000 km");
-        if (_db.Run("update settlement set name = @0, workers = @1, reach_km = @2 where id = @3", Clean(name), workers, reachKm, id) == 0)
+        name = Clean(name);
+        _db.Tx(() =>
+        {
+            if (_db.Run("update settlement set name = @0, workers = @1, reach_km = @2 where id = @3", name, workers, reachKm, id) == 0)
+                throw new ArgumentException($"povoado {id} não existe");
+            return _db.Run("update place set name = @0 where id = (select place_id from settlement where id = @1)", name, id);
+        });
+    }
+
+    /// A parte da população que trabalha, em % (NaN = sem: os trabalhadores foram digitados direto). Só lembra a escolha do autor.
+    public void SetSettlementShare(long id, double pct)
+    {
+        if (!double.IsNaN(pct) && !(pct >= 0 && pct <= 100)) throw new ArgumentException("a parte que trabalha vai de 0 a 100%");
+        if (_db.Run("update settlement set work_pct = @0 where id = @1", double.IsNaN(pct) ? null : pct, id) == 0)
             throw new ArgumentException($"povoado {id} não existe");
     }
 
+    /// Move o povoado e a cidade dele (são o mesmo lugar).
     public void MoveSettlement(long id, double lat, double lon)
     {
         CheckPoint(lat, lon);
-        if (_db.Run("update settlement set lat = @0, lon = @1 where id = @2", lat, lon, id) == 0) throw new ArgumentException($"povoado {id} não existe");
+        _db.Tx(() =>
+        {
+            if (_db.Run("update settlement set lat = @0, lon = @1 where id = @2", lat, lon, id) == 0) throw new ArgumentException($"povoado {id} não existe");
+            return _db.Run("update place set lat = @0, lon = @1 where id = (select place_id from settlement where id = @2)", lat, lon, id);
+        });
     }
 
     /// Exclui um povoado criado por engano. Recusa se ele já tem histórico de estoque (o histórico não some).
@@ -121,20 +185,35 @@ public partial class Registry
             throw new ArgumentException("este povoado já tem histórico de estoque e não pode ser excluído");
         _db.Tx(() =>
         {
+            var place = _db.Scalar("select place_id from settlement where id = @0", id);
             _db.Run("delete from activity where settlement_id = @0", id);
             _db.Run("delete from settlement_capability where settlement_id = @0", id);
-            return _db.Run("delete from settlement where id = @0", id) == 0 ? throw new ArgumentException($"povoado {id} não existe") : 0;
+            if (_db.Run("delete from settlement where id = @0", id) == 0) throw new ArgumentException($"povoado {id} não existe");
+            // A cidade fica se a ficha de alguém a usa; criada só para este povoado, sai junto.
+            if (place != null) _db.Run("""
+                delete from place where id = @0 and not exists (select 1 from presence where place_id = @0)
+                    and not exists (select 1 from population_estimate where place_id = @0) and not exists (select 1 from distribution where place_id = @0)
+                """, place);
+            return 0;
         });
     }
 
-    /// {id, name, lat, lon, workers, reach_km, assigned (trabalhadores postos em atividades)}, por nome.
-    public Array<Dictionary> Settlements() => new(_db.Rows("""
-            select s.id, s.name, s.lat, s.lon, s.workers, s.reach_km, coalesce((select sum(a.workers) from activity a where a.settlement_id = s.id), 0)
+    /// {id, name, lat, lon, workers, reach_km, assigned (trabalhadores postos em atividades), place_id (a cidade; 0 = nenhuma),
+    /// work_pct (NaN = digitados direto), population (a da cidade em t; NaN = sem número)}, por nome.
+    public Array<Dictionary> Settlements() => SettlementsAt(long.MaxValue);
+
+    public Array<Dictionary> SettlementsAt(long t) => new(_db.Rows("""
+            select s.id, s.name, s.lat, s.lon, s.workers, s.reach_km, coalesce((select sum(a.workers) from activity a where a.settlement_id = s.id), 0),
+                   coalesce(s.place_id, 0), s.work_pct,
+                   (select x.low from population_estimate x where x.place_id = s.place_id and x.t <= @0 and x.level is null and x.low = x.high
+                    order by x.t desc, x.id desc limit 1)
             from settlement s order by s.name collate nocase, s.id
-            """).Select(r => new Dictionary
+            """, t).Select(r => new Dictionary
         {
             ["id"] = Convert.ToInt64(r[0]), ["name"] = Str(r[1]), ["lat"] = Convert.ToDouble(r[2]), ["lon"] = Convert.ToDouble(r[3]),
             ["workers"] = Convert.ToInt64(r[4]), ["reach_km"] = Convert.ToDouble(r[5]), ["assigned"] = Convert.ToInt64(r[6]),
+            ["place_id"] = Convert.ToInt64(r[7]), ["work_pct"] = r[8] == null ? double.NaN : Convert.ToDouble(r[8]),
+            ["population"] = r[9] == null ? double.NaN : Convert.ToDouble(r[9]),
         }));
 
     // ---- capacidades ----
@@ -374,7 +453,63 @@ public partial class Registry
         });
     }
 
+    /// Leva a atividade para a posição index (0 = a primeira) na ordem do povoado: é o arrastar da tela.
+    public void MoveActivityTo(long id, long index)
+    {
+        _db.Tx(() =>
+        {
+            var me = _db.Rows("select settlement_id from activity where id = @0", id);
+            if (me.Count == 0) throw new ArgumentException($"atividade {id} não existe");
+            var order = _db.Rows("select id from activity where settlement_id = @0 and id <> @1 order by position, id", me[0][0], id)
+                .Select(r => Convert.ToInt64(r[0])).ToList();
+            order.Insert((int)Math.Clamp(index, 0, order.Count), id);
+            for (int i = 0; i < order.Count; i++) _db.Run("update activity set position = @0 where id = @1", i + 1, order[i]);
+            return 0;
+        });
+    }
+
     public void DeleteActivity(long id) => _db.Run("delete from activity where id = @0", id);
+
+    /// O que impede cada receita neste povoado, em t: {recipe_id: motivo} ("" = dá para fazer). Olha o que não muda de um mês para o
+    /// outro sem o autor: saber fazer, ter a instalação ou a ferramenta e, numa extração, uma ocorrência utilizável ao alcance. Os
+    /// insumos não contam: outra atividade pode fazê-los. layers: {bem: a camada pintada dele}, como em RunMonth.
+    public Dictionary RecipeBlocks(long settlementId, long t, Terrain terrain, Dictionary layers)
+    {
+        var s = _db.Rows("select lat, lon, reach_km from settlement where id = @0", settlementId);
+        if (s.Count == 0) throw new ArgumentException($"povoado {settlementId} não existe");
+        var here = Vec.FromLatLon(Convert.ToDouble(s[0][0]), Convert.ToDouble(s[0][1]));
+        var maps = new System.Collections.Generic.Dictionary<long, Territory>();
+        foreach (var (key, value) in layers) maps[key.AsInt64()] = value.As<Territory>();
+        var known = _db.Rows("select capability_id from settlement_capability where settlement_id = @0", settlementId).Select(r => Convert.ToInt64(r[0])).ToHashSet();
+        var stock = StockAt(settlementId, t).ToDictionary(d => (long)d["good_id"], d => (double)d["qty"]);
+        var goods = GoodNames();
+        var blocks = new Dictionary();
+        foreach (var r in Recipes())
+        {
+            string why = "";
+            long cap = (long)r["capability_id"];
+            if (!(bool)r["ok"]) why = "Usa um bem que não existe mais";
+            else if (cap != 0 && !known.Contains(cap)) why = $"Precisa saber {r["capability"]}";
+            else
+                foreach (Dictionary q in (Godot.Collections.Array)r["requirements"])
+                    if (stock.GetValueOrDefault((long)q["good_id"]) <= Eps)
+                    {
+                        why = $"Precisa ter {goods[(long)q["good_id"]].Name} no estoque";
+                        break;
+                    }
+            if (why == "" && (string)r["kind"] == "extracao")
+            {
+                var left = new System.Collections.Generic.Dictionary<long, double>();
+                var (sources, reason) = Sources(here, Convert.ToDouble(s[0][2]), (long)r["output_id"], t, terrain, maps, left,
+                    new System.Collections.Generic.Dictionary<long, double>());
+                // O motivo vale só sem fonte ou com a reserva acabada (como no mês).
+                if (sources.Count == 0 || sources.Sum(o => left[o]) <= Eps)
+                    why = char.ToUpper(reason.Replace("parou: ", "")[0]) + reason.Replace("parou: ", "")[1..];
+            }
+            blocks[(long)r["id"]] = why;
+        }
+        return blocks;
+    }
 
     /// As atividades do povoado, na ordem: {id, recipe_id, recipe, text, workers, last (o que aconteceu no último mês processado)}.
     public Array<Dictionary> Activities(long settlementId)
@@ -756,7 +891,7 @@ public partial class Registry
         if (near.Count == 0) return (new List<long>(), $"parou: nenhuma ocorrência de {name} a até {Num(reachKm)} km");
         if (near.All(n => n.Policy == "bloqueada")) return (new List<long>(), $"parou: a ocorrência de {name} ao alcance está bloqueada pelo autor");
         var usable = near.Where(n => n.Reserve != null && n.Policy != "bloqueada").OrderBy(n => n.Km).ThenBy(n => n.Id).ToList();
-        if (usable.Count == 0) return (new List<long>(), $"parou: a ocorrência de {name} ao alcance não tem quantidade definida (defina em Recursos, aba No mapa)");
+        if (usable.Count == 0) return (new List<long>(), $"parou: a ocorrência de {name} ao alcance não tem quantidade definida (defina a quantidade no painel Recursos)");
         foreach (var n in usable)
             if (!left.ContainsKey(n.Id))
             {

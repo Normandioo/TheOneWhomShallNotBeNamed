@@ -120,7 +120,8 @@ func run() -> void:
 			return fail("tudo marcado: sobrou %d de %s" % [reg.Count(kind), kind])
 	if hub.current() != 0 or main.windows.window_open() or main.top_hud._name.text != "MUNDO":
 		return fail("depois de apagar não há seleção nem ficha: %s" % main.top_hud._name.text)
-	if reg.Places("").size() != 0 or main.territory.AreaKm2(aren) > 0.0 or terr.layer("cultura").AreaKm2(culture) > 0.0:
+	# Só fica a cidade do povoado (ela é o lugar dele, não um lugar solto).
+	if reg.Places("").size() != 1 or reg.Places("")[0].name != "Povoado" or main.territory.AreaKm2(aren) > 0.0 or terr.layer("cultura").AreaKm2(culture) > 0.0:
 		return fail("lugares soltos e territórios saem: %d lugares" % reg.Places("").size())
 	if reg.ResourceTypes("").size() != 1 or reg.Settlements().size() != 1:
 		return fail("recursos e povoados continuam")

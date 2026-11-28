@@ -175,6 +175,7 @@ public partial class Registry
         n += _db.Run("delete from distribution where place_id = @0", id);
         n += _db.Run("delete from population_estimate where place_id = @0", id);
         n += _db.Run("delete from presence where place_id = @0", id);
+        _db.Run("update settlement set place_id = null where place_id = @0", id);  // a economia (e o histórico dela) fica, sem a cidade
         _db.Run("delete from place where id = @0", id);
         return n;
     });
@@ -182,7 +183,7 @@ public partial class Registry
     /// Exclui um lugar criado por engano: recusa se alguma presença, estimativa ou distribuição o usa.
     public void DeletePlace(long id)
     {
-        long uses = Convert.ToInt64(_db.Scalar("select (select count(*) from presence where place_id = @0) + (select count(*) from population_estimate where place_id = @0) + (select count(*) from distribution where place_id = @0)", id));
+        long uses = Convert.ToInt64(_db.Scalar("select (select count(*) from presence where place_id = @0) + (select count(*) from population_estimate where place_id = @0) + (select count(*) from distribution where place_id = @0) + (select count(*) from settlement where place_id = @0)", id));
         if (uses > 0) throw new ArgumentException($"o lugar {id} está em uso ({uses} registros)");
         _db.Run("delete from place where id = @0", id);
     }

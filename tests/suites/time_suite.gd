@@ -110,10 +110,10 @@ func _go_back_by_hand(clock, bar) -> void:
 	if not clock.viewing or Calendar.from_seconds(clock.shown())["year"] != 2:
 		return fail("digitar 2 no ano e consultar deveria mostrar o ano 2, mostrou " + Calendar.format(clock.shown()))
 	await save("3_data_passada")
-	if main.production.panel.stock_title.text != "Estoque em " + Calendar.format(clock.shown(), false):
+	if main.production.panel.stock_title.text != "em " + Calendar.format(clock.shown(), false):
 		return fail("o painel de povoados deveria seguir a data consultada: " + main.production.panel.stock_title.text)
 	clock.exit_view()
-	if main.production.panel.stock_title.text != "Estoque em " + Calendar.format(clock.now, false):
+	if main.production.panel.stock_title.text != "em " + Calendar.format(clock.now, false):
 		return fail("ao voltar ao presente, o painel de povoados deveria voltar à data atual")
 	main.production.panel.visible = false
 

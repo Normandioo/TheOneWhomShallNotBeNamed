@@ -389,31 +389,30 @@ static func _resources(m) -> Array:
 
 static func _settlements(m) -> Array:
 	var panel = m._dock["settlements"]
-	var screen = func(): return [panel.list_box.visible, panel.selected_box.visible, panel.recipes_box.visible]
-	var list = func(): panel.back_requested.emit() if not panel.list_box.visible else null
+	var screen = func(): return panel.current_screen()
+	var list = func():
+		for _i in 3:  # ‹ volta um passo por vez (nova atividade → povoado → lista)
+			if panel.current_screen() != "lista":
+				panel.back_requested.emit()
 	var open_first = func():
-		if panel.list_box.visible:
-			var villages: Array = m.domains.registry.Settlements()
-			if not villages.is_empty():
-				panel.settlement_chosen.emit(int(villages[0].id))
-	var go_tab = func(index: int): return func():
-		open_first.call()
-		if panel.selected_box.visible:
-			panel.tab_buttons[index].pressed.emit()
-	var page = func(index: int): return func() -> Array: return [panel.pages[index]]
+		list.call()
+		var villages: Array = m.domains.registry.Settlements()
+		if not villages.is_empty():
+			panel.settlement_chosen.emit(int(villages[0].id))
+	var nodes = func(names: Array): return func() -> Array: return names.map(func(n): return panel.get(n))
 	return [
-		step("Os povoados", "A cada mês do calendário, eles produzem o que dá com os trabalhadores, os insumos e os recursos ao alcance.", [these([panel])],
-			"clique num povoado e volte.", screen, {"prep": list}),
-		step("Criar um povoado", "Dê um nome, diga quantos trabalhadores há, aperte Colocar no mapa e clique no globo.", [these([panel.new_name, panel.place_button]), these([panel])],
-			"", Callable(), {"prep": list}),
-		step("Receitas", "O que se pode fazer: trabalho em pessoas-dia, insumos (um pode substituir o de cima), o que sai e o que exige. Em Produz, Criar bem faz ali mesmo um bem fabricado novo, sem lugar no mapa.", [these([panel.recipes_button]), these([panel])],
-			"abra as receitas e volte.", screen, {"prep": list}),
-		step("Atividades", "Quem faz o quê. As de cima ficam primeiro com os trabalhadores e os insumos; Subir muda a ordem e Tirar remove. O que é feito num mês só pode ser usado no seguinte. Para uma atividade que ainda não existe, use ＋ Criar uma atividade diferente.",
-			[page.call(0), these([panel])], "", Callable(), {"prep": go_tab.call(0)}),
-		step("Estoque", "O que há no povoado na data mostrada. Pôr no estoque e Tirar do estoque lançam uma quantidade.", [page.call(1), these([panel])],
-			"", Callable(), {"prep": go_tab.call(1)}),
-		step("Editar", "Nome, trabalhadores, alcance (até onde busca recursos), capacidades, Ver no mapa, Mover e Excluir povoado (só sem histórico).",
-			[page.call(2), these([panel])], "", Callable(), {"prep": go_tab.call(2)}),
+		step("A economia", "Cada povoado é a economia de uma cidade: a cada mês do calendário, produz com a sua gente, os insumos e os recursos ao alcance. O cartão mostra a gente ocupada e o último mês: ✓ produziu, ⚠ limitado, ✕ parou.",
+			[these([panel])], "clique num povoado e volte com ‹.", screen, {"prep": list}),
+		step("Novo povoado", "Numa cidade que já existe (você escolhe a parte da população que trabalha, e o número de pessoas acompanha) ou num lugar novo do mapa, que vira uma cidade.",
+			[these([panel.new_button]), these([panel])], "", Callable(), {"prep": list}),
+		step("Receitas", "O que se pode fazer: o que entra (um pode substituir o de cima), o trabalho em pessoas-dia, o que sai e o que precisa (instalação, saber fazer). A frase embaixo mostra a receita inteira; Criar bem faz ali mesmo um bem fabricado novo.",
+			[these([panel.recipes_button]), these([panel])], "abra as receitas e volte.", screen, {"prep": list}),
+		step("O que faz", "Cada atividade é um cartão: − e + mudam as pessoas; a alça ⋮⋮ arrasta para mudar a ordem (as de cima ficam primeiro com a gente e os insumos); ✕ tira. Embaixo, o último mês em cor. O que é feito num mês só pode ser usado no seguinte.",
+			[nodes.call(["cards", "create_activity"]), these([panel])], "", Callable(), {"prep": open_first}),
+		step("Nova atividade", "Mostra as receitas que dá para fazer aqui e as que falta algo, com o motivo: saber fazer, ter a instalação ou um recurso ao alcance. ＋ põe a receita no povoado, com as pessoas livres.",
+			[nodes.call(["create_activity"]), these([panel])], "", Callable(), {"prep": open_first}),
+		step("Estoque e detalhes", "O estoque na data mostrada (± Pôr ou tirar lança uma quantidade). Em Detalhes: o nome (o da cidade), a parte da população que trabalha, o alcance e o que o povoado sabe fazer. O ⋯ do alto vê no mapa, move e exclui.",
+			[nodes.call(["stock_title", "menu_button"]), these([panel])], "", Callable(), {"prep": open_first}),
 		step("Ver a produção", "Avance o tempo no alto à direita: a produção acontece a cada mês que passa.", [these([m.tool_panel.time_slot])]),
 	]
 

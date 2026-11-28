@@ -177,6 +177,8 @@ func run() -> void:
 		return fail("reabrir conserva estoques, atividades e os meses feitos")
 	r.Close()
 	ok("histórico conservado; exclusões só sem uso; reabrir guarda tudo")
+	if not _test_cities():
+		return
 	if main != null:
 		await _run_scene()
 
@@ -200,21 +202,38 @@ func _run_scene() -> void:
 	if reg.Recipes().size() != 1:
 		return fail("a tela de receitas cria a receita: " + panel.message.text)
 	panel.back_requested.emit()
+	# Povoado num lugar novo: o próximo clique põe a cidade e a economia dela.
+	panel.new_button.pressed.emit()
+	if panel.current_screen() != "novo" or panel.title.text != "NOVO POVOADO":
+		return fail("＋ Novo povoado abre a tela do povoado novo")
+	panel._origin_cards["lugar"].pressed.emit()
 	panel.new_name.text = "Vila do Sal"
 	panel.new_workers.value = 40
-	panel.create_requested.emit(panel.new_name.text, 40)
+	panel.place_button.pressed.emit()
 	main.select(EvronGeo.dir(0.0, 10.1))
-	if reg.Settlements().size() != 1 or not panel.place_box.visible or main.globe.settlements.label_count != 1:
-		return fail("o clique no globo põe o povoado e abre a tela dele")
+	if reg.Settlements().size() != 1 or not panel.place_box.visible or main.globe.settlements.label_count != 1 or int(reg.Settlements()[0].place_id) == 0:
+		return fail("o clique no globo põe o povoado (e a cidade dele) e abre a tela dele")
 	panel.activity_added.emit(int(reg.Recipes()[0].id), 50)
 	if not panel.message.text.begins_with("Não há trabalhadores livres"):
 		return fail("mais pessoas que o povoado tem: aviso")
 	panel.activity_added.emit(int(reg.Recipes()[0].id), 30)
 	var village: int = prod.settlement_id
-	# Uma atividade diferente, sem sair do povoado: o botão abre a receita em branco, e salvar volta com ela escolhida.
+	if panel.activity_cards().size() != 1:
+		return fail("cada atividade é um cartão")
+	# A nova atividade: o que dá para fazer aqui e o que falta, com o motivo.
+	var ouro: int = reg.CreateResourceType("Ouro").Id
+	var garimpar: int = reg.CreateRecipe("Garimpar", "extracao", ouro, 1.0, 10.0, PackedFloat64Array())
 	panel.create_activity.pressed.emit()
+	var picked: Array = panel.picker_rows()
+	if panel.current_screen() != "atividade" or picked[0].size() != 1 or picked[1].size() != 1 \
+			or not picked[1][0].find_children("*", "Label", true, false).any(func(l): return l.text.contains("Nenhuma ocorrência de Ouro")):
+		return fail("a nova atividade separa o que dá do que falta, com o motivo")
+	reg.DeleteRecipe(garimpar)
+	reg.DeleteResourceType(ouro)
+	# Uma receita nova a partir dela: salvar volta para a nova atividade, com a receita na lista.
+	panel.new_activity_requested.emit()
 	if not panel.recipes_box.visible or panel.title.text != "RECEITAS" or panel.recipe_name.text != "" or panel.recipe_output.selected != -1:
-		return fail("o botão abre uma receita em branco: %s" % panel.title.text)
+		return fail("criar receita nova abre a receita em branco: %s" % panel.title.text)
 	panel.recipe_name.text = "Secar sal"
 	prod.refresh()  # como na virada do mês: o que foi digitado fica
 	panel._save_recipe()
@@ -225,48 +244,81 @@ func _run_scene() -> void:
 	if panel.recipe_name.text != "Secar sal":
 		return fail("uma receita recusada não pode apagar o formulário")
 	panel.back_requested.emit()
-	if not panel.place_box.visible or prod.settlement_id != village:
-		return fail("voltar das receitas, vindo do povoado, volta para ele")
-	panel.create_activity.pressed.emit()
+	if panel.current_screen() != "atividade" or prod.settlement_id != village:
+		return fail("voltar da receita, vindo da nova atividade, volta para ela")
+	panel.new_activity_requested.emit()
 	panel.recipe_saved.emit(0, {"name": "Secar sal", "kind": "fabricacao", "output_id": sal, "output_qty": 1.0, "labor_days": 2.0, "inputs": []})
-	if not panel.place_box.visible or prod.settlement_id != village or panel.activity_recipe.get_item_text(panel.activity_recipe.selected) != "Secar sal" \
-			or not panel.message.text.contains("criada"):
-		return fail("salvar volta ao povoado com a atividade escolhida: " + panel.message.text)
+	if panel.current_screen() != "atividade" or not panel.message.text.contains("criada") \
+			or not panel.picker_rows()[0].any(func(row): return row.find_children("*", "Label", true, false).any(func(l): return l.text == "Secar sal")):
+		return fail("salvar volta à nova atividade com a receita na lista: " + panel.message.text)
 	for x in reg.Recipes():
 		if x.name == "Secar sal":
 			reg.DeleteRecipe(int(x.id))  # o resto da suíte conta com uma receita só
+	panel.back_requested.emit()
+	if panel.current_screen() != "povoado":
+		return fail("da nova atividade, ‹ volta ao povoado")
 	prod.refresh()
 	main.clock.now = Calendar.to_seconds(1, 1, 15)
 	main.clock.advance_months(1)  # passa por 1º de fevereiro: janeiro é processado
-	if not _near(_stock_of(reg, village, sal), 30.0 * 31.0 / 30.0 * 10.0) or not panel.results_box.get_child(1).text.contains("+310 kg de Sal"):
-		return fail("o calendário processa janeiro e a tela mostra: %s" % panel.results_box.get_child(1).text)
+	var shown_text: Array = panel.activity_cards()[0].find_children("*", "Label", true, false).map(func(l): return l.text)
+	if not _near(_stock_of(reg, village, sal), 30.0 * 31.0 / 30.0 * 10.0) or not shown_text.any(func(t): return t.contains("+310 kg de Sal")):
+		return fail("o calendário processa janeiro e o cartão mostra: %s" % [shown_text])
 	main.clock.now = Calendar.to_seconds(1, 1, 20)  # como se o relógio salvo fosse mais velho que o banco
 	main.clock.advance_months(1)
 	if not _near(_stock_of(reg, village, sal), 310.0):
 		return fail("voltar o relógio e passar pelo mesmo mês não produz de novo")
-	panel.show_tab(1)
 	panel.stock_qty.text = "10,5"
 	panel.stock_good.select(0)
 	panel._stock(-1.0)
 	if not _near(_stock_of(reg, village, sal), 299.5):
 		return fail("tirar do estoque pela tela: %s" % panel.message.text)
-	panel.show_tab(0)
+	# Arrastar muda a ordem: a atividade nova vai para cima.
+	panel.activity_added.emit(int(reg.Recipes()[0].id), 5)
+	var second: int = int(reg.Activities(village)[1].id)
+	panel.activity_moved.emit(second, 0)
+	if int(reg.Activities(village)[0].id) != second or int(panel.activity_cards()[0].activity) != second:
+		return fail("arrastar a atividade para cima a põe primeiro")
+	panel.activity_removed.emit(second)
 	main.globe.focus(EvronGeo.dir(0.0, 10.0), 1.6)
 	await save("povoado_atividades")
-	panel.show_tab(2)
 	panel.capability_name.text = "Fundir bronze"
 	panel.capability_level.value = 70
 	panel.capability_set.emit("Fundir bronze", 70)
 	if reg.SettlementCapabilities(village).size() != 1 or panel.capabilities.item_count != 1:
 		return fail("o povoado aprende uma capacidade pela tela")
+	if not panel.stock_title.text.begins_with("em "):
+		return fail("o estoque diz a data")
+	# A lista diz como foi o último mês de cada povoado.
+	panel.back_requested.emit()
+	if panel.settlement_rows().size() != 1 or not panel.settlement_rows()[0].accessibility_name.contains("+310 kg de Sal"):
+		return fail("a lista mostra o último mês: %s" % panel.settlement_rows()[0].accessibility_name)
+	await save("economia_lista")
+	# Economia numa cidade que já existe: a parte da população que trabalha sugere o número.
+	var reino: int = reg.Create("pais", "Reino")
+	var porto: int = reg.AddPlace("Porto", "assentamento", 2.0, 12.0, 0.0, "")
+	reg.AddPresence(reino, porto, "presenca", "media")
+	reg.AddEstimate(reino, porto, Calendar.to_seconds(1, 1, 1), 2400.0, 2400.0, "alta", "")
+	panel.new_button.pressed.emit()
+	var city_button: Array = panel.cities_box.get_children().filter(func(b): return b.has_meta("place_id") and int(b.get_meta("place_id")) == porto)
+	if city_button.size() != 1 or city_button[0].disabled:
+		return fail("a cidade aparece para ganhar economia")
+	city_button[0].pressed.emit()
+	panel.new_pct.value = 25
+	if int(panel.new_workers.value) != 600:
+		return fail("25%% de 2.400 habitantes sugere 600 pessoas, deu %d" % panel.new_workers.value)
+	await save("economia_novo")
+	panel.city_button.pressed.emit()
+	var mine: Array = Array(reg.Settlements()).filter(func(s): return int(s.place_id) == porto)
+	if mine.size() != 1 or int(mine[0].workers) != 600 or mine[0].work_pct != 25.0 or panel.current_screen() != "povoado":
+		return fail("dar economia à cidade: 600 pessoas, 25%% guardado, e abre o povoado: %s" % [mine])
+	reg.DeleteSettlement(int(mine[0].id))
+	panel.back_requested.emit()
 	panel.recipes_requested.emit()
 	panel.recipe_saved.emit(0, {"name": "Bronze", "kind": "fabricacao", "output_id": sal, "output_qty": 1.0, "labor_days": 5.0,
 		"inputs": [], "requirements": [], "capability": "Fundir bronze"})
 	var bronze: Array = Array(reg.Recipes()).filter(func(x): return x.name == "Bronze")
 	if bronze.size() != 1 or bronze[0].capability != "Fundir bronze":
 		return fail("a receita exige a capacidade pela tela: %s" % [bronze])
-	if panel.stock_title.text.begins_with("Estoque em") == false:
-		return fail("o estoque diz a data")
 	# Um bem fabricado nasce na receita, como Manufatura, e no painel Recursos aparece pelos povoados, não pelo mapa.
 	panel.good_create_requested.emit("Espada")
 	var espada: Array = Array(reg.ResourceTypes("Espada"))
@@ -288,6 +340,57 @@ func _run_scene() -> void:
 		return fail("Ctrl+Z desfaz o bem criado na receita")
 	main.resources.set_open(false)
 	ok("cena: o calendário processa o mês uma vez; criar, receita, atividade e estoque pela tela")
+
+
+## O povoado é a economia de uma cidade: um mundo antigo ganha a cidade de cada povoado; dá para dar economia a uma cidade que já existe
+## (uma vez só); renomear e mover valem para os dois; excluir leva a cidade criada só para ele, mas não a de uma ficha.
+func _test_cities() -> bool:
+	var path := out_dir.path_join("production_cities.db")
+	for ext in ["", "-journal", "-wal", "-shm"]:
+		DirAccess.remove_absolute(path + ext)
+	r = load("res://scripts/world/Registry.cs").new()
+	r.OpenAtVersion(path, 23)  # antes de SettlementCityMigration
+	r.Close()
+	var raw = load("res://scripts/data/WorldDb.cs").new()
+	raw.Open(path)
+	raw.Execute("insert into settlement(id, name, lat, lon, workers) values (7, 'Vila antiga', 10, 20, 30)")
+	raw.Close()
+	r.Open(path)
+	var old: Dictionary = r.Settlements()[0]
+	var city: Array = Array(r.Cities(0)).filter(func(c): return int(c.place_id) == int(old.place_id))
+	if int(old.place_id) == 0 or city.size() != 1 or city[0].name != "Vila antiga" or int(city[0].settlement_id) != 7:
+		return _no("o povoado de um mundo antigo vira a economia de uma cidade nova no mesmo lugar: %s" % [old])
+	var reino: int = r.Create("pais", "Reino")
+	var porto: int = r.AddPlace("Porto", "assentamento", 1.0, 2.0, 0.0, "")
+	r.AddPresence(reino, porto, "presenca", "media")
+	r.AddEstimate(reino, porto, 0, 2400.0, 2400.0, "alta", "")
+	var listed: Dictionary = Array(r.Cities(10)).filter(func(c): return int(c.place_id) == porto)[0]
+	if listed.country != "Reino" or listed.population != 2400.0 or int(listed.settlement_id) != 0:
+		return _no("a cidade aparece com o país e a população: %s" % [listed])
+	var eco: int = r.CreateSettlementInCity(porto, 600)
+	if eco == 0 or r.CreateSettlementInCity(porto, 1) != null or r.CreateSettlementInCity(reino, 1) != null:
+		return _no("dar economia a uma cidade: uma vez só, e só a uma cidade")
+	r.SetSettlement(eco, "Porto Alto", 600, 50.0)
+	r.MoveSettlement(eco, 3.0, 4.0)
+	r.SetSettlementShare(eco, 25.0)
+	var place: Dictionary = r.Place(porto)
+	var mine: Dictionary = Array(r.SettlementsAt(10)).filter(func(s): return int(s.id) == eco)[0]
+	if place.name != "Porto Alto" or place.lat != 3.0 or mine.work_pct != 25.0 or mine.population != 2400.0:
+		return _no("renomear e mover valem para a cidade; a parte que trabalha fica guardada: %s %s" % [place, mine])
+	var fresh: int = r.CreateSettlement("Aldeia nova", 5.0, 5.0, 10)
+	var fresh_place: int = int(Array(r.Settlements()).filter(func(s): return int(s.id) == fresh)[0].place_id)
+	r.DeleteSettlement(fresh)
+	r.DeleteSettlement(eco)
+	if Array(r.Cities(0)).any(func(c): return int(c.place_id) == fresh_place) or not Array(r.Cities(0)).any(func(c): return int(c.place_id) == porto):
+		return _no("excluir o povoado leva a cidade criada para ele, não a da ficha")
+	r.Close()
+	ok("povoado é a economia de uma cidade: migração, cidade existente, nome e ponto juntos, % guardada")
+	return true
+
+
+func _no(msg: String) -> bool:
+	fail(msg)
+	return false
 
 
 func _good(good_name: String, unit: String) -> int:

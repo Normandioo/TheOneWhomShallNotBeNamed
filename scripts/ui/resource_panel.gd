@@ -297,7 +297,7 @@ func _build_new(box: VBoxContainer) -> void:
 func _choice_card(parent: Control, icon_name: String, heading: String, about: String, on_press: Callable) -> Button:
 	var card := _button(parent, "", on_press)
 	card.toggle_mode = true
-	card.custom_minimum_size.y = 62
+	card.custom_minimum_size.y = 74
 	card.tooltip_text = about
 	card.accessibility_name = "%s: %s" % [heading, about]
 	var body := VBoxContainer.new()

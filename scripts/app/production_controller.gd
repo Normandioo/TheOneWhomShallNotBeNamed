@@ -39,33 +39,60 @@ func setup(domain_hub, settlement_panel, settlement_layer, world_terrain, territ
 		settlement_id = id
 		panel.show_screen("povoado")
 		refresh())
+	# ‹ volta um passo: da receita aberta de dentro do povoado, para a nova atividade; da nova atividade, para o povoado; do resto, para a lista.
 	panel.back_requested.connect(func() -> void:
 		cancel_click()
-		if _return_to_place and panel.recipes_box.visible and settlement_id != 0:
-			_open_place()
-			return
-		_return_to_place = false
-		settlement_id = 0
-		panel.show_screen("lista")
+		panel.show_message("")
+		var screen: String = panel.current_screen()
+		if _return_to_place and screen == "receitas" and settlement_id != 0:
+			_return_to_place = false
+			panel.show_screen("atividade")
+		elif screen == "atividade" and settlement_id != 0:
+			panel.show_screen("povoado")
+		else:
+			_return_to_place = false
+			settlement_id = 0
+			panel.show_screen("lista")
 		refresh())
 	panel.recipes_requested.connect(func() -> void:
 		cancel_click()
 		_return_to_place = false
 		panel.show_screen("receitas")
 		refresh())
+	panel.new_requested.connect(func() -> void:
+		cancel_click()
+		panel.show_screen("novo")
+		refresh())
+	panel.totals_requested.connect(func() -> void:
+		panel.show_screen("totais")
+		refresh())
+	panel.picker_requested.connect(func() -> void:
+		panel.show_screen("atividade")
+		refresh())
 	panel.new_activity_requested.connect(func() -> void:
 		cancel_click()
 		_return_to_place = true
 		panel.new_recipe()
 		panel.show_screen("receitas")
-		panel.show_message("Preencha a receita e salve: você volta para o povoado com ela escolhida.")
+		panel.show_message("Preencha a receita e salve: você volta para a nova atividade com ela na lista.")
+		refresh())
+	panel.city_chosen.connect(func(place: int, workers: int, pct: float) -> void:
+		var made = hub.registry.CreateSettlementInCity(place, workers)
+		if made == null:
+			panel.show_message("Não deu para dar economia a esta cidade (veja o log).")
+			return
+		settlement_id = int(made)
+		if not is_nan(pct):
+			hub.registry.SetSettlementShare(settlement_id, pct)
+		panel.show_message("")
+		panel.show_screen("povoado")
 		refresh())
 	panel.create_requested.connect(func(new_name: String, workers: int) -> void:
 		if new_name.strip_edges() == "":
-			panel.show_message("Dê um nome ao povoado.")
+			panel.show_message("Dê um nome à cidade nova.")
 			return
 		_new = {"name": new_name, "workers": workers}
-		_wait("create", "Clique no globo onde fica o povoado (Esc cancela)."))
+		_wait("create", "Clique no globo onde fica a cidade (Esc cancela)."))
 	panel.move_requested.connect(func() -> void: _wait("move", "Clique no novo lugar do povoado (Esc cancela)."))
 	panel.cancel_requested.connect(cancel_click)
 	panel.recipe_saved.connect(_save_recipe)
@@ -81,10 +108,13 @@ func setup(domain_hub, settlement_panel, settlement_layer, world_terrain, territ
 	panel.recipe_delete_requested.connect(func(id: int) -> void:
 		_do(func(): hub.registry.DeleteRecipe(id), "Esta receita está em uso: tire as atividades que a usam antes."))
 	panel.activity_added.connect(func(recipe: int, workers: int) -> void:
-		_do(func(): return hub.registry.AddActivity(settlement_id, recipe, workers), _free_text()))
+		if _do(func(): return hub.registry.AddActivity(settlement_id, recipe, workers), _free_text()) and panel.current_screen() == "atividade":
+			panel.show_screen("povoado")  # posta a atividade, volta para o povoado ver o cartão dela
+			refresh())
 	panel.activity_workers_set.connect(func(id: int, workers: int) -> void:
 		_do(func(): hub.registry.SetActivityWorkers(id, workers), _free_text()))
-	panel.activity_up.connect(func(id: int) -> void: _do(func(): hub.registry.MoveActivityUp(id), ""))
+	panel.activity_moved.connect(func(id: int, index: int) -> void: _do(func(): hub.registry.MoveActivityTo(id, index), ""))
+	panel.share_set.connect(func(pct: float) -> void: hub.registry.SetSettlementShare(settlement_id, pct))
 	panel.activity_removed.connect(func(id: int) -> void: _do(func(): hub.registry.DeleteActivity(id), ""))
 	panel.stock_changed.connect(func(good: int, qty: float, note: String) -> void:
 		_do(func(): hub.registry.Intervene(settlement_id, good, qty, clock.now, note), "O estoque não tem tudo isso para tirar."))
@@ -133,15 +163,20 @@ func on_step(t: int) -> void:
 	var d := Calendar.from_seconds(t)
 	if d.day != 1 or d.hour != 0 or d.minute != 0 or d.second != 0:
 		return
+	var done = hub.registry.RunMonth(Calendar.add_months(t, -1), t, terrain, _layers())
+	if done != null and done.ran:
+		month_processed.emit(t)
+		refresh()
+
+
+## As camadas pintadas dos bens extraídos: {bem: camada}, para achar as áreas ao alcance.
+func _layers() -> Dictionary:
 	var layers := {}
 	for good in hub.registry.ExtractedGoods():
 		var map = territories.layer(TerritoryEditor.RESOURCE + str(good)) if territories != null else null
 		if map != null:
 			layers[good] = map
-	var done = hub.registry.RunMonth(Calendar.add_months(t, -1), t, terrain, layers)
-	if done != null and done.ran:
-		month_processed.emit(t)
-		refresh()
+	return layers
 
 
 # --- tela --------------------------------------------------------------------------------------------------------
@@ -149,23 +184,55 @@ func on_step(t: int) -> void:
 func refresh() -> void:
 	if hub == null or not hub.usable:
 		return
-	var rows: Array = hub.registry.Settlements()
+	var shown: int = clock.shown()
+	var rows: Array = hub.registry.SettlementsAt(shown)
 	if not rows.any(func(s): return int(s.id) == settlement_id) and settlement_id != 0:
 		settlement_id = 0
 		panel.show_screen("lista")
 	if panel.visible:
 		var goods: Array = hub.registry.ResourceTypes("").map(func(t): return {"id": int(t.id), "name": t.name, "unit": t.unit})
 		panel.show_catalog(goods, hub.registry.Recipes())
-		panel.show_settlements(rows, settlement_id)
-		var shown: int = clock.shown()
-		if settlement_id != 0 and not panel.recipes_box.visible:
-			panel.show_place(_settlement(), hub.registry.Activities(settlement_id), hub.registry.StockAt(settlement_id, shown),
+		var screen: String = panel.current_screen()
+		if screen == "lista":
+			for s in rows:
+				s.merge(_status(hub.registry.Activities(int(s.id))))
+			panel.show_settlements(rows, settlement_id)
+		elif screen == "novo":
+			panel.show_cities(hub.registry.Cities(shown))
+		elif settlement_id != 0 and screen in ["povoado", "atividade"]:
+			panel.show_place(_settlement(rows), hub.registry.Activities(settlement_id), hub.registry.StockAt(settlement_id, shown),
 				hub.registry.SettlementCapabilities(settlement_id), Calendar.format(shown, false))
-		var countries = territories.layer("pais") if territories != null else null
-		if countries != null:
-			panel.show_totals(hub.registry.StockByCountry(countries, terrain, shown))
+			if screen == "atividade":
+				panel.show_picker(hub.registry.RecipeBlocks(settlement_id, shown, terrain, _layers()))
+		elif screen == "totais":
+			var countries = territories.layer("pais") if territories != null else null
+			if countries != null:
+				panel.show_totals(hub.registry.StockByCountry(countries, terrain, shown))
 	layer.show_items([] if not panel.visible else rows.map(func(s): return {"place_id": int(s.id), "lat": s.lat, "lon": s.lon,
 		"radius_km": 0.0, "color": Color.WHITE if int(s.id) == settlement_id else Color(0.95, 0.85, 0.65), "label": "⌂ " + s.name}))
+
+
+## Como foi o último mês do povoado, pelas notas das atividades: {status: "ok" | "warn" | "stop" | "", summary}. Um problema vale mais
+## que o que foi feito: o autor precisa ver primeiro o que parou.
+static func _status(acts: Array) -> Dictionary:
+	var made: Array[String] = []
+	var warn := ""
+	var stop := ""
+	for a in acts:
+		var note: String = a.last
+		if note.begins_with("parou") and stop == "":
+			stop = "✕ %s parou: %s" % [a.recipe, note.trim_prefix("parou: ")]
+		elif (note.contains("(limitado") or note.contains("(só ") or note.begins_with("limitado") or note.begins_with("só ")) and warn == "":
+			warn = "⚠ %s limitado: %s" % [a.recipe, note.get_slice("(", 1).trim_suffix(")").trim_prefix("limitado: ") if note.contains("(") else note]
+		if note.begins_with("+"):
+			made.append(note.get_slice(" (", 0))
+	if stop != "":
+		return {"status": "stop", "summary": stop}
+	if warn != "":
+		return {"status": "warn", "summary": warn}
+	if not made.is_empty():
+		return {"status": "ok", "summary": "✓ " + " · ".join(made)}
+	return {"status": "", "summary": "Sem atividades." if acts.is_empty() else "Ainda não houve mês processado."}
 
 
 func cancel_click() -> void:
@@ -240,19 +307,12 @@ func _save_recipe(id: int, data: Dictionary) -> void:
 	if id == 0:
 		panel.new_recipe()
 	if id == 0 and _return_to_place and settlement_id != 0:
-		_open_place()
-		panel.choose_recipe(saved_id)
-		panel.show_message("Atividade \"%s\" criada. Diga quantas pessoas e clique em Adicionar." % String(data.name).strip_edges())
+		_return_to_place = false
+		panel.show_screen("atividade")
+		refresh()
+		panel.show_message("Receita \"%s\" criada. Aperte ＋ nela para pôr neste povoado." % String(data.name).strip_edges())
 	else:
 		refresh()
-
-
-## Volta da tela de receitas para o povoado aberto.
-func _open_place() -> void:
-	_return_to_place = false
-	panel.show_message("")
-	panel.show_screen("povoado")
-	refresh()
 
 
 ## Roda uma gravação do Registry. O C# recusa com exceção, que no GDScript vira só um erro no log: o sucesso é o banco ter mudado.
@@ -273,11 +333,11 @@ func _fingerprint() -> String:
 
 
 func _free_text() -> String:
-	return "Não há trabalhadores livres para isso: diminua outra atividade ou aumente os trabalhadores na aba Editar."
+	return "Não há trabalhadores livres para isso: diminua outra atividade ou aumente a gente do povoado em Detalhes."
 
 
-func _settlement() -> Dictionary:
-	for s in hub.registry.Settlements():
+func _settlement(rows: Array = []) -> Dictionary:
+	for s in rows if not rows.is_empty() else hub.registry.Settlements():
 		if int(s.id) == settlement_id:
 			return s
 	return {}

@@ -95,6 +95,7 @@ public partial class Registry : RefCounted
         DetailsMigration,  // RegistryDetails.cs
         DivisionNamesMigration,  // RegistryDivisions.cs
         PaintedDataMigration,  // RegistryTerritory.cs
+        SettlementCityMigration,  // RegistryProduction.cs
     };
 
     WorldDb _db = new();
