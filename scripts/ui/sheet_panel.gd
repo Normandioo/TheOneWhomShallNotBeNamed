@@ -34,6 +34,8 @@ signal place_move_requested(place_id: int)  # o próximo clique no globo leva o 
 signal territory_paint_requested                              # entrar no modo pintar território para este país
 signal territory_boundary_requested                           # entrar direto no pincel de fronteira do país selecionado
 signal territory_clear_requested                              # apagar todo o território deste país (desfaz com Ctrl+Z)
+signal territory_claim_requested                              # pintar o que este país reivindica (camada própria, sobre os outros)
+signal territory_split_requested                              # dividir o território em dois pelo traço (o lado que sai vira um cadastro novo)
 signal entity_color_changed(entity_id: int, rgb: int, final: bool)  # final = o usuário fechou o seletor (grava); senão, prévia na paleta
 signal place_search(text: String)  # buscar lugares para os menus (o hub responde com show_place_candidates)
 signal presence_added(place_id: int, role: String)
@@ -1334,6 +1336,24 @@ func _build_territory() -> void:
 	clear.tooltip_text = "Apaga todo o território pintado deste cadastro (Ctrl+Z desfaz)"
 	clear.pressed.connect(func() -> void: territory_clear_requested.emit())
 	row.add_child(clear)
+	if String(_sheet.kind) in ["pais", "provincia", "municipio"]:
+		var split := Button.new()
+		split.text = "Dividir"
+		split.disabled = info.area_km2 <= 0.0 or not info.ok
+		split.tooltip_text = "Divide o território em dois por uma linha: o lado que sai vira um cadastro novo, com as subdivisões dele (Ctrl+Z desfaz)"
+		split.pressed.connect(func() -> void: territory_split_requested.emit())
+		row.add_child(split)
+	if info.has("claims"):
+		var claim := Button.new()
+		claim.text = "Pintar reivindicação"
+		claim.disabled = not info.ok
+		claim.tooltip_text = "Pinta o que este país reivindica, inclusive sobre outro país: a fronteira não muda (Ctrl+Z desfaz)"
+		claim.pressed.connect(func() -> void: territory_claim_requested.emit())
+		_actions.add_child(claim)
+		for c in info.claims.claims:
+			box.add_child(_note("Reivindica %s km² de %s" % [LayerPanel._thousands(roundi(c.km2)), c.name]))
+		for c in info.claims.claimed_by:
+			box.add_child(_note("%s reivindica %s km² daqui" % [c.name, LayerPanel._thousands(roundi(c.km2))]))
 	_territory_msg = _note("")
 	_territory_msg.visible = false
 	box.add_child(_territory_msg)

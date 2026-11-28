@@ -312,12 +312,12 @@ public partial class Territory
             before.Add((ushort)current);
             Put(pixel, owner);
         }
-        foreach (int pixel in plan.Freed)  // o que o território tinha do outro lado do traço: fica sem dono
+        foreach (int pixel in plan.Freed)  // o que o território tinha do outro lado do traço: fica sem dono (ou com o país novo, ao dividir)
         {
             if (Get(pixel) != next.Target) continue;
             pixels.Add(pixel);
             before.Add((ushort)next.Target);
-            Put(pixel, 0);
+            Put(pixel, plan.FreedOwner);
         }
         // O registro que o desfazer devolve: o da remodelagem; num redesenho que reaproveita um traço guardado, o dele.
         var replaced = plan.Previous ?? (plan.IsRedraw ? _boundaries.GetValueOrDefault(next.Id) : null);
@@ -349,6 +349,20 @@ public partial class Territory
             }
         Touch();
         return new TerritoryEdit(this, pixels.ToArray(), before.ToArray(), replaced, next, dropped);
+    }
+
+    /// Dividir: os donos da camada de baixo (subdivisões) com mais da metade dos pixels no lado que o plano tira do selecionado. Eles vão
+    /// junto para o cadastro novo (quem chama troca o vínculo antes de aplicar); os outros são aparados na borda, como em qualquer corte.
+    public int[] OwnersMostlyFreed(TerritoryBoundaryPlan plan, Territory below)
+    {
+        var freed = new Dictionary<int, int>();
+        foreach (int p in plan.Freed)
+            if (below.Get(p) is int o and > 0) freed[o] = freed.GetValueOrDefault(o) + 1;
+        if (freed.Count == 0) return [];
+        var total = new Dictionary<int, int>();
+        for (int p = 0; p < Size.X * Size.Y; p++)
+            if (below.Get(p) is int o and > 0 && freed.ContainsKey(o)) total[o] = total.GetValueOrDefault(o) + 1;
+        return freed.Where(kv => 2 * kv.Value > total[kv.Key]).Select(kv => kv.Key).OrderBy(o => o).ToArray();
     }
 
     private HashSet<long> RasterizeBoundary(Vector3[] curve)

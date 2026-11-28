@@ -25,6 +25,8 @@ var kind_of := Callable()
 var _panel
 var _commands
 var record_edit: Callable
+var before_apply := Callable()  # func(plan) -> String: prepara o plano antes de aplicar ("" = segue; senão o motivo de não aplicar)
+var apply_failed := Callable()  # o plano foi preparado e não pôde ser aplicado (o mapa mudou): desfaz o que before_apply fez
 var _draft_dirty := false
 var _job_points := PackedVector3Array()
 var applying := false
@@ -389,8 +391,16 @@ func apply_preview() -> void:
 	var applied_id := _id
 	var points := _points.duplicate()
 	_plan = null
+	var refused: String = before_apply.call(plan) if before_apply.is_valid() else ""
+	if refused != "":
+		preview_changed.emit(null)
+		_points = _saved.duplicate()
+		_refresh(refused)
+		return
 	var edit = _territory.ApplyBoundary(plan)
 	if edit == null:
+		if apply_failed.is_valid():
+			apply_failed.call()
 		preview_changed.emit(null)
 		_points = _saved.duplicate()
 		_refresh("O mapa mudou durante o traço. Desenhe novamente.")

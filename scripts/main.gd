@@ -812,7 +812,7 @@ func _restore_session() -> void:
 		_presence.names_check.button_pressed = settings.value("country_names")
 		_presence.rivers_check.button_pressed = settings.value("rivers")
 		var overlay: String = settings.value("area_overlay")
-		if overlay in TerritoryEditor.AREA_LEVELS and domains.usable:
+		if overlay in TerritoryEditor.OVERLAYS and domains.usable:
 			_presence.set_area_level(overlay)
 			territories.set_overlay(overlay)
 	if settings.value("remember_map"):

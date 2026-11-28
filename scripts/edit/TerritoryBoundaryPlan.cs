@@ -21,6 +21,10 @@ public partial class TerritoryBoundaryPlan : RefCounted
     public int TargetOwner => Next.Target;
     public int ChoiceCount => Choices.Length;
     public int Choice { get; private set; }
+    /// Quem fica com o que o traço tira do selecionado: 0 = ninguém (redesenhar a borda); outro dono = DIVIDIR (o lado que sai vira dele).
+    public int FreedOwner { get; set; }
+    /// Quantos pixels o traço tira do selecionado na escolha atual.
+    public int FreedCount => Freed.Length;
 
     /// Escolhe qual dos pedaços separados passa para o selecionado.
     public void Choose(int i)

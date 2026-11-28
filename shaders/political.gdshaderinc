@@ -18,7 +18,7 @@ global uniform int political_selected;
 global uniform sampler2D area_map;
 global uniform sampler2D area_palette;
 global uniform float area_on;
-global uniform float area_gray;  // 1 = o mapa de baixo são os países (ficam cinzas); 0 = outro mapa de área (a cor dele fica, a sobreposição vai por cima)
+global uniform float area_gray;  // 1 = o mapa de baixo são os países (ficam cinzas); 0 = outro mapa de área (a cor dele fica, a sobreposição vai por cima); 2 = listras sobre os países em cor (reivindicação)
 // A costa de todos os mapas: R = distância com sinal até a costa em km (+ terra), G = lago (Terrain.CoastImage). Global para o mapa político e as outras
 // camadas desenharem a MESMA linha de costa.
 global uniform sampler2D coast_map : filter_linear, repeat_enable;

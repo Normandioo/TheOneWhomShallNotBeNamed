@@ -285,7 +285,19 @@ e o raciocínio de cada método estão em `docs/alternativas-fronteiras.md`.
   da textura `coast_map` (`Terrain.CoastImage`, RGH: km até a costa e lago), recalculada fora da pincelada e só com a camada na tela. Em todas as
   camadas a fronteira vota com B-spline cúbica 4×4 (`political_owner`): curva, com largura constante em pixels de tela.
 - **GPU:** a camada inteira (16 MiB) volta à GPU, no máximo 10 vezes por segundo durante a pincelada e uma vez ao soltar (como a altitude).
-- **Ainda não feito (de propósito, para testar o método primeiro):** nome grande do país no centro, barra de população e ícones de cidades sobre o território; "território compartilhado" entre países;
+- **Dividir** (botão "Dividir" na página Território de país, província ou município; `TerritoryEditor.start_split`): abre o pincel de fronteira no modo de dividir. Uma
+  linha de borda a borda (a mesma regra do "traço vira a fronteira") tira um lado, e esse lado vai para um cadastro **novo** do mesmo tipo (`Registry.SplitCopy`:
+  identidade copiada, como Duplicar, e os vínculos de saída em aberto, como o idioma oficial ou o país de uma província) em vez de ficar sem dono
+  (`TerritoryBoundaryPlan.FreedOwner`). As referências ficam com o original: presenças (a capital), estimativas e quem aponta para ele. As subdivisões com mais da
+  metade da área no lado que sai mudam de país (`Territory.OwnersMostlyFreed`); as cortadas pela linha são aparadas. Cadastro novo, vínculos religados e pintura são
+  um desfazer só; "Outro lado" troca. Unir (o botão de unir da barra) é o caminho inverso e também não apaga o cadastro unido.
+- **Reivindicação** (migração 23; nível `reivindicacao`, `Registry.ClaimLevel`): uma camada pintada própria, em que o dono do pixel é o **país que reivindica**. Ela
+  se sobrepõe à soberania (a camada dos países) sem tirar nada dela. Na ficha do país, "Pintar reivindicação" pinta com as ferramentas de sempre; a seção
+  Território diz quanto ele reivindica de quem e quem reivindica dele (`claims_of`). No mapa político, a caixa "Reivindicações" das sobreposições (e o fim de uma
+  pintura) mostra a camada em **listras** na cor de quem reivindica, com os países na cor deles por baixo (`area_gray = 2` no shader). Excluir o país leva a
+  reivindicação no mesmo desfazer. Limite: um pixel tem um só reivindicante (dois países reivindicando o mesmo lugar exigiriam uma camada por país). Ocupação e
+  influência, que a proposta separa da soberania, ainda não existem; seriam outras camadas do mesmo tipo.
+- **Ainda não feito (de propósito, para testar o método primeiro):** nome grande do país no centro, barra de população e ícones de cidades sobre o território;
   recalcular as camadas do Gleba que ficam desatualizadas; subir a resolução da camada (8K); a seleção por clique escolhe só o país (não a província); o desfazer não atravessa a exclusão de um país.
 
 ## Recursos (etapas 0 e 1 do plano `Plano_Recursos_Populacao_Economia_Evron_v1.pdf`)

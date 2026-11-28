@@ -175,7 +175,7 @@ vec3 political_style(vec3 n, vec2 uv, float h, vec2 frag) {
 	int aid = 0;
 	if (area_on > 0.5) {  // uma área sobreposta: se o mapa de baixo são os países, eles ficam cinzas (a fronteira continua)
 		aid = area_owner(uv);
-		if (area_gray > 0.5) {
+		if (area_gray > 0.5 && area_gray < 1.5) {
 			base = vec3(0.34 + 0.30 * dot(base, vec3(0.299, 0.587, 0.114)));
 		}
 	}
@@ -199,7 +199,12 @@ vec3 political_style(vec3 n, vec2 uv, float h, vec2 frag) {
 	land = mix(land, focus > 0.5 ? vec3(0.98, 0.93, 0.70) : land * 0.30, line * 0.75 * dist_fade);
 	if (aid != 0) {
 		vec3 tint = map_tone(area_color(aid).rgb) * (1.0 + 0.4 * lit) * (1.0 - 0.62 * dark);
-		land = mix(land, tint, mix(0.6, 0.82, area_gray));
+		if (area_gray > 1.5) {  // reivindicação: listras diagonais de largura fixa na tela, com a cor do país de baixo entre elas
+			float stripe = smoothstep(0.35, 0.5, abs(fract((frag.x + frag.y) / 12.0) - 0.5) * 2.0);
+			land = mix(land, tint, 0.78 * stripe);
+		} else {
+			land = mix(land, tint, mix(0.6, 0.82, area_gray));
+		}
 	}
 	// Água: mar pela profundidade com manchas; lago de cor fixa; halo claro na costa; perto da costa a água pega a cor do país dono.
 	bool lake = c.g > 0.5;
@@ -211,7 +216,7 @@ vec3 political_style(vec3 n, vec2 uv, float h, vec2 frag) {
 	if (!lake && dist < 150.0) {
 		float amount;
 		vec3 tint = political_sea_tint(uv, dist, amount);
-		water = mix(water, tint * 0.85, amount * 0.46 * exp(-dist / 60.0) * (1.0 - area_on * area_gray));
+		water = mix(water, tint * 0.85, amount * 0.46 * exp(-dist / 60.0) * (1.0 - area_on * float(area_gray > 0.5 && area_gray < 1.5)));
 	}
 	// Costa: troca de terra para água em um pixel e a linha escura #15191c.
 	vec3 col = mix(water, land, smoothstep(-0.5 * km_px, 0.5 * km_px, d));

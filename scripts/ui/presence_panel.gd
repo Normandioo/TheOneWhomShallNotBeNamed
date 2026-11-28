@@ -64,12 +64,13 @@ func _init() -> void:
 
 	_caption("ÁREAS SOBRE O MAPA POLÍTICO")
 	var hint := Label.new()
-	hint.text = "Uma de cada vez; os países ficam em cinza."
+	hint.text = "Uma de cada vez; os países ficam em cinza (nas reivindicações, na cor deles)."
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.modulate = Color(1, 1, 1, 0.6)
 	_box.add_child(hint)
-	for spec in [["cultura", "Culturas"], ["etnia", "Etnias"], ["raca", "Raças"], ["religiao", "Religiões"], ["idioma", "Idiomas"]]:
-		var area_check := _check(spec[1], "Mostra o território pintado, com a cor e o nome, sobre os países em cinza.", func(on: bool) -> void:
+	for spec in [["cultura", "Culturas"], ["etnia", "Etnias"], ["raca", "Raças"], ["religiao", "Religiões"], ["idioma", "Idiomas"], ["reivindicacao", "Reivindicações"]]:
+		var tip := "Em listras, na cor de quem reivindica, sobre os países (que ficam na cor deles): a fronteira não muda." if spec[0] == "reivindicacao" 			else "Mostra o território pintado, com a cor e o nome, sobre os países em cinza."
+		var area_check := _check(spec[1], tip, func(on: bool) -> void:
 			if on:
 				for other in _area_checks:
 					if other != spec[0]:

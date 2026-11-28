@@ -23,11 +23,14 @@ signal resource_owner_picked(id: int)   # o conta-gotas trocou a área de recurs
 signal preview_image(image)             # Image = mostrar a prévia de uma geração; null = voltar ao mapa de verdade
 
 const Territory = preload("res://scripts/world/Territory.cs")
+const CommandStack = preload("res://scripts/edit/command_stack.gd")
 const SNAP_BAND_KM := 60.0  # "assentar no relevo": a fronteira vai até ~6 pixels do mapa (9,8 km cada) atrás de uma crista ou rio
 ## As camadas pintáveis (Registry.Levels): a hierarquia política e as áreas de predominância (religião, cultura...).
 const HIERARCHY := ["pais", "provincia", "municipio"]
-const PAINTABLE := ["pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma"]
+const CLAIM := "reivindicacao"  # Registry.ClaimLevel: o dono é o país que reivindica; a camada se sobrepõe à soberania sem tirar nada dela
+const PAINTABLE := ["pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma", CLAIM]
 const AREA_LEVELS := ["religiao", "cultura", "etnia", "raca", "idioma"]  # as áreas de predominância: aparecem sobre os países (cinzas)
+const OVERLAYS := AREA_LEVELS + [CLAIM]  # o que pode ir por cima do mapa político (as reivindicações em listras, sobre os países em cor)
 const DRAFT := 65535            # o dono reservado do rascunho (nenhum cadastro tem esse id)
 const DRAFT_COLOR := 0xc98a82
 const DRAFT_NAME := {"pais": "Novo país", "provincia": "Nova subdivisão", "municipio": "Nova subdivisão", "cultura": "Nova cultura", "etnia": "Nova etnia",
@@ -64,6 +67,9 @@ var _territory_saved := {}       # nível -> a versão gravada no banco
 var _territory_changed_ms := 0
 var _palette_hash := 0
 var _area_palette_hash := 0
+var claiming := false            # start_painting de um país pinta a reivindicação dele, não o território
+var splitting := false          # o traço do pincel de fronteira DIVIDE: o lado que sai vira um cadastro novo do mesmo tipo
+var _split_copy := 0             # o cadastro novo da divisão em andamento (registro dos cadastros aberto até o traço ser aplicado)
 var overlay_level := ""         # a área ("cultura", "etnia"...) sobreposta ao mapa que está na tela (a caixa das sobreposições); "" = nenhuma
 var previewing := false      # a prévia de uma geração está na tela: o mapa de verdade não é reenviado por cima
 var _preview_colors: Array = []
@@ -94,6 +100,8 @@ func setup(domain_hub, t, stack, panel, more := {}, factory := Callable()) -> vo
 	boundary_tool.kind_of = owner_kind
 	boundary_tool.setup(territory, hub.map, panel, commands)
 	boundary_tool.record_edit = _record_edit
+	boundary_tool.before_apply = _prepare_split
+	boundary_tool.apply_failed = _cancel_split
 	panel.snap_rivers_changed.connect(func(on: bool) -> void: boundary_tool.snap_rivers = on)
 	panel.mode_changed.connect(_set_territory_mode)
 	panel.radius_changed.connect(func(km: float) -> void: territory_radius = km)
@@ -115,6 +123,8 @@ func setup(domain_hub, t, stack, panel, more := {}, factory := Callable()) -> vo
 		sheet.territory_paint_requested.connect(func() -> void: start_painting(hub.current()))
 		sheet.territory_boundary_requested.connect(func() -> void: start_painting(hub.current(), "fronteira"))
 		sheet.territory_clear_requested.connect(_on_territory_clear)
+		sheet.territory_split_requested.connect(func() -> void: start_split(hub.current()))
+		sheet.territory_claim_requested.connect(func() -> void: start_claim(hub.current()))
 		sheet.paint_kind_requested.connect(func(kind: String, parent: int) -> void:
 			start_draft(kind)
 			if drafting:
@@ -176,12 +186,73 @@ func start_painting(id: int, mode := "pincel") -> void:
 	if not hub.usable or territory == null or painting_territory or id == 0:
 		return
 	var kind: String = registry.Kind(id)
+	if kind == "pais" and claiming:
+		kind = CLAIM
 	if not kind in PAINTABLE or id > 65535 or layer(kind) == null:
 		hub.sheet.show_territory_message("Este tipo de cadastro não tem área pintável (ou o id passa de 65535).")
 		return
 	show_level(kind)
 	_apply_mask(id)
 	_begin_painting(id, mode)
+
+
+## Pinta o que o país reivindica, na camada das reivindicações: pode cobrir o território de outro país (a soberania não muda).
+## "Não invadir" poupa o que outro país já reivindica (um pixel tem um só reivindicante).
+func start_claim(id: int, mode := "pincel") -> void:
+	if String(registry.Kind(id)) != "pais":
+		return
+	claiming = true
+	start_painting(id, mode)
+	claiming = false
+	if painting_territory and territory_level == CLAIM:
+		territory_panel.set_message("Reivindicação de %s: pinte o que ele reivindica, inclusive sobre outro país (a fronteira não muda)." % registry.Name(id))
+
+
+## Dividir: o pincel de fronteira do cadastro, em que cada traço de borda a borda tira um lado, e esse lado vira um cadastro novo do
+## mesmo tipo (SplitCopy). As subdivisões que ficam quase todas do lado que sai vão junto; as cortadas pela linha são aparadas.
+func start_split(id: int) -> void:
+	start_painting(id, "fronteira")
+	if painting_territory and territory_owner == id and territory_level in HIERARCHY:
+		splitting = true
+		territory_panel.set_message("Dividir %s: desenhe uma linha de uma borda até a outra; o lado que sai vira um cadastro novo (\"Outro lado\" troca)." % owner_name(id))
+
+
+## Antes de aplicar o traço de uma divisão: cria o cadastro novo, religa as subdivisões do lado que sai e põe o dono no plano.
+## O registro dos cadastros fica aberto até o traço ser aplicado (_record_edit fecha), para o desfazer ser um só.
+func _prepare_split(plan) -> String:
+	if not splitting:
+		return ""
+	if plan.FreedCount == 0:
+		return "Esse traço não separa nada de %s: desenhe de uma borda até a outra." % owner_name(territory_owner)
+	var source := territory_owner
+	registry.BeginRecord()
+	var made_copy = registry.SplitCopy(source, "%s (parte)" % registry.Name(source))
+	var copy := 0 if made_copy == null else int(made_copy)
+	if copy <= 0 or copy >= DRAFT:
+		var made = registry.EndRecord()
+		if made != null:
+			made.Undo()
+		return "Não consegui criar o cadastro novo."
+	var i := HIERARCHY.find(territory_level)
+	for k in range(i + 1, HIERARCHY.size()):
+		var below = levels.get(HIERARCHY[k])
+		if below == null:
+			continue
+		for child in territory.OwnersMostlyFreed(plan, below):
+			if int(registry.TerritoryParent(child)) == source:  # um município de uma província que vai junto já segue a província
+				hub.set_parent(child, copy)
+	plan.FreedOwner = copy
+	_split_copy = copy
+	return ""
+
+
+func _cancel_split() -> void:
+	if _split_copy != 0:
+		_split_copy = 0
+		var made = registry.EndRecord()
+		if made != null:
+			made.Undo()
+		hub.reload()
 
 
 ## Pinta a área de uma ocorrência de recurso, com as mesmas ferramentas dos países, na camada do recurso.
@@ -201,6 +272,8 @@ static func is_resource(level: String) -> bool:
 
 ## O tipo e o nome de um dono da camada na tela: um cadastro ou, na camada de um recurso, uma ocorrência dele.
 func owner_kind(id: int) -> String:
+	if territory_level == CLAIM:
+		return CLAIM if String(registry.Kind(id)) == "pais" else ""
 	if not is_resource(territory_level):
 		return registry.Kind(id)
 	var type: int = registry.OccurrenceType(id)
@@ -232,7 +305,7 @@ func _begin_painting(id: int, mode: String) -> void:
 	territory_stroking = false
 	territory_mode = mode
 	territory_panel.set_mode(mode)
-	territory_panel.set_territory_actions(not is_resource(territory_level))
+	territory_panel.set_territory_actions(not is_resource(territory_level) and territory_level != CLAIM)
 	_protect_painting()
 	territory_panel.show_state(owner_name(id), territory.AreaKm2(id))
 	_refresh_merge_choices()
@@ -483,7 +556,12 @@ func area_active() -> bool:
 
 ## O mapa de baixo são os países? Então eles ficam cinzas sob a área sobreposta.
 func area_gray() -> bool:
-	return area_active() and territory_level in HIERARCHY
+	return area_active() and territory_level in HIERARCHY and overlay_level != CLAIM
+
+
+## A sobreposição vai em listras, deixando ver a cor de baixo (a reivindicação sobre a soberania).
+func area_hatched() -> bool:
+	return area_active() and overlay_level == CLAIM
 
 
 ## A camada da sobreposição, ou null.
@@ -493,7 +571,7 @@ func area_layer():
 
 ## Sobrepõe uma área ao mapa que está na tela ("" tira). Não muda o que está sendo mostrado nem editado.
 func set_overlay(level: String) -> void:
-	overlay_level = level if level in AREA_LEVELS else ""
+	overlay_level = level if level in OVERLAYS else ""
 	_area_palette_hash = 0
 	refresh_palette()
 
@@ -713,12 +791,16 @@ func stop_painting() -> void:
 		territory_end()
 	boundary_tool.finish_pending()  # Terminar confirma o traço (a prévia na tela ou o que ainda está sendo calculado)
 	boundary_tool.stop()
+	splitting = false
 	territory.SetMask(null, 0)
 	territory.SetTaken(null, 0)
 	painting_territory = false
 	territory_panel.hide_panel()
 	refresh_palette()  # as divisões voltam à cor do país
 	painting_changed.emit(false)
+	if territory_level == CLAIM:  # terminada a reivindicação, o mapa volta aos países com ela em listras por cima
+		set_overlay(CLAIM)
+		show_level("pais")
 	hub.refresh_sheet()  # a área da ficha
 
 
@@ -727,6 +809,7 @@ func _set_territory_mode(mode: String) -> void:
 		return
 	territory_end()
 	territory_mode = mode
+	splitting = false  # trocar de ferramenta sai do dividir
 	if mode == "fronteira":
 		hub.sheet.hide()
 		boundary_tool.start(territory_owner)
@@ -854,6 +937,16 @@ func _record_edit(title: String, edit, level := "") -> void:
 		var direct = levels.get("municipio") if HIERARCHY[i] == "pais" else null  # os municípios ligados direto ao país
 		if direct != null:
 			edit.TrimDirectSubdivisions(direct, registry)
+	if _split_copy != 0:  # a divisão: o cadastro novo, as subdivisões religadas e a pintura num desfazer só
+		var copy := _split_copy
+		_split_copy = 0
+		var made = registry.EndRecord()
+		var cmd = CommandStack.Batch.new([made, edit] if made != null else [edit])
+		cmd.set_meta("entity", territory_owner)
+		commands.push("Dividir %s em %s" % [registry.Name(territory_owner), registry.Name(copy)], cmd)
+		refresh_palette()
+		territory_panel.set_message("%s ficou com o lado que saiu. Se foi o lado errado, \"Outro lado\" troca." % registry.Name(copy))
+		return
 	commands.push(title, edit)
 
 
@@ -1058,7 +1151,32 @@ func owner_at(dir: Vector3) -> int:
 func sheet_info(s: Dictionary) -> Dictionary:
 	if not s.kind in PAINTABLE or layer(s.kind) == null:
 		return {}
-	return {"area_km2": layer(s.kind).AreaKm2(int(s.id)), "color": int(_live_colors.get(int(s.id), registry.EntityColor(int(s.id)))), "ok": int(s.id) <= 65535}
+	var info := {"area_km2": layer(s.kind).AreaKm2(int(s.id)), "color": int(_live_colors.get(int(s.id), registry.EntityColor(int(s.id)))), "ok": int(s.id) <= 65535}
+	if s.kind == "pais":
+		info["claims"] = claims_of(int(s.id))
+	return info
+
+
+## O que um país reivindica, por quem tem a soberania ali: [{id (0 = sem dono), name, km2}], do maior para o menor; e quem reivindica
+## o território dele: [{id, name, km2}]. A camada das reivindicações só é lida do banco se já foi usada ou se tem algo gravado.
+func claims_of(id: int) -> Dictionary:
+	var out := {"claims": [], "claimed_by": []}
+	if not levels.has(CLAIM) and not registry.HasTerritoryLevel(CLAIM):
+		return out  # ninguém reivindicou nada ainda: não carrega a camada (16 MiB) só para dizer isso
+	var claims = layer(CLAIM)
+	var countries = layer("pais")
+	if claims == null or countries == null or id > 65535:
+		return out
+	var over: Dictionary = claims.OverlapKm2(countries, id)
+	for o in over:
+		out.claims.append({"id": int(o), "name": registry.Name(int(o)) if int(o) != 0 else "terra sem dono", "km2": float(over[o])})
+	var by: Dictionary = countries.OverlapKm2(claims, id)
+	for o in by:
+		if int(o) != 0 and int(o) != id:
+			out.claimed_by.append({"id": int(o), "name": registry.Name(int(o)), "km2": float(by[o])})
+	out.claims.sort_custom(func(a, b): return a.km2 > b.km2)
+	out.claimed_by.sort_custom(func(a, b): return a.km2 > b.km2)
+	return out
 
 
 ## Antes de apagar um cadastro: termina a pincelada e sai do modo pintar se é ele. Devolve a camada dele (ou null).
@@ -1079,6 +1197,10 @@ func after_delete(id: int, deleted_layer):
 		return null
 	var edit = deleted_layer.ClearOwner(id)
 	deleted_layer.ForgetOwnerBoundaries(id)
+	var claims = layer(CLAIM) if deleted_layer == levels.get("pais") else null
+	var claim_edit = claims.ClearOwner(id) if claims != null else null  # a reivindicação do país sai junto (o mesmo desfazer a devolve)
+	if claim_edit != null:
+		return CommandStack.Batch.new([edit, claim_edit] if edit != null else [claim_edit])
 	return edit
 
 

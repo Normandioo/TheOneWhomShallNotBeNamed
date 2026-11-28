@@ -69,9 +69,10 @@ func set_area_palette(entries: Array) -> void:
 
 
 ## gray: o mapa de baixo são os países (ficam cinzas).
-func show_area(on: bool, gray := false) -> void:
+## hatched: a área vai em listras e a cor de baixo continua (a reivindicação sobre a soberania); no shader, area_gray = 2.
+func show_area(on: bool, gray := false, hatched := false) -> void:
 	RenderingServer.global_shader_parameter_set("area_on", 1.0 if on else 0.0)
-	RenderingServer.global_shader_parameter_set("area_gray", 1.0 if gray else 0.0)
+	RenderingServer.global_shader_parameter_set("area_gray", 2.0 if hatched else (1.0 if gray else 0.0))
 
 
 ## Reenvia os donos editados para a GPU (a imagem inteira, 16 MiB).

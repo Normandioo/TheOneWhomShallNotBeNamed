@@ -68,9 +68,25 @@ public partial class Registry
         PRAGMA writable_schema = RESET;
         """;
 
+    // Camadas pintadas que não são de um tipo de cadastro: reivindicações (o dono é o país que reivindica), biomas e lagos editados.
+    const string PaintedDataMigration = """
+        PRAGMA writable_schema = ON;
+        update sqlite_master set sql = replace(sql, 'level glob ''recurso:*'')', 'level glob ''recurso:*'' or level in (''reivindicacao'',''bioma'',''lago''))')
+            where type = 'table' and name = 'territory_layer';
+        PRAGMA writable_schema = RESET;
+        """;
+
+    /// Há uma camada gravada desse nível? (Para não carregar uma camada vazia só para consultá-la.)
+    public bool HasTerritoryLevel(string level) =>
+        Convert.ToInt64(_db.Scalar("select count(*) from territory_layer where level = @0", CheckLevel(level))) > 0;
+
+    /// Reivindicação: uma camada própria, separada da soberania (a camada dos países). O dono de cada pixel é o país que o reivindica,
+    /// então ela se sobrepõe ao território de outro país sem tirar nada dele.
+    public const string ClaimLevel = "reivindicacao";
+
     /// As camadas pintáveis. As três primeiras são a hierarquia política, do maior para o menor: cada nível abaixo do primeiro se liga ao
     /// de cima pelo vínculo "<nível>_de" (província de, município de). As outras são áreas de predominância, independentes.
-    public static readonly string[] Levels = { "pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma" };
+    public static readonly string[] Levels = { "pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma", ClaimLevel };
     static readonly string[] Hierarchy = { "pais", "provincia", "municipio" };
 
     /// O cadastro do nível de cima a que esta província ou município pertence hoje (vínculo "<nível>_de"); 0 se não tem ou não é desses níveis.
@@ -245,6 +261,17 @@ public partial class Registry
         return ((long)Math.Round(c.R * 255) << 16) | ((long)Math.Round(c.G * 255) << 8) | (long)Math.Round(c.B * 255);
     }
 
+    /// Dividir um território: o cadastro novo que recebe o lado que sai. Copia a identidade (resumo, campos, etiquetas, nomes de nível, como
+    /// Duplicate) e os vínculos de SAÍDA em aberto (idioma oficial, o país de uma província); as presenças e quem aponta para o original ficam
+    /// com ele (as subdivisões que caem do outro lado são religadas por quem divide).
+    public long SplitCopy(long id, string newName) => _db.Tx(() =>
+    {
+        long copy = Duplicate(id, false, newName);
+        _db.Run("insert into relation(type, src, dst, valid_from, valid_to, note) select type, @1, dst, valid_from, valid_to, note from relation " +
+                "where src = @0 and valid_to = @2", id, copy, Forever);
+        return copy;
+    });
+
     /// A paleta da camada dos países: id e cor (RGB) de cada país que pode ter território (id até 65535).
     public Array<Dictionary> CountryPalette() => Palette("pais");
 
@@ -253,6 +280,6 @@ public partial class Registry
     public Array<Dictionary> Palette(string level) => new(
         (ResourceTypeOfLevel(level) is long type && type > 0
             ? _db.Rows("select o.id, t.rgb from resource_occurrence o join resource_type t on t.id = o.type_id where o.type_id = @0 and o.kind = 'area' order by o.id", type)
-            : _db.Rows("select id, color from entity where kind = @0 and id <= 65535 order by id", CheckLevel(level)))
+            : _db.Rows("select id, color from entity where kind = @0 and id <= 65535 order by id", level == ClaimLevel ? "pais" : CheckLevel(level)))
            .Select(r => new Dictionary { ["id"] = Convert.ToInt64(r[0]), ["rgb"] = r[1] != null ? Convert.ToInt64(r[1]) : DefaultColor(Convert.ToInt64(r[0])) }));
 }

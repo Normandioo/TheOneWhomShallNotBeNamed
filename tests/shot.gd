@@ -36,6 +36,7 @@ const SCENE_SUITES := [
 	"res://tests/suites/hub_suite.gd",  # com a cena: o hub segue o relógio
 	"res://tests/suites/paint_suite.gd",  # com a cena: o shader e o Main levam a camada política à GPU
 	"res://tests/suites/territory_boundary_suite.gd",
+	"res://tests/suites/split_suite.gd",  # com a cena: dividir pelo pincel de fronteira
 ]
 
 

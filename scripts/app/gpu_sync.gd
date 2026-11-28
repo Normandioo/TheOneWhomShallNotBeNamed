@@ -17,6 +17,7 @@ var _walls_key := []  # o estado das linhas que já está na GPU
 var wall_stats := {}  # {count, longest, ms} do último envio (para os testes e o monitor)
 var _area_shown := false
 var _area_gray := false
+var _area_hatched := false
 var _area_key := ""   # a camada de área e a versão que já estão na GPU
 var _coast_task := -1  # tarefa da thread que calcula a costa (-1 = nenhuma)
 var _coast_started := 0
@@ -55,10 +56,12 @@ func tick(delta: float) -> void:
 	_tick_walls()
 	var area_on: bool = _territories.area_active()
 	var area_gray: bool = _territories.area_gray()
-	if area_on != _area_shown or area_gray != _area_gray:
+	var area_hatched: bool = _territories.area_hatched()
+	if area_on != _area_shown or area_gray != _area_gray or area_hatched != _area_hatched:
 		_area_shown = area_on
 		_area_gray = area_gray
-		_material.show_area(area_on, area_gray)
+		_area_hatched = area_hatched
+		_material.show_area(area_on, area_gray, area_hatched)
 	if area_on:
 		var area_layer = _territories.area_layer()
 		var key := "%d:%d" % [area_layer.get_instance_id(), area_layer.Version]
