@@ -417,6 +417,25 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>                         
   `LoadTerrain` confere todos os blocos (mesma grade, tamanho válido) antes de aplicar algum; se um falhar, nada é gravado por cima
   do relevo salvo nessa sessão. É o estado atual: o relevo não tem validade no tempo (consultar o passado não muda o terreno).
 
+## Costa, lagos e biomas (aceite A02)
+
+- **Costa:** os pincéis **Terra** e **Mar** da barra do relevo (`BrushKernel` Op.Land/Op.Sea, no fim do enum) viram o miolo do pincel (peso ≥ 0,5) em
+  terra baixa (+5 m) ou mar raso (−50 m); o que já é terra (ou mar) não muda de altura. São edições do relevo: desfazem, gravam em `terrain_tile`
+  e a costa do mapa político é recalculada como depois de qualquer pincelada.
+- **Lagos:** uma camada pintada `lago` só com as edições (1 = lago, 2 = seco; 0 = como no Gleba, então a borracha devolve o original).
+  `Territory.UseAsLakeEdits` a liga ao terreno: `Terrain.IsLake` (água, costa, fronteiras naturais) consulta o Gleba com as edições por cima, e
+  `gpu_sync` recalcula a costa quando a camada muda.
+- **Biomas:** uma camada pintada `bioma` de categorias fixas (as 12 da legenda do Gleba, `TerritoryEditor.DATA_LEVELS`). Na primeira vez ela é
+  preenchida pela imagem `BiomasGleba.png` por cor exata (`Territory.FillFromColors`, vizinho mais próximo: **nunca interpola categorias**) e só vai
+  ao banco depois de editada. Pinta-se com as ferramentas do território (pincel, balde, borracha, conta-gotas), sem "Não invadir".
+- Na barra do relevo, ao lado dos pincéis: a categoria e "Pintar lagos" / "Pintar biomas" (`TerritoryEditor.start_data`); Terminar volta ao mapa
+  dos países. Migração 23 (a da reivindicação) já aceita os níveis `bioma` e `lago`.
+- **Alinhamento entre zooms** (`environment_suite`): 3.000 pontos ao acaso (com 180° e os polos) caem no mesmo pixel em todos os níveis da pirâmide
+  (pelos limites com que o globo monta cada bloco), cada nível é o de cima dividido por 2 e o nível 2 é a grade de edição (`Terrain.PixelOf`); nos
+  dados, a média 2×2 do nível 4 do relevo casa com o nível 3 sem deslocamento (a diferença cresce com 1 e 2 px).
+- **Ainda não feito:** clima e solo como dados pintados (o mesmo mecanismo do bioma); o bioma ainda não é lido por nenhum cálculo (o gerador de recursos
+  usa Köppen, rocha e vegetação do Gleba); recalcular os biomas depois de editar o relevo.
+
 ## Limites conhecidos (próximas etapas da E0)
 
 - O globo usa os mapas de 4096 px (9,77 km por pixel no equador): de perto fica borrado; os blocos existem, mas o

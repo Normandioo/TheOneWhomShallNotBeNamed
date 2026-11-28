@@ -157,8 +157,20 @@ public partial class Terrain : RefCounted
         return true;
     }
 
+    /// As edições dos lagos (camada pintada "lago"): 1 = lago, 2 = seco, 0 = como no Gleba. null = nenhuma.
+    public Territory? LakeEdits { get; set; }
+    public const int LakeAdded = 1, LakeRemoved = 2;
+
+    /// Lago no pixel: o do Gleba, com as edições por cima.
+    public bool IsLake(int p) => LakeEdits?.Get(p) switch
+    {
+        LakeAdded => true,
+        LakeRemoved => false,
+        _ => _lake != null && _lake[p],
+    };
+
     /// Água no pixel: mar (altitude abaixo de 0) ou lago.
-    internal bool Water(int p) => H[p] < 0f || (_lake != null && _lake[p]);
+    internal bool Water(int p) => H[p] < 0f || IsLake(p);
 
     /// A costa para o mapa político, RGH (meia precisão): R = distância com sinal até a costa em km (+ terra, − água, até ±CoastMaxKm),
     /// G = 1 em lago. Distância por chanfro com a largura real de cada linha (passos de 1 pixel e diagonais: erro de poucos %), suavizada
@@ -271,7 +283,7 @@ public partial class Terrain : RefCounted
                 for (int j = -3; j <= 3; j++) s += k[j + 3] * tmp[Math.Clamp(y + j, r0, r6) * w + x];
                 int i = y * w + x;
                 halves[2 * i] = BitConverter.HalfToUInt16Bits((Half)Math.Clamp(s, raw[i] - half, raw[i] + half));
-                halves[2 * i + 1] = _lake != null && _lake[i] && H[i] >= 0f ? one : zero;
+                halves[2 * i + 1] = IsLake(i) && H[i] >= 0f ? one : zero;
             }
         });
         return Image.CreateFromData(w, h, false, Image.Format.Rgh, data);

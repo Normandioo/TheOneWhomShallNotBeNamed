@@ -6,6 +6,7 @@ extends PanelContainer
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 const UiIcons = preload("res://scripts/ui/ui_icons.gd")
+const TerritoryEditor = preload("res://scripts/app/territory_editor.gd")
 const TerrainBrush = preload("res://scripts/edit/terrain_brush.gd")
 
 signal tool_selected(op: int)  # -1 = navegar; senão TerrainBrush.Op
@@ -21,13 +22,14 @@ signal search_requested        # a caixa de busca: abre o Índice na aba Busca
 signal config_requested(which: String)  # "tipos", "regras" ou "calendarios"
 signal help_requested
 signal relief_tutorial_requested  # o botão "?" da barra de relevo
+signal data_paint_requested(level: String, category: int)  # pintar lagos ou biomas (TerritoryEditor.DATA_LEVELS)
 signal registry_requested      # o botão Registros: abre ou fecha a árvore de todos os cadastros
 signal resources_toggled(open: bool)  # o painel de recursos
 signal settlements_toggled(open: bool)  # o painel dos povoados (produção)
 
 const NAVIGATE := -1
 const BLOCK_WIDTH := 500
-const BRUSH_ICONS := ["raise", "lower", "level", "smooth", "mountains", "erosion", "valley"]
+const BRUSH_ICONS := ["raise", "lower", "level", "smooth", "mountains", "erosion", "valley", "geology", "hydrology"]
 
 var radius: HSlider
 var strength: HSlider
@@ -226,6 +228,25 @@ func _build_edit_bar(radius_km: float, strength_m: float, roughness_value: float
 		b.set_meta("op", item[0])
 		row.add_child(b)
 		_buttons.append(b)
+	row.add_child(VSeparator.new())
+	var data := VBoxContainer.new()  # lagos e biomas: dados pintados (não mudam a altitude), com o pincel do território
+	row.add_child(data)
+	for level in ["lago", "bioma"]:
+		var line := HBoxContainer.new()
+		data.add_child(line)
+		var pick := OptionButton.new()
+		pick.fit_to_longest_item = false
+		pick.custom_minimum_size.x = 150
+		pick.tooltip_text = "A categoria a pintar"
+		for c in TerritoryEditor.DATA_LEVELS[level]:
+			pick.add_item(c.name, int(c.id))
+		line.add_child(pick)
+		var go := Button.new()
+		go.text = "Pintar lagos" if level == "lago" else "Pintar biomas"
+		go.icon = UiIcons.get_icon("hydrology" if level == "lago" else "ecology", 18)
+		go.tooltip_text = "Abre o pincel do território na camada dos %s (Terminar ou Esc volta)" % ("lagos" if level == "lago" else "biomas")
+		go.pressed.connect(func() -> void: data_paint_requested.emit(level, pick.get_selected_id()))
+		line.add_child(go)
 	row.add_child(VSeparator.new())
 	var sliders := VBoxContainer.new()
 	row.add_child(sliders)

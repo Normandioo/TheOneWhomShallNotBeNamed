@@ -18,6 +18,7 @@ var wall_stats := {}  # {count, longest, ms} do último envio (para os testes e 
 var _area_shown := false
 var _area_gray := false
 var _area_hatched := false
+var _lake_version := 0
 var _area_key := ""   # a camada de área e a versão que já estão na GPU
 var _coast_task := -1  # tarefa da thread que calcula a costa (-1 = nenhuma)
 var _coast_started := 0
@@ -44,6 +45,10 @@ func tick(delta: float) -> void:
 		PerfMonitor.stop("altura->GPU", t_h)
 		_terrain.Dirty = false
 		_since_upload = 0.0
+		coast_stale = true
+	var lakes = _territories.levels.get("lago")
+	if lakes != null and lakes.Version != _lake_version and not _territories.territory_stroking:  # um lago editado muda a costa
+		_lake_version = lakes.Version
 		coast_stale = true
 	_tick_coast()
 	# Só as camadas mostradas (a do nível e as de cima) vão à GPU, compostas; durante a pincelada, no máximo 10x por segundo (16 MiB).

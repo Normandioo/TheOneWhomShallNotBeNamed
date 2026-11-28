@@ -407,6 +407,9 @@ func _ready() -> void:
 		territories.show_level("pais" if subs else level)  # o mapa de área sozinho, sem as fronteiras políticas
 		mode_rail.show_level(territories.territory_level, subs))
 	tool_panel.tool_selected.connect(set_tool)
+	tool_panel.data_paint_requested.connect(func(level: String, category: int) -> void:
+		set_tool(ToolPanel.NAVIGATE)
+		territories.start_data(level, category))
 	tool_panel.territory_requested.connect(_start_territory)
 	tool_panel.radius_changed.connect(func(km: float) -> void: brush.radius_km = km)
 	tool_panel.strength_changed.connect(func(v: float) -> void: brush.strength = v)

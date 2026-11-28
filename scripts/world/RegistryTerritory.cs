@@ -86,7 +86,7 @@ public partial class Registry
 
     /// As camadas pintáveis. As três primeiras são a hierarquia política, do maior para o menor: cada nível abaixo do primeiro se liga ao
     /// de cima pelo vínculo "<nível>_de" (província de, município de). As outras são áreas de predominância, independentes.
-    public static readonly string[] Levels = { "pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma", ClaimLevel };
+    public static readonly string[] Levels = { "pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma", ClaimLevel, "bioma", "lago" };
     static readonly string[] Hierarchy = { "pais", "provincia", "municipio" };
 
     /// O cadastro do nível de cima a que esta província ou município pertence hoje (vínculo "<nível>_de"); 0 se não tem ou não é desses níveis.

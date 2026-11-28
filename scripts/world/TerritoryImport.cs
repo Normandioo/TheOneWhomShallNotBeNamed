@@ -73,6 +73,29 @@ public partial class Territory
         return result;
     }
 
+    /// Preenche a camada a partir de uma imagem de categorias: o pixel da cor rgbs[k] passa a ser do dono k + 1; outra cor fica sem dono.
+    /// Sem interpolação (a imagem é reduzida pelo vizinho mais próximo). Não é uma edição (é o ponto de partida): não vai para o desfazer.
+    /// Devolve quantos pixels ficaram com dono.
+    public int FillFromColors(Image source, int[] rgbs)
+    {
+        var img = (Image)source.Duplicate();
+        if (img.IsCompressed()) img.Decompress();
+        img.Convert(Image.Format.Rgb8);
+        if (img.GetSize() != Size) img.Resize(Size.X, Size.Y, Image.Interpolation.Nearest);
+        var rgb = img.GetData();
+        var owner = new Dictionary<int, int>();
+        for (int k = 0; k < rgbs.Length; k++) owner[rgbs[k]] = k + 1;
+        int set = 0;
+        for (int p = 0; p < Size.X * Size.Y; p++)
+        {
+            int o = owner.GetValueOrDefault((rgb[3 * p] << 16) | (rgb[3 * p + 1] << 8) | rgb[3 * p + 2]);
+            Put(p, o);
+            if (o > 0) set++;
+        }
+        Touch();
+        return set;
+    }
+
     /// Aplica o mapeamento da última análise: a região indices[k] passa a ser de owners[k] (0 = apagar). Regiões fora da lista não mudam.
     /// Devolve a edição (um comando: desfazer volta tudo), ou null se nada mudou.
     public TerritoryEdit? ApplyImport(int[] indices, int[] owners)

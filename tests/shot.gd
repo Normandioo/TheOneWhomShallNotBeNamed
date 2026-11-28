@@ -37,6 +37,7 @@ const SCENE_SUITES := [
 	"res://tests/suites/paint_suite.gd",  # com a cena: o shader e o Main levam a camada política à GPU
 	"res://tests/suites/territory_boundary_suite.gd",
 	"res://tests/suites/split_suite.gd",  # com a cena: dividir pelo pincel de fronteira
+	"res://tests/suites/environment_suite.gd",  # com a cena: costa, lago, bioma e alinhamento entre zooms
 ]
 
 

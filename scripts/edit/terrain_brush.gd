@@ -10,6 +10,7 @@
 ##    não ganha água. Rugosidade alta = cristas finas e altas; baixa = maciços arredondados.
 ##  - Erosão: erosão térmica. Move material das encostas íngremes (acima do ângulo de repouso) para as vizinhas mais
 ##    baixas: arredonda picos, entulha vales, conserva a massa.
+##  - Terra / Mar: editam a COSTA. O miolo do pincel vira terra baixa (+5 m) ou mar raso (−50 m); o resto fica como está.
 ##  - Vales: erosão hidráulica simplificada. Cada pixel escoa para o vizinho mais baixo; o fluxo acumulado rio abaixo
 ##    entalha o terreno. Nunca baixa a terra abaixo de 1 m (não cria mar) nem levanta o mar (não cria ilha).
 
@@ -18,8 +19,8 @@ const BrushKernel = preload("res://scripts/edit/BrushKernel.cs")
 const CommandStack = preload("res://scripts/edit/command_stack.gd")
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
 
-enum Op { RAISE, LOWER, FLATTEN, SMOOTH, MOUNTAINS, ERODE, VALLEYS }  # mesma ordem de BrushKernel.Op
-const NAMES := ["Elevar", "Rebaixar", "Nivelar", "Suavizar", "Montanhas", "Erosão", "Vales"]
+enum Op { RAISE, LOWER, FLATTEN, SMOOTH, MOUNTAINS, ERODE, VALLEYS, LAND, SEA }  # mesma ordem de BrushKernel.Op
+const NAMES := ["Elevar", "Rebaixar", "Nivelar", "Suavizar", "Montanhas", "Erosão", "Vales", "Terra", "Mar"]
 const MOUNTAIN_CAP := 1.5  # montanhas: uma pincelada sobe no máximo intensidade × ganho × 1,5 em cada pixel (sem platôs)
 const MOUNTAIN_GAIN := 6.0 # a intensidade (até 1000) vale ×6 em montanhas: picos de milhares de metros
 const SPACING := 0.25      # nova marca do pincel a cada 1/4 do raio percorrido

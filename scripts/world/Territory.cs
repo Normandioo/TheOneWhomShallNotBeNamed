@@ -67,6 +67,9 @@ public partial class Territory : RefCounted
     /// O dono do pixel que contém a direção n.
     public int OwnerAt(Vector3 n) => Get(_terrain!.PixelOf(n));
 
+    /// Esta camada passa a ser a das edições dos lagos do terreno (1 = lago, 2 = seco): a água, a costa e as fronteiras naturais a consultam.
+    public void UseAsLakeEdits() => _terrain!.LakeEdits = this;
+
     /// A imagem RG8 dos donos (OwnersImage), atualizada (a mesma instância sempre: a textura do globo a usa). Só a faixa de linhas mexidas é copiada.
     public Image OwnersImage()
     {

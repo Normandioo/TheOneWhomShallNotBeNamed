@@ -11,7 +11,11 @@ namespace Evron;
 public partial class BrushKernel : RefCounted
 {
     // Mesma ordem do enum Op de terrain_brush.gd (o C# não expõe enums ao GDScript).
-    private enum Op { Raise, Lower, Flatten, Smooth, Mountains, Erode, Valleys }
+    private enum Op { Raise, Lower, Flatten, Smooth, Mountains, Erode, Valleys, Land, Sea }
+
+    /// Costa: a terra nova fica a LandM do nível do mar e o mar novo a SeaM; só o miolo do pincel (peso ≥ 0,5) muda, então a costa
+    /// nova é nítida e não sobra meio-termo. O que já é terra (ou mar) não muda de altura.
+    public const float LandM = 5f, SeaM = -50f;
 
     private const double Incision = 0.02;     // vales: fração do desnível entalhada por passada, por raiz da captação
     private const double RiverShare = 0.008;  // vales: vira rio quem recebe a água de 0,8% da região pintada...
@@ -84,6 +88,12 @@ public partial class BrushKernel : RefCounted
                     break;
                 case Op.Smooth:
                     h += (means![i] - h) * w * k;
+                    break;
+                case Op.Land:
+                    if (w >= 0.5 && h < LandM) h = LandM;
+                    break;
+                case Op.Sea:
+                    if (w >= 0.5 && h > SeaM) h = SeaM;
                     break;
                 case Op.Mountains:
                     // max(0, ...): vale não escava. A crista sobe de 0 a 1,5; abaixo de ~0,15 o terreno fica como está.

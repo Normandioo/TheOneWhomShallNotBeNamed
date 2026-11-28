@@ -7,6 +7,7 @@ extends RefCounted
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
+const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 const TerritoryBoundaryTool = preload("res://scripts/edit/territory_boundary_tool.gd")
 const TerritoryEdit = preload("res://scripts/edit/TerritoryEdit.cs")
 const LayerPanel = preload("res://scripts/ui/layer_panel.gd")
@@ -28,8 +29,22 @@ const SNAP_BAND_KM := 60.0  # "assentar no relevo": a fronteira vai até ~6 pixe
 ## As camadas pintáveis (Registry.Levels): a hierarquia política e as áreas de predominância (religião, cultura...).
 const HIERARCHY := ["pais", "provincia", "municipio"]
 const CLAIM := "reivindicacao"  # Registry.ClaimLevel: o dono é o país que reivindica; a camada se sobrepõe à soberania sem tirar nada dela
-const PAINTABLE := ["pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma", CLAIM]
+const PAINTABLE := ["pais", "provincia", "municipio", "religiao", "cultura", "etnia", "raca", "idioma", CLAIM, "bioma", "lago"]
 const AREA_LEVELS := ["religiao", "cultura", "etnia", "raca", "idioma"]  # as áreas de predominância: aparecem sobre os países (cinzas)
+## Dados do ambiente pintados como as áreas, mas com categorias fixas no lugar de cadastros (o dono do pixel é o número da categoria).
+## Bioma: nasce da imagem do Gleba (as cores da legenda, sem interpolar) e passa a ser o dado; lago: só as edições (1 = lago, 2 = seco;
+## a borracha volta ao Gleba), que o Terrain consulta (costa, água das fronteiras naturais).
+const DATA_LEVELS := {
+	"bioma": [
+		{"id": 1, "name": "Deserto / rochoso", "rgb": 0xfff6d5}, {"id": 2, "name": "Tundra", "rgb": 0x87decd},
+		{"id": 3, "name": "Geleira", "rgb": 0xececec}, {"id": 4, "name": "Taiga", "rgb": 0x2ca05a},
+		{"id": 5, "name": "Floresta de coníferas", "rgb": 0x005500}, {"id": 6, "name": "Floresta temperada mista", "rgb": 0x71c837},
+		{"id": 7, "name": "Estepe", "rgb": 0xcdde87}, {"id": 8, "name": "Mediterrânea", "rgb": 0xc87137},
+		{"id": 9, "name": "Campos de montanha", "rgb": 0xc6afe9}, {"id": 10, "name": "Savana", "rgb": 0xffdd55},
+		{"id": 11, "name": "Floresta tropical seca", "rgb": 0xd4aa00}, {"id": 12, "name": "Floresta tropical úmida", "rgb": 0x447821}],
+	"lago": [{"id": 1, "name": "Lago", "rgb": 0x2f7f95}, {"id": 2, "name": "Seco (não é lago)", "rgb": 0xc9b48a}],
+}
+const BIOME_SOURCE := "BiomasGleba.png"
 const OVERLAYS := AREA_LEVELS + [CLAIM]  # o que pode ir por cima do mapa político (as reivindicações em listras, sobre os países em cor)
 const DRAFT := 65535            # o dono reservado do rascunho (nenhum cadastro tem esse id)
 const DRAFT_COLOR := 0xc98a82
@@ -196,6 +211,26 @@ func start_painting(id: int, mode := "pincel") -> void:
 	_begin_painting(id, mode)
 
 
+## Pinta um dado do ambiente (DATA_LEVELS): a categoria `category` com o pincel, o balde ou a borracha; o conta-gotas troca a categoria.
+func start_data(level: String, category: int, mode := "pincel") -> void:
+	if drafting:
+		discard_draft()
+	if not hub.usable or territory == null or painting_territory or not DATA_LEVELS.has(level) or layer(level) == null:
+		return
+	show_level(level)
+	territory.SetMask(null, 0)
+	_begin_painting(category, mode)
+	territory_panel.set_message("%s: pinte a categoria escolhida; o conta-gotas pega outra do mapa.%s" % [
+		"Biomas" if level == "bioma" else "Lagos", " A borracha devolve o lago (ou a terra) do Gleba." if level == "lago" else ""])
+
+
+static func category_name(level: String, id: int) -> String:
+	for c in DATA_LEVELS.get(level, []):
+		if int(c.id) == id:
+			return String(c.name)
+	return ""
+
+
 ## Pinta o que o país reivindica, na camada das reivindicações: pode cobrir o território de outro país (a soberania não muda).
 ## "Não invadir" poupa o que outro país já reivindica (um pixel tem um só reivindicante).
 func start_claim(id: int, mode := "pincel") -> void:
@@ -272,6 +307,8 @@ static func is_resource(level: String) -> bool:
 
 ## O tipo e o nome de um dono da camada na tela: um cadastro ou, na camada de um recurso, uma ocorrência dele.
 func owner_kind(id: int) -> String:
+	if DATA_LEVELS.has(territory_level):
+		return territory_level if category_name(territory_level, id) != "" else ""
 	if territory_level == CLAIM:
 		return CLAIM if String(registry.Kind(id)) == "pais" else ""
 	if not is_resource(territory_level):
@@ -281,13 +318,16 @@ func owner_kind(id: int) -> String:
 
 
 func owner_name(id: int) -> String:
+	if DATA_LEVELS.has(territory_level):
+		return category_name(territory_level, id)
 	return registry.OccurrenceLabel(id) if is_resource(territory_level) else registry.Name(id)
 
 
 ## "Não invadir": pintando um cadastro que já existe, o pincel só pega terra livre (e o que já é dele).
 func _protect_painting() -> void:
 	if painting_territory and not drafting:
-		territory.SetTaken(territory if territory_protect else null, territory_owner)
+		var protect := territory_protect and not DATA_LEVELS.has(territory_level)  # bioma e lago: pintar é trocar a categoria, não invadir
+		territory.SetTaken(territory if protect else null, territory_owner)
 
 
 func set_territory_protect(on: bool) -> void:
@@ -305,7 +345,7 @@ func _begin_painting(id: int, mode: String) -> void:
 	territory_stroking = false
 	territory_mode = mode
 	territory_panel.set_mode(mode)
-	territory_panel.set_territory_actions(not is_resource(territory_level) and territory_level != CLAIM)
+	territory_panel.set_territory_actions(not is_resource(territory_level) and territory_level != CLAIM and not DATA_LEVELS.has(territory_level))
 	_protect_painting()
 	territory_panel.show_state(owner_name(id), territory.AreaKm2(id))
 	_refresh_merge_choices()
@@ -500,9 +540,23 @@ func layer(level: String):
 		return null
 	# shortcut: cada camada de recurso aberta fica na memória (~32 MiB) até fechar; descartar as já gravadas se pesar.
 	var made = layer_factory.call()
-	made.IsResource = is_resource(level)
+	made.IsResource = is_resource(level) or DATA_LEVELS.has(level)  # os donos não são cadastros (TouchesOwner não os confunde com países)
 	_adopt(level, made)
+	if level == "bioma" and not registry.HasTerritoryLevel("bioma"):
+		_fill_biomes(made)
+	if level == "lago":
+		made.UseAsLakeEdits()
 	return levels[level]
+
+
+## A primeira vez, a camada dos biomas é a do Gleba. Não é gravada até ser editada (reler a imagem dá o mesmo).
+func _fill_biomes(biomes) -> void:
+	var img := EvronMaps.load_layer(BIOME_SOURCE)
+	if img == null:
+		return
+	biomes.FillFromColors(img, PackedInt32Array(DATA_LEVELS.bioma.map(func(c): return int(c.rgb))))
+	_territory_seen["bioma"] = biomes.Version
+	_territory_saved["bioma"] = biomes.Version
 
 
 func _adopt(level: String, t) -> void:
@@ -801,6 +855,8 @@ func stop_painting() -> void:
 	if territory_level == CLAIM:  # terminada a reivindicação, o mapa volta aos países com ela em listras por cima
 		set_overlay(CLAIM)
 		show_level("pais")
+	elif DATA_LEVELS.has(territory_level):
+		show_level("pais")
 	hub.refresh_sheet()  # a área da ficha
 
 
@@ -841,7 +897,7 @@ func territory_begin(n: Vector3) -> void:
 
 ## Um traço que começa no território de outro não pinta ali: a barra diz por quê (numa subdivisão nova, quem avisa é draft_anchor).
 func _warn_taken(n: Vector3) -> void:
-	if not territory_protect or territory_mode == "borracha" or (drafting and (_draft_hint == "" or _draft_hint in ["provincia", "municipio"])):
+	if not territory_protect or territory_mode == "borracha" or DATA_LEVELS.has(territory_level) or (drafting and (_draft_hint == "" or _draft_hint in ["provincia", "municipio"])):
 		return
 	var map = layer(_draft_hint) if drafting else territory
 	var other: int = map.OwnerAt(n)
@@ -985,6 +1041,14 @@ func refresh_palette() -> void:
 		if area_key != _area_palette_hash:
 			_area_palette_hash = area_key
 			area_palette_changed.emit(area_entries)
+	if DATA_LEVELS.has(territory_level):  # categorias fixas: cada uma na cor da legenda
+		for c in DATA_LEVELS[territory_level]:
+			entries.append({"id": int(c.id), "rgb": int(c.rgb), "top": int(c.id)})
+		var data_key: int = entries.hash()
+		if data_key != _palette_hash:
+			_palette_hash = data_key
+			palette_changed.emit(entries)
+		return
 	var colors := {}
 	var kinds := {}  # o nível de cada dono: sem perguntar um a um ao banco
 	for level in shown_levels:
