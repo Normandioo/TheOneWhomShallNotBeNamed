@@ -115,6 +115,26 @@ func _lakes() -> void:
 	terr.stop_painting()
 	if terr.territory_level != "pais":
 		return fail("Terminar volta ao mapa dos países")
+	# Os mapas de imagem (o satélite experimental também) mostram o lago pintado inteiro e o seco como terra: a máscara do que mudou.
+	await frames(3)  # a camada dos lagos mudou: a costa é pedida no próximo quadro
+	var deadline := Time.get_ticks_msec() + 10000
+	while main.gpu_sync.coast_pending() and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	var change: Image = main.material.coast_change_texture.get_image()
+	var lp := Geo.pixel(land, t.Size)
+	var gx: int = gleba_lake % t.Size.x
+	var gy: int = gleba_lake / t.Size.x
+	if change.get_pixel(lp.x, lp.y).r8 != 128 or change.get_pixel(gx, gy).r8 != 255:
+		return fail("a máscara marca o lago pintado como água (128) e o seco como terra (255): %d, %d" % [change.get_pixel(lp.x, lp.y).r8, change.get_pixel(gx, gy).r8])
+	for i in MapLayers.LAYERS.size():
+		if MapLayers.LAYERS[i].get("tiles", "") == "natural_satellite":
+			main.set_layer(i)
+	main.globe.focus(land, 1.12)
+	await frames(30)
+	await save("lago_satelite")
+	for i in MapLayers.LAYERS.size():
+		if MapLayers.LAYERS[i]["kind"] == "political":
+			main.set_layer(i)
 	if not terr.save():
 		return fail("gravar os lagos")
 	var check = load("res://scripts/world/Territory.cs").new()

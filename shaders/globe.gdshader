@@ -36,7 +36,7 @@ varying vec3 obj_pos;
 // Mapa plano: a mesma malha (uma grade de lat/lon com UV equiretangular) desdobrada no plano z = 0, com x = lon · raio e y = lat · raio.
 // O fragmento continua lendo a direção da esfera (obj_pos): é o mesmo mapa, só a geometria muda.
 uniform float flat_map = 0.0;
-// Onde a costa editada difere da do Gleba (Terrain.CoastChangeImage): 1 = virou terra, 0,5 = virou mar. Os mapas de imagem seguem a costa nova.
+// Onde a água editada difere da do Gleba, costa e lagos (Terrain.CoastChangeImage): 1 = virou terra, 0,5 = virou água. Os mapas de imagem seguem a costa nova.
 uniform sampler2D coast_change : hint_default_black, filter_nearest, repeat_enable;
 
 vec3 altitude_color(float h) {
@@ -273,7 +273,7 @@ void fragment() {
 		// acima do nível do mar (lagos) a cor da água vem da imagem (doce ou salgada).
 		solid = coast_clip(uv, smoothstep(0.3, 0.7, nat.a));
 		float lat = asin(clamp(n.y, -1.0, 1.0));
-		vec3 water = h >= 0.0 ? nat.rgb : pow(water_color(h, lat), vec3(2.2));
+		vec3 water = h >= 0.0 ? nat.rgb : pow(water_color(min(h, -30.0), lat), vec3(2.2));  // lago pintado: acima do mar, como água rasa
 		// Detalhe fino na terra e no gelo: brilho e relevo que a imagem não tem (sintetizado, semente fixa).
 		vec3 pos_m = n * RADIUS;
 		float px_m = length(fwidth(pos_m));
@@ -314,7 +314,7 @@ void fragment() {
 		float chg = textureLod(coast_change, vec2(uv.x, clamp(uv.y, 0.0, 1.0)), 0.0).r;
 		if (chg > 0.25) {
 			float lat = asin(clamp(n.y, -1.0, 1.0));
-			col = chg > 0.75 ? pow(vec3(0.58, 0.54, 0.42), vec3(2.2)) : pow(water_color(h, lat), vec3(2.2));
+			col = chg > 0.75 ? pow(vec3(0.58, 0.54, 0.42), vec3(2.2)) : pow(water_color(min(h, -30.0), lat), vec3(2.2));  // lago pintado: acima do mar, como água rasa
 		}
 	}
 	if (mode == 4) {

@@ -432,7 +432,7 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>                         
   preenchida pela imagem `BiomasGleba.png` por cor exata (`Territory.FillFromColors`, vizinho mais próximo: **nunca interpola categorias**) e só vai
   ao banco depois de editada. Pinta-se com as ferramentas do território (pincel, balde, borracha, conta-gotas), sem "Não invadir".
 - **Os mapas de imagem seguem a costa editada:** o Gleba não sabe da costa nova, então `Terrain.CoastChangeImage` (R8, calculada junto da costa:
-  255 = virou terra, 128 = virou mar, comparando com o mar do Gleba guardado no `Setup`) vai ao shader (`coast_change`), e nas camadas de imagem,
+  255 = virou terra, 128 = virou água, comparando com o mar do Gleba guardado no `Setup` e os lagos do Gleba; lago pintado e lago seco também contam) vai ao shader (`coast_change`), e nas camadas de imagem,
   na natural e na temperatura sazonal o mar novo é pintado pela profundidade e a terra nova num tom neutro (não há dado do Gleba para ela). Os
   valores dos mapas (clima, solos...) não são recalculados.
 - **Modo de mapa Bio** (coluna de modos, linha de cima): o mapa político no nível `bioma`, com todos os biomas da camada editável. O satélite

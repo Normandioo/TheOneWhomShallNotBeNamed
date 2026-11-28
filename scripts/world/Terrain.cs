@@ -56,13 +56,17 @@ public partial class Terrain : RefCounted
 
     private bool[] _origSea = [];  // o mar do Gleba (antes das edições): os mapas de imagem não sabem da costa nova
 
-    /// Onde a costa mudou desde o Gleba, para os mapas de imagem (clima, biomas, solos...) seguirem a costa editada: R8, 255 = virou terra,
-    /// 128 = virou mar, 0 = como no Gleba. Calculado junto da costa (fora da pincelada).
+    /// Onde a água mudou desde o Gleba (costa e lagos), para os mapas de imagem (clima, satélite, solos...) seguirem a edição: R8, 255 =
+    /// virou terra (inclusive lago seco), 128 = virou água (inclusive lago pintado), 0 = como no Gleba. Calculado junto da costa.
     public Image CoastChangeImage()
     {
         var b = new byte[H.Length];
         for (int i = 0; i < H.Length; i++)
-            if ((H[i] < 0f) != _origSea[i]) b[i] = H[i] < 0f ? (byte)128 : (byte)255;
+        {
+            bool was = _origSea[i] || (_lake != null && _lake[i]);
+            bool now = Water(i);
+            if (was != now) b[i] = now ? (byte)128 : (byte)255;
+        }
         return Image.CreateFromData(Size.X, Size.Y, false, Image.Format.R8, b);
     }
 
