@@ -196,6 +196,7 @@ func _ready() -> void:
 	hud.add_child(calendar_panel)  # por último: abre por cima dos outros painéis
 	domains = DomainHub.new()
 	domains.setup(domains_db, search, sheet, calendar_panel)
+	domains.bind_commands(commands)
 	_terrain_loaded = domains.usable and domains.registry.LoadTerrain(terrain)
 	material.set_height(terrain.HeightImage())
 	material.set_rivers(terrain.RiversImage())
@@ -509,6 +510,8 @@ func _unhandled_input(e: InputEvent) -> void:
 					windows.toggle_registry()
 					return
 				KEY_ESCAPE:
+					if domains.cancel_move():
+						return
 					if _can_dismiss():  # Esc fecha a janela; sem janela, tira a seleção (não consome: os painéis também ouvem Esc)
 						if windows.window_open():
 							windows.close_window()
@@ -932,6 +935,8 @@ func select(n: Vector3) -> void:
 	if production.click(n):
 		return
 	if resources.click(n, maxf(20.0, globe.camera_altitude_km() * 0.02)):
+		return
+	if domains.place_click(n):
 		return
 	selected_dir = n
 	domains.set_fixed_point(n)

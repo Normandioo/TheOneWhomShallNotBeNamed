@@ -114,6 +114,7 @@ public partial class Registry : RefCounted
                 if (!System.IO.File.Exists(copy)) _db.Run("vacuum into @0", copy);
             }
             _db.Migrate(Migrations);
+            CreateUndoTriggers();
         }
         catch { _db.Close(); throw; }  // um banco recusado não fica aberto: as chamadas seguintes falham em vez de escrever nele
     }
@@ -123,7 +124,7 @@ public partial class Registry : RefCounted
     {
         _db.Open(path);
         _openKey = Guid.NewGuid().ToString("N");
-        try { _db.Migrate(Migrations[..Math.Clamp(version, 0, Migrations.Length)]); }
+        try { _db.Migrate(Migrations[..Math.Clamp(version, 0, Migrations.Length)]); CreateUndoTriggers(); }
         catch { _db.Close(); throw; }
     }
 

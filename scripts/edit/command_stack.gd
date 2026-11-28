@@ -3,10 +3,30 @@
 ## Quem edita aplica a mudança e empurra o comando; a pilha só anda para trás e para frente.
 
 signal changed
+signal applied(cmd: Object)  # um comando foi desfeito ou refeito (quem mostra o que ele mudou relê)
 
 const MAX_BYTES := 256 * 1024 * 1024
 ## Memória do histórico: 4% da RAM entre 48 e 256 MiB; os comandos mais antigos saem (o último fica sempre).
 static var LIMIT_BYTES: int = clampi(int(OS.get_memory_info().get("physical", 0) * 0.04), 48 * 1024 * 1024, MAX_BYTES)
+
+## Vários comandos que são um só para o autor (apagar uma área com a pintura; aplicar uma geração; excluir um país com o território).
+class Batch:
+	var steps: Array
+	var Bytes := 0
+
+	func _init(commands_applied: Array) -> void:
+		steps = commands_applied
+		for step in steps:
+			Bytes += step.Bytes
+
+	func Undo() -> void:
+		for i in range(steps.size() - 1, -1, -1):
+			steps[i].Undo()
+
+	func Redo() -> void:
+		for step in steps:
+			step.Redo()
+
 
 var _undo: Array[Dictionary] = []  # {"name": String, "cmd": Object}
 var _redo: Array[Dictionary] = []
@@ -31,6 +51,7 @@ func undo() -> bool:
 	var c: Dictionary = _undo.pop_back()
 	c["cmd"].Undo()
 	_redo.append(c)
+	applied.emit(c["cmd"])
 	changed.emit()
 	return true
 
@@ -41,6 +62,7 @@ func redo() -> bool:
 	var c: Dictionary = _redo.pop_back()
 	c["cmd"].Redo()
 	_undo.append(c)
+	applied.emit(c["cmd"])
 	changed.emit()
 	return true
 
@@ -62,6 +84,11 @@ func has_undoable(script: Script) -> bool:
 		if c["cmd"].get_script() == script:
 			return true
 	return false
+
+
+## O comando que o próximo desfazer vai desfazer (null se não há).
+func last_command() -> Object:
+	return null if _undo.is_empty() else _undo.back()["cmd"]
 
 
 func can_undo() -> bool:

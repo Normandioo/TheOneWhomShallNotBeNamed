@@ -9,23 +9,7 @@ const TerritoryEditor = preload("res://scripts/app/territory_editor.gd")
 const Calendar = preload("res://scripts/world/calendar.gd")
 
 
-## Vários comandos que são um só para o autor (apagar uma área com a pintura; aplicar uma geração).
-class Batch:
-	var steps: Array
-	var Bytes := 0
-
-	func _init(commands_applied: Array) -> void:
-		steps = commands_applied
-		for step in steps:
-			Bytes += step.Bytes
-
-	func Undo() -> void:
-		for i in range(steps.size() - 1, -1, -1):
-			steps[i].Undo()
-
-	func Redo() -> void:
-		for step in steps:
-			step.Redo()
+const Batch = preload("res://scripts/edit/command_stack.gd").Batch  # vários comandos que são um só para o autor
 
 
 var hub

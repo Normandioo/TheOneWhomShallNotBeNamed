@@ -1071,14 +1071,15 @@ func before_delete(id: int):
 	return deleted_layer
 
 
-## Depois de apagar: tira o território e as fronteiras dele, e da pilha de desfazer os comandos que o mencionam.
-func after_delete(id: int, deleted_layer) -> void:
+## Depois de apagar: tira o território e as fronteiras dele. Devolve a edição da pintura (vai no mesmo desfazer da exclusão) ou null.
+## Os comandos antigos que pintam esse cadastro ficam na pilha: a pilha só os alcança depois de desfazer a exclusão, quando ele volta.
+## shortcut: as linhas do pincel de fronteira do cadastro não voltam com o desfazer; se fizer falta, guardá-las na edição.
+func after_delete(id: int, deleted_layer):
 	if deleted_layer == null:
-		return
-	deleted_layer.ClearOwner(id)
+		return null
+	var edit = deleted_layer.ClearOwner(id)
 	deleted_layer.ForgetOwnerBoundaries(id)
-	commands.discard_matching(func(cmd: Object) -> bool:
-		return cmd.get_script() == TerritoryEdit and cmd.TouchesOwner(id))
+	return edit
 
 
 ## A ficha foi relida: a cor, a área e o destaque acompanham. No pincel de fronteira, a ficha não cobre o globo.

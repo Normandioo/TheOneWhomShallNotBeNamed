@@ -28,6 +28,8 @@ signal tutorial_requested  # o botão "?" do cabeçalho: o tutorial da página a
 signal calendar_use_added(calendar_id: int, purpose: String)
 signal calendar_use_removed(use_id: int)
 signal place_focus_requested(place_id: int)
+signal place_edited(place_id: int, name: String, kind: String, radius_km: float)  # o mesmo lugar muda em todas as fichas que o usam
+signal place_move_requested(place_id: int)  # o próximo clique no globo leva o lugar (e a área dele) para lá
 
 signal territory_paint_requested                              # entrar no modo pintar território para este país
 signal territory_boundary_requested                           # entrar direto no pincel de fronteira do país selecionado
@@ -1372,12 +1374,22 @@ func _build_places() -> void:
 			detail.modulate = Color(1, 1, 1, 0.6)
 			row.add_child(detail)
 		row.add_child(_pill(UiKit.role_label(p.role), color))
+		var edit_button := Button.new()
+		edit_button.text = "✎"
+		edit_button.flat = true
+		edit_button.toggle_mode = true
+		edit_button.tooltip_text = "Editar o lugar: nome, tipo, raio e posição (vale em todas as fichas que o usam)"
+		row.add_child(edit_button)
 		var del := Button.new()
 		del.text = "✕"
 		del.flat = true
 		del.tooltip_text = "Apagar esta presença (criada por engano)"
 		del.pressed.connect(func() -> void: presence_removed.emit(int(p.id)))
 		row.add_child(del)
+		var editor := _place_editor(p)
+		editor.visible = false
+		box.add_child(editor)
+		edit_button.toggled.connect(func(on: bool) -> void: editor.visible = on)
 		_rule(box)
 	var role_keys: Array = UiKit.ROLE_LABEL.keys()
 
@@ -1455,6 +1467,41 @@ func _build_places() -> void:
 		if name_edit.text.strip_edges() != "":
 			place_created.emit(name_edit.text.strip_edges(), kind_keys[kind.selected], radius.value, role_keys[role.selected]))
 	new_row2.add_child(_create_place_btn)
+
+
+## Editar um lugar: nome, tipo e raio (Salvar) e a posição (Mover no globo: o próximo clique). Tudo desfaz com Ctrl+Z.
+func _place_editor(p: Dictionary) -> HFlowContainer:
+	var form := HFlowContainer.new()
+	form.add_theme_constant_override("h_separation", 8)
+	form.add_theme_constant_override("v_separation", 6)
+	var name_edit := LineEdit.new()
+	name_edit.text = String(p.place)
+	name_edit.custom_minimum_size.x = 160
+	name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	form.add_child(name_edit)
+	var kind_keys: Array = UiKit.PLACE_KIND_LABEL.keys()
+	var kind := _option(kind_keys, func(k): return UiKit.PLACE_KIND_LABEL[k])
+	kind.selected = maxi(0, kind_keys.find(String(p.place_kind)))
+	form.add_child(kind)
+	var radius := SpinBox.new()
+	radius.min_value = 0
+	radius.max_value = 8000
+	radius.step = 10
+	radius.suffix = "km"
+	radius.value = float(p.radius_km)
+	radius.tooltip_text = "Raio da área aproximada; 0 = um ponto"
+	form.add_child(radius)
+	var save := Button.new()
+	save.text = "Salvar"
+	save.pressed.connect(func() -> void:
+		place_edited.emit(int(p.place_id), name_edit.text.strip_edges(), kind_keys[kind.selected], radius.value))
+	form.add_child(save)
+	var move := Button.new()
+	move.text = "Mover no globo"
+	move.tooltip_text = "O próximo clique no globo leva o lugar (e a área em volta dele) para lá. Esc cancela."
+	move.pressed.connect(func() -> void: place_move_requested.emit(int(p.place_id)))
+	form.add_child(move)
+	return form
 
 
 func _build_population() -> void:

@@ -13,6 +13,7 @@ signal sheet_loaded(sheet: Dictionary, geo: Dictionary)  # a ficha do selecionad
 signal selection_cleared                                   # não há mais cadastro selecionado
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
+const CommandStack = preload("res://scripts/edit/command_stack.gd")
 const Calendar = preload("res://scripts/world/calendar.gd")
 const LocalCalendar = preload("res://scripts/world/local_calendar.gd")
 const EvronGeo = preload("res://scripts/data/evron_geo.gd")
@@ -37,6 +38,8 @@ var presence_panel         # camadas e escopo do mapa
 var focus_map := Callable()  # func(direção, zoom): leva a câmera a um ponto
 var fixed_dir := Vector3.ZERO  # o ponto fixado no globo (onde "Criar lugar aqui" cria)
 var territories = null     # o editor territorial (TerritoryEditor), se ligado
+var commands = null        # a pilha de desfazer (CommandStack); sem ela (testes dos painéis sozinhos) nada vai para o histórico
+var moving_place := 0      # o lugar que o próximo clique no globo move (0 = nenhum)
 var _current := 0
 var _pending := false      # o tempo andou e a ficha ainda não foi relida
 var _last_rebuild_ms := 0
@@ -69,24 +72,24 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 	search.society_requested.connect(_on_society)
 	# O que se edita na ficha vai para a entidade da ficha em que foi digitado (o sinal leva o id), mesmo que a ficha já tenha trocado.
 	sheet.name_changed.connect(func(id: int, t: String) -> void:
-		registry.Correct(id, t)
+		record("Corrigir nome", func(): return registry.Correct(id, t), id)
 		refresh_search())
-	sheet.summary_changed.connect(func(id: int, t: String) -> void: registry.SetSummary(id, t))
+	sheet.summary_changed.connect(func(id: int, t: String) -> void: record("Mudar resumo", func(): return registry.SetSummary(id, t), id))
 	sheet.field_edited.connect(_on_field)
 	sheet.alias_added.connect(func(role: String, n: String) -> void:
-		registry.AddName(_current, n, role, 0)
+		record("Acrescentar nome", func(): return registry.AddName(_current, n, role, 0))
 		_reload())
 	sheet.tag_added.connect(func(t: String) -> void:
-		registry.AddTag(_current, t)
+		record("Acrescentar etiqueta", func(): return registry.AddTag(_current, t))
 		_reload())
 	sheet.tag_removed.connect(func(t: String) -> void:
-		registry.RemoveTag(_current, t)
+		record("Tirar etiqueta", func(): return registry.RemoveTag(_current, t))
 		_reload())
 	sheet.link_added.connect(func(type: String, other: int) -> void:
-		registry.Link(_current, other, type)
+		record("Vincular", func(): return registry.Link(_current, other, type))
 		_reload())
 	sheet.link_removed.connect(func(id: int) -> void:
-		registry.DeleteLink(id)
+		record("Desfazer vínculo", func(): return registry.DeleteLink(id))
 		_reload())
 	sheet.link_search.connect(_on_link_search)
 	sheet.lookup = func(text: String, kind: String) -> Array:
@@ -94,14 +97,17 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 		return found if found != null else []
 	sheet.hierarchy_set.connect(set_parent)
 	sheet.division_named.connect(func(id: int, division_name: String) -> void:
-		registry.SetDivisionName(id, division_name)
+		record("Renomear subdivisão", func(): return registry.SetDivisionName(id, division_name))
 		_reload())
 	sheet.level_named.connect(func(country: int, level: int, level_name: String) -> void:
-		registry.SetLevelName(country, level, level_name)
+		record("Renomear nível", func(): return registry.SetLevelName(country, level, level_name))
 		_reload())
 	sheet.open_entity.connect(open)
 	sheet.duplicate_requested.connect(func(copy_links: bool) -> void:
-		open(_id(registry.Duplicate(_current, copy_links, ""))))
+		var source := _current
+		var copy := _id(record("Duplicar " + registry.Name(source), func(): return registry.Duplicate(source, copy_links, "")))
+		_tag_last(copy)
+		open(copy))
 	sheet.delete_requested.connect(func() -> void:
 		_delete_target = _current
 		sheet.confirm_delete(registry.Name(_current), registry.AffectedLinks(_current)))
@@ -114,10 +120,10 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 	sheet.division_back_requested.connect(show_division)
 	sheet.delete_confirmed.connect(_on_delete)
 	sheet.calendar_use_added.connect(func(calendar_id: int, purpose: String) -> void:
-		registry.UseCalendar(_current, calendar_id, purpose, 0)
+		record("Usar calendário", func(): return registry.UseCalendar(_current, calendar_id, purpose, 0))
 		_reload())
 	sheet.calendar_use_removed.connect(func(use_id: int) -> void:
-		registry.DeleteCalendarUse(use_id)
+		record("Tirar calendário", func(): return registry.DeleteCalendarUse(use_id))
 		_reload())
 	search.calendars_requested.connect(func() -> void:
 		if calendars != null:
@@ -125,10 +131,10 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 	if calendars != null:
 		calendars.create_requested.connect(_on_calendar_create)
 	sheet.presence_added.connect(func(place_id: int, role: String) -> void:
-		registry.AddPresence(_current, place_id, role, "media")
+		record("Vincular lugar", func(): return registry.AddPresence(_current, place_id, role, "media"))
 		_reload())
 	sheet.presence_removed.connect(func(id: int) -> void:
-		registry.DeletePresence(id)
+		record("Tirar lugar da ficha", func(): return registry.DeletePresence(id))
 		_reload())
 	sheet.place_created.connect(_on_place_created)
 	sheet.place_search.connect(_on_place_search)
@@ -141,28 +147,132 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 		if fixed_dir == Vector3.ZERO:
 			return
 		var ll := EvronGeo.lat_lon(fixed_dir)
-		var place := _id(registry.AddPlace(city_name, "assentamento", ll.x, ll.y, 0.0, ""))
-		if place != 0:
-			registry.AddPresence(_current, place, "presenca", "media")
-			registry.AddEstimate(_current, place, shown_t, n, n, "alta", "")
+		record("Criar cidade " + city_name, func():
+			var place := _id(registry.AddPlace(city_name, "assentamento", ll.x, ll.y, 0.0, ""))
+			if place != 0:
+				registry.AddPresence(_current, place, "presenca", "media")
+				registry.AddEstimate(_current, place, shown_t, n, n, "alta", ""))
 		_reload())
 	sheet.total_set.connect(func(text: String) -> void:
 		var v := parse_number(text)
 		if is_nan(v) or v < 0.0:
 			sheet.show_geo_message("Informe o número de habitantes (0 ou mais).")
 			return
-		registry.SetTotal(_current, shown_t, roundf(v))
+		record("Mudar população", func(): return registry.SetTotal(_current, shown_t, roundf(v)))
 		_reload())
 	sheet.total_removed.connect(func() -> void:
 		var p: Dictionary = registry.PopulationOf(_current, shown_t)
 		if p.has_total:
-			registry.DeleteTotal(_current, int(p.t))
+			record("Tirar população", func(): return registry.DeleteTotal(_current, int(p.t)))
 			_reload())
 	sheet.estimate_removed.connect(func(id: int) -> void:
-		registry.DeleteEstimate(id)
+		record("Tirar estimativa", func(): return registry.DeleteEstimate(id))
 		_reload())
 	sheet.place_focus_requested.connect(focus_place)
+	sheet.place_edited.connect(func(place_id: int, place_name: String, kind: String, radius_km: float) -> void:
+		var p = registry.Place(place_id)
+		if p != null:
+			var why := edit_place(place_id, place_name, kind, float(p.lat), float(p.lon), radius_km)
+			if why != "":
+				sheet.show_geo_message(why))
+	sheet.place_move_requested.connect(func(place_id: int) -> void:
+		moving_place = place_id
+		sheet.show_geo_message("Clique no globo onde o lugar deve ficar (Esc cancela)."))
 	refresh_search()
+
+
+## Liga a pilha de desfazer: o que se muda nos cadastros vai para ela, e desfazer ou refazer relê a ficha, a busca e o mapa.
+func bind_commands(stack) -> void:
+	commands = stack
+	stack.applied.connect(_on_history_applied)
+
+
+## Faz f() anotando o que muda nos cadastros e põe isso na pilha de desfazer com o título (Ctrl+Z / Ctrl+Y). Devolve o que f devolveu.
+## entity: o cadastro a abrir depois de desfazer ou refazer (-1 = o aberto agora). also: comandos já aplicados que f acrescenta e que
+## valem o mesmo desfazer (o território de um país excluído).
+func record(title: String, f: Callable, entity := -1, also: Array = []):
+	if commands == null:
+		return f.call()
+	registry.BeginRecord()
+	var out = f.call()
+	var edit = registry.EndRecord()
+	var steps: Array = ([edit] if edit != null else []) + also.filter(func(c): return c != null)
+	if not steps.is_empty():
+		var cmd = steps[0] if steps.size() == 1 else CommandStack.Batch.new(steps)
+		cmd.set_meta("entity", _current if entity < 0 else entity)
+		commands.push(title, cmd)
+	return out
+
+
+## O último comando passa a abrir este cadastro ao ser desfeito ou refeito (um duplicado: refazer abre a cópia).
+func _tag_last(id: int) -> void:
+	if commands != null and id != 0 and commands.can_undo():
+		commands.last_command().set_meta("entity", id)
+
+
+func _on_history_applied(cmd: Object) -> void:
+	if not cmd.has_meta("entity"):
+		return  # terreno, território ou recurso: não mexe nos cadastros
+	_composition_cache.clear()
+	_sheet_hash = 0
+	_search_key = 0
+	_outline_key = 0
+	_map_key = 0
+	var id: int = cmd.get_meta("entity")
+	if id != 0 and String(registry.Kind(id)) != "" and id != _current:
+		open(id)
+	elif _current != 0 and String(registry.Kind(_current)) == "":
+		deselect()
+	elif _current != 0:
+		_reload()
+	else:
+		refresh_search()
+		refresh_map()
+	if territories != null:
+		territories.refresh_palette()
+
+
+## Um clique no globo enquanto um lugar espera para ser movido: o lugar (e a área dele, que é o disco em volta) vai para lá. true = usou o clique.
+func place_click(dir: Vector3) -> bool:
+	if moving_place == 0 or dir == Vector3.ZERO:
+		return false
+	var p = registry.Place(moving_place)
+	var id := moving_place
+	moving_place = 0
+	if p != null:
+		var ll := EvronGeo.lat_lon(dir)
+		var why := edit_place(id, p.name, p.kind, ll.x, ll.y, float(p.radius_km))
+		if why != "":
+			sheet.show_geo_message(why)
+	return true
+
+
+## Esc no meio de mover um lugar: desiste. true = havia o que cancelar.
+func cancel_move() -> bool:
+	if moving_place == 0:
+		return false
+	moving_place = 0
+	sheet.show_geo_message("")
+	return true
+
+
+## Muda um lugar (nome, tipo, posição, raio), com desfazer. Devolve "" ou o motivo da recusa.
+func edit_place(place_id: int, place_name: String, kind: String, lat: float, lon: float, radius_km: float) -> String:
+	if place_name.strip_edges() == "":
+		return "O lugar precisa de um nome."
+	if is_nan(radius_km) or radius_km < 0.0:
+		return "O raio precisa ser 0 (ponto) ou mais."
+	var before = registry.Place(place_id)
+	if before == null:
+		return "Esse lugar não existe mais."
+	var moved: bool = not is_equal_approx(float(before.lat), lat) or not is_equal_approx(float(before.lon), lon)
+	record(("Mover " if moved else "Mudar ") + place_name, func(): return registry.UpdatePlace(place_id, place_name, kind, lat, lon, radius_km))
+	_map_key = 0
+	if _current != 0:
+		_reload()
+	else:
+		refresh_map()
+	return ""
 
 
 ## Liga o mapa: a camada de lugares do globo, o painel de camadas e como levar a câmera a um ponto.
@@ -278,13 +388,13 @@ func _set_division_total(id: int, text: String) -> void:
 	if text == "":
 		var p: Dictionary = registry.PopulationOf(id, shown_t)
 		if p.has_total:
-			registry.DeleteTotal(id, int(p.t))
+			record("Tirar população", func(): return registry.DeleteTotal(id, int(p.t)))
 	else:
 		var v := parse_number(text)
 		if is_nan(v) or v < 0.0:
 			sheet.show_division_message("Informe o número de habitantes (0 ou mais).")
 			return
-		registry.SetTotal(id, shown_t, roundf(v))
+		record("Mudar população", func(): return registry.SetTotal(id, shown_t, roundf(v)))
 	_reload()
 
 
@@ -310,12 +420,13 @@ func set_parent(child: int, parent: int) -> void:
 			return
 	var code := kind + "_de"
 	var s = registry.Sheet(child, shown_t)
-	if s != null:
-		for l in s.links:
-			if l.outgoing and l.type == code:
-				registry.DeleteLink(int(l.id))
-	if parent > 0:
-		registry.Link(child, parent, code)
+	record("Mudar de quem faz parte", func():
+		if s != null:
+			for l in s.links:
+				if l.outgoing and l.type == code:
+					registry.DeleteLink(int(l.id))
+		if parent > 0:
+			registry.Link(child, parent, code))
 	if territories != null:
 		territories.refresh_palette()  # a cor da província segue a do país
 	_reload()
@@ -547,19 +658,22 @@ static func _id(v) -> int:
 
 func _on_create(kind: String, name: String) -> void:
 	var text := name.strip_edges()
-	open(_id(registry.Create(kind, text if text != "" else "Sem nome (%s)" % UiKit.kind_label(kind))))
+	var id := _id(record("Criar " + UiKit.kind_label(kind), func(): return registry.Create(kind, text if text != "" else "Sem nome (%s)" % UiKit.kind_label(kind)), 0))
+	_tag_last(id)
+	open(id)
 
 
 func _on_society(name: String) -> void:
 	var text := name.strip_edges()
-	var ids = registry.CreateSociety(text if text != "" else "Sem nome", PackedStringArray(["pais", "cultura", "etnia"]))
+	var ids = record("Criar sociedade", func(): return registry.CreateSociety(text if text != "" else "Sem nome", PackedStringArray(["pais", "cultura", "etnia"])), 0)
 	if ids != null and not ids.is_empty():
+		_tag_last(ids[0])
 		open(ids[0])  # a ficha do país; as outras abrem pelas relações
 
 
 ## id: a entidade da ficha em que o usuário digitou (pode já não ser a aberta, se a ficha trocou enquanto o campo tinha o foco).
 func _on_field(id: int, code: String, state: String, value: String) -> void:
-	registry.SetField(id, code, state, value)
+	record("Mudar campo", func(): return registry.SetField(id, code, state, value), id)
 	if id == _current:
 		var now = registry.GetField(id, code)
 		if now != null:
@@ -574,10 +688,15 @@ func _on_delete() -> void:
 	var deleted := _delete_target if _delete_target != 0 else _current
 	_delete_target = 0
 	var deleted_layer = territories.before_delete(deleted) if territories != null else null
-	if registry.Delete(deleted) == null:
+	var cleared: Array = []  # a pintura apagada junto: o mesmo desfazer a devolve
+	var reopen := deleted if deleted == _current else _current  # desfazer reabre o que estava aberto
+	var ok = record("Excluir " + registry.Name(deleted), func():
+		var done = registry.Delete(deleted)
+		if done != null and territories != null:
+			cleared.append(territories.after_delete(deleted, deleted_layer))
+		return done, reopen, cleared)
+	if ok == null:
 		return
-	if territories != null:
-		territories.after_delete(deleted, deleted_layer)
 	if deleted != _current:  # excluída pela lista do país: o país continua aberto
 		sheet.open_division = 0
 		_reload()
@@ -597,16 +716,17 @@ func _on_place_created(place_name: String, kind: String, radius_km: float, role:
 	if fixed_dir == Vector3.ZERO:
 		return
 	var ll := EvronGeo.lat_lon(fixed_dir)
-	var id := _id(registry.AddPlace(place_name, kind, ll.x, ll.y, radius_km, ""))
-	if id != 0:
-		registry.AddPresence(_current, id, role, "media")
+	record("Criar lugar " + place_name, func():
+		var id := _id(registry.AddPlace(place_name, kind, ll.x, ll.y, radius_km, ""))
+		if id != 0:
+			registry.AddPresence(_current, id, role, "media"))
 	_reload()
 
 
 ## Estimativa na data mostrada: com nível (sem número) ou com faixa "de ... até ..." (só o "de" = valor exato). Os números seguem o formato da ficha.
 func _on_estimate_added(place_id: int, low: String, high: String, level: String, certainty: String) -> void:
 	if level != "":
-		registry.AddEstimateLevel(_current, place_id, shown_t, level, certainty, "")
+		record("Acrescentar estimativa", func(): return registry.AddEstimateLevel(_current, place_id, shown_t, level, certainty, ""))
 		_reload()
 		return
 	var lo := parse_number(low)
@@ -616,7 +736,7 @@ func _on_estimate_added(place_id: int, low: String, high: String, level: String,
 	elif lo < 0.0 or hi < lo:
 		sheet.show_geo_message("A faixa precisa ser de 0 para cima, e o \"até\" não pode ser menor que o \"de\".")
 	else:
-		registry.AddEstimate(_current, place_id, shown_t, lo, hi, certainty, "")
+		record("Acrescentar estimativa", func(): return registry.AddEstimate(_current, place_id, shown_t, lo, hi, certainty, ""))
 		_reload()
 
 

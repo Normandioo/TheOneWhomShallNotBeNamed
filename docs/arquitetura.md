@@ -33,6 +33,7 @@ scripts/
     RegistryTypes.cs / RegistryRules.cs / RegistryWorldFile.cs (C#, partes do Registry) tipos, campos e camadas como dados;
                      regras declarativas e fixações; o mundo como pasta .world
     RegistryTerrain.cs (C#, parte do Registry) o relevo editado no banco, em blocos de 64 px (`terrain_tile`)
+    RegistryUndo.cs  (C#, parte do Registry) o desfazer dos cadastros: gatilhos temporários que anotam o que muda entre BeginRecord e EndRecord
     RegistryResources.cs (C#, parte do Registry) catálogo de recursos e ocorrências; cada gravação devolve um ResourceEdit
     Vec.cs           (C#) vetor em double na esfera (distâncias)
     RegistryGeneration.cs / ResourceGenerator.cs / ResourcePlan.cs (C#) geração de sugestões: regra, candidatos, prévia e aplicar
@@ -52,7 +53,9 @@ scripts/
     generator_controller.gd prévia, tirar sugestão pelo clique, aplicar e descartar
     world_files.gd   exportar e importar o mundo como pasta .world
   edit/            comandos de edição: toda mudança é um comando com desfazer e refazer.
-    command_stack.gd pilha de desfazer/refazer, limitada a 4% da RAM (48 a 256 MiB); cada comando = nome + objeto com Undo/Redo/Bytes
+    command_stack.gd pilha de desfazer/refazer, limitada a 4% da RAM (48 a 256 MiB); cada comando = nome + objeto com Undo/Redo/Bytes;
+                     Batch junta vários num desfazer só; o sinal applied(cmd) avisa quem precisa reler depois de desfazer ou refazer
+    RecordEdit.cs    uma operação nos cadastros como DADO: as linhas mexidas, com os valores de antes (Registry.BeginRecord/EndRecord)
     terrain_brush.gd pincel de terreno: modos, nomes, parâmetros e quando marcar (o que o GDScript usa)
     BrushKernel.cs   o trabalho pixel a pixel do pincel (todos os modos, erosão e rios)
     TerrainEdit.cs   uma pincelada como DADO: pixels mexidos, altura antes e depois (arrays; gravável no banco)
@@ -174,7 +177,15 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
 - **Fluxo:** painel emite sinal → `DomainHub` chama o Registry → o hub devolve ao painel. Os sinais de edição (`name_changed`, `summary_changed`, `field_edited`) levam o **id da entidade da ficha em que
   se digitou**: se a ficha trocar enquanto o campo tem o foco (clique numa presença no globo), o texto vai para a entidade certa, não para a que acabou de abrir. Só mudanças estruturais (nome alternativo, etiqueta,
   vínculo, abrir outra ficha) refazem a ficha; editar campo não, para não tirar o foco de quem digita.
-- **Ainda não feito:** desfazer/refazer dos cadastros (a pilha de comandos está na `main`; falta escrever os comandos dos cadastros); mudança de nome **com data** na interface (`RenameAt` existe no núcleo; falta o seletor de data); a "visão composta" completa da ficha antiga (hoje: criar a sociedade e navegar pelas relações, sem abas lado a lado); escolher registros existentes ao criar a sociedade; fontes e `property_version` para o restante dos campos; importação. Duas migrações paralelas em ramos diferentes precisam ser renumeradas ao integrar.
+- **Desfazer e refazer** (`RegistryUndo.cs` + `edit/RecordEdit.cs`): entre `BeginRecord` e `EndRecord`, gatilhos **temporários** (criados ao abrir, em todas as tabelas menos
+  as de pixels: `terrain_tile`, `territory_layer`, `territory_tile`) anotam cada linha inserida, alterada ou apagada com os valores antigos, sem passar por texto (o REAL volta bit a bit).
+  `EndRecord` devolve um `RecordEdit` (ou null, se nada mudou), que vai na pilha comum; desfazer aplica o inverso da última para a primeira mudança numa transação e anota o
+  inverso disso, que é o refazer. Assim editar, duplicar e excluir (com nomes, vínculos, presenças, estimativas e distribuições juntos) desfazem sem um comando por tabela, e o id
+  volta o mesmo. O hub faz isso em `record(título, f)`: toda gravação da ficha passa por ele. Excluir um país ou uma subdivisão leva a pintura apagada no mesmo comando (`Batch`),
+  e os comandos antigos que pintam esse cadastro ficam na pilha (só se chega a eles depois de desfazer a exclusão). Depois de desfazer ou refazer, o hub reabre o cadastro do
+  comando (`set_meta("entity")`) ou fecha a ficha se ele não existe mais. Fora do registro ainda: tipos e campos (designer), regras, calendários, cor do país, o país criado pelo
+  rascunho de pintura e os povoados; as linhas do pincel de fronteira de um cadastro excluído não voltam com o desfazer.
+- **Ainda não feito:** mudança de nome **com data** na interface (`RenameAt` existe no núcleo; falta o seletor de data); a "visão composta" completa da ficha antiga (hoje: criar a sociedade e navegar pelas relações, sem abas lado a lado); escolher registros existentes ao criar a sociedade; fontes e `property_version` para o restante dos campos; importação. Duas migrações paralelas em ramos diferentes precisam ser renumeradas ao integrar.
 
 ### Calendários locais (etapa 3)
 
@@ -231,7 +242,9 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
   várias aparecem na lista de busca. **Nenhuma camada marcada = nenhuma presença** (a lista de camadas vazia no `MapItems`/`EntitiesAt` não significa "todas").
 - **Na ficha:** "Presença no mapa" (lista com "Ver", que centraliza o globo; vincular lugar existente com função; **criar lugar no ponto fixado** com nome, raio e função),
   "População" (os números seguem o formato da ficha: `1.200` é 1200, `1,5` é 1,5, `2.000,5` é 2000,5; estimativas por lugar, na data mostrada: faixa, só nível, certeza; as composições lidas, com a faixa absoluta, o "desconhecido" e o aviso de lista incompleta).
-- **Ainda não feito:** criar distribuições pela interface (hoje só pelo núcleo e testes); editar lugar (nome, raio, posição) e mover um marcador; polígonos de fronteira, território
+- **Editar e mover um lugar** (`UpdatePlace`): na ficha, o ✎ de cada lugar abre nome, tipo e raio (Salvar) e **Mover no globo**: o próximo clique leva o ponto e, com ele, a área
+  (o disco em volta); Esc cancela (`DomainHub.place_click` / `cancel_move`). O lugar é o mesmo em todas as fichas que o usam. Tudo desfaz (`undo_suite`).
+- **Ainda não feito:** criar distribuições pela interface (hoje só pelo núcleo e testes); polígonos de fronteira, território
   administrado × reivindicado em desenho próprio e "percentuais por região" como camada; nomes alternativos e históricos de lugar; critérios numéricos configuráveis para os níveis
   baixa/média/alta; fonte da estimativa na interface; recálculo de estimativas por data (hoje cada uma é um registro).
 

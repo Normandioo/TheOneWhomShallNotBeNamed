@@ -130,6 +130,15 @@ public partial class Registry
             Clean(name), kind, lat, lon, radiusKm, note == "" ? null : note);
     }
 
+    /// Muda nome, tipo, posição e raio de um lugar (o mesmo registro em todas as fichas que o usam). Mover = mudar lat/lon.
+    public void UpdatePlace(long id, string name, string kind, double lat, double lon, double radiusKm)
+    {
+        if (!double.IsFinite(lat) || !double.IsFinite(lon) || !double.IsFinite(radiusKm)) throw new ArgumentException("coordenadas inválidas");
+        if (_db.Run("update place set name = @0, kind = @1, lat = @2, lon = @3, radius_km = @4 where id = @5",
+                Clean(name), kind, lat, lon, radiusKm, id) == 0)
+            throw new ArgumentException($"lugar {id} não existe");
+    }
+
     public Dictionary Place(long id)
     {
         var r = _db.Rows("select id, name, kind, lat, lon, radius_km, note from place where id = @0", id);

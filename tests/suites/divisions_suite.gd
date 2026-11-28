@@ -463,4 +463,13 @@ func _screen() -> void:
 	await frames(4)
 	if hub.current() != aren or sheet.open_division != 0 or reg.Count("municipio") != 0 or terr.layer("municipio").AreaKm2(county) > 0.0:
 		return fail("excluir pela lista mantém o país aberto e tira a área")
+	var area = terr.layer("municipio")
+	main.undo()  # o mesmo desfazer devolve o cadastro e a pintura
+	await frames(3)
+	if reg.Kind(county) != "municipio" or area.AreaKm2(county) <= 0.0 or hub.current() != aren:
+		return fail("desfazer a exclusão devolve a subdivisão com a área pintada")
+	main.redo()
+	await frames(3)
+	if reg.Count("municipio") != 0 or area.AreaKm2(county) > 0.0:
+		return fail("refazer a exclusão tira de novo")
 	ok("tela: um botão só, o cartão dá o nome e o lugar, o 2º nível vem de onde se pintou, e a ficha troca os nomes")
