@@ -1,7 +1,7 @@
 extends PanelContainer
 ## O painel dos modos de mapa, embaixo à direita: o nome do modo atual e o botão das sobreposições; MUNDO (política, subdivisões, religião,
-## cultura, etnia, raça e idioma, que são níveis do território sobre o mapa político, e o satélite) e PLANETA (um botão por grupo de camadas:
-## relevo, clima, ecologia…). Os de grupo abrem as variantes; o modo atual fica marcado.
+## cultura, etnia, raça, idioma e biomas, que são camadas pintadas sobre o mapa político) e PLANETA (um botão por grupo de camadas:
+## satélite, relevo, clima, ecologia…). Os de grupo abrem as variantes; o modo atual fica marcado.
 ## Só mostra e pede: avisa por sinal (o Main escolhe a camada e o nível).
 
 const UiKit = preload("res://scripts/ui/ui_kit.gd")
@@ -17,8 +17,9 @@ const WIDTH := 540
 const ICON := 20
 # Nível territorial (mundo): [nível, ícone, dica, sigla embaixo do ícone]
 const WORLD := [["pais", "politics", "Política: países", "Pol"], ["subdivisoes", "organization", "Política: subdivisões do país aberto (cada uma na sua cor, os outros países em cinza)", "Sub"], ["religiao", "religion", "Religião", "Rel"], ["cultura", "culture", "Cultura", "Cul"],
-	["etnia", "ethnicity", "Etnia", "Etn"], ["raca", "race", "Raça", "Raç"], ["idioma", "language", "Idioma", "Idi"]]
-const LEVEL_NAME := {"pais": "político", "subdivisoes": "subdivisões", "religiao": "religiões", "cultura": "culturas", "etnia": "etnias", "raca": "raças", "idioma": "idiomas"}
+	["etnia", "ethnicity", "Etnia", "Etn"], ["raca", "race", "Raça", "Raç"], ["idioma", "language", "Idioma", "Idi"],
+	["bioma", "ecology", "Biomas (a camada editável: todos os biomas; pinte pela barra do Relevo)", "Bio"]]
+const LEVEL_NAME := {"pais": "político", "subdivisoes": "subdivisões", "religiao": "religiões", "cultura": "culturas", "etnia": "etnias", "raca": "raças", "idioma": "idiomas", "bioma": "biomas"}
 # Grupo de camadas (planeta): [grupo em MapLayers, ícone]
 const PLANET := [["Relevo", "relief"], ["Clima", "climate"], ["Ecologia", "ecology"], ["Solos", "soils"], ["Hidrologia", "hydrology"],
 	["Geologia", "geology"], ["Organização", "organization"]]
@@ -75,11 +76,11 @@ func _init() -> void:
 		b.pressed.connect(func() -> void: level_selected.emit(spec[0]))
 		world.add_child(b)
 		_level_buttons[spec[0]] = b
-	_group(world, SATELLITE_GROUP, "satellite", "Satélite e visão geral", "Sat")
 	var planet := HBoxContainer.new()
 	planet.add_theme_constant_override("separation", 3)
 	box.add_child(planet)
 	_caption(planet, "Planeta")
+	_group(planet, SATELLITE_GROUP, "satellite", "Satélite e visão geral")
 	for spec in PLANET:
 		_group(planet, spec[0], spec[1], spec[0])
 

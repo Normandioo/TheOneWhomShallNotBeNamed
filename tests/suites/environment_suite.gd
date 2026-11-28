@@ -7,6 +7,7 @@ const Geo = preload("res://scripts/data/evron_geo.gd")
 const EvronMaps = preload("res://scripts/data/evron_maps.gd")
 const TerrainBrush = preload("res://scripts/edit/terrain_brush.gd")
 const TerritoryEditor = preload("res://scripts/app/territory_editor.gd")
+const MapLayers = preload("res://scripts/ui/map_layers.gd")
 
 
 ## Um ponto de mar (ou de terra) com o outro a menos de ~100 km: para a costa.
@@ -49,6 +50,21 @@ func _coast() -> void:
 	brush.end()
 	if t.HeightAt(land) != -50.0:
 		return fail("Mar deveria fazer da terra mar raso (−50 m): %.1f" % t.HeightAt(land))
+	# Os mapas de imagem seguem a costa nova: a máscara do que mudou desde o Gleba.
+	var deadline := Time.get_ticks_msec() + 10000
+	while main.gpu_sync.coast_pending() and Time.get_ticks_msec() < deadline:
+		await frames(1)
+	var tex = main.material.coast_change_texture
+	var px := Geo.pixel(sea, t.Size)
+	var lp := Geo.pixel(land, t.Size)
+	if tex == null or tex.get_image().get_pixel(px.x, px.y).r8 != 255 or tex.get_image().get_pixel(lp.x, lp.y).r8 != 128:
+		return fail("a máscara da costa nova deveria marcar a terra nova (255) e o mar novo (128)")
+	for i in MapLayers.LAYERS.size():
+		if MapLayers.LAYERS[i].get("file", "") == "Clima.png":
+			main.set_layer(i)
+	main.globe.focus(sea, 1.4)
+	await frames(20)
+	await save("costa_nova_clima")
 	main.undo()
 	main.undo()
 	if t.HeightAt(sea) != before_sea or t.HeightAt(land) < 0.0:
@@ -156,6 +172,11 @@ func _biomes() -> void:
 	check.Setup(main.terrain)
 	if not main.domains.registry.LoadTerritoryLevel("bioma", check) or check.OwnerAt(spot) != steppe:
 		return fail("os biomas editados voltam ao reler")
+	main.mode_rail.level_selected.emit("bioma")
+	await frames(2)
+	if terr.territory_level != "bioma" or MapLayers.LAYERS[main.layer]["kind"] != "political":
+		return fail("o modo Bio mostra a camada dos biomas no mapa")
+	main.mode_rail.level_selected.emit("pais")
 	ok("biomas: nascem iguais ao Gleba pixel a pixel (sem interpolar); pintar desfaz; gravam e voltam")
 
 

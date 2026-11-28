@@ -112,7 +112,7 @@ func run() -> void:
 	main.set_tool(-1)
 	tutorials.auto = true
 
-	# O básico: pergunta antes; "Sim" mostra os 7 passos com o destaque na tela; depois não pergunta de novo.
+	# O básico: pergunta antes; "Sim" mostra os 8 passos com o destaque na tela; depois não pergunta de novo.
 	tutorials.offer_basic()
 	await frames(3)
 	if not overlay.visible or not overlay.asking or not overlay.blocking():
@@ -122,9 +122,9 @@ func run() -> void:
 		return fail("com a pergunta na tela os atalhos esperam")
 	overlay.yes_button.pressed.emit()
 	await frames(3)
-	if overlay.asking or overlay.steps.size() != 7:
-		return fail("sim: 7 passos (%d)" % overlay.steps.size())
-	if not await _walk("básico", [1, 2, 3, 4, 5]):
+	if overlay.asking or overlay.steps.size() != 8:
+		return fail("sim: 8 passos (%d)" % overlay.steps.size())
+	if not await _walk("básico", [1, 2, 3, 4, 5, 6]):
 		return
 	if overlay.visible or not settings.value("tutorial_asked") or tutorials.current != "":
 		return fail("concluir fecha e marca o tutorial como perguntado")
@@ -138,7 +138,7 @@ func run() -> void:
 	overlay.no_button.pressed.emit()
 	if overlay.visible or not settings.value("tutorial_asked"):
 		return fail("'Não, obrigado' também vale para sempre")
-	ok("tutorial básico: pergunta, 7 passos com destaque, e não pergunta de novo")
+	ok("tutorial básico: pergunta, 8 passos com destaque, e não pergunta de novo")
 
 	# Ferramentas: na primeira vez pergunta sem travar o jogo; fechar a ferramenta tira a pergunta; "nunca" desliga todas.
 	main.set_tool(0)
@@ -196,8 +196,8 @@ func run() -> void:
 	options.open("ajuda")
 	options.tutorial_buttons["relevo"].pressed.emit()
 	await frames(5)
-	if overlay.steps.size() != 4 or not await _walk("relevo", [0, 1, 2, 3]):
-		return fail("o tutorial do relevo tem 4 passos")
+	if overlay.steps.size() != 6 or not await _walk("relevo", [0, 1, 2, 3, 4, 5]):
+		return fail("o tutorial do relevo tem 6 passos")
 	main.set_tool(-1)
 	ok("pelo menu e pelo '?': a ferramenta abre e os destaques apontam para ela")
 

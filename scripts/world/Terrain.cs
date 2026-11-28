@@ -48,8 +48,22 @@ public partial class Terrain : RefCounted
         H = new float[Size.X * Size.Y];
         Buffer.BlockCopy(height.GetData(), 0, H, 0, H.Length * sizeof(float));
         R = new byte[H.Length];
+        _origSea = new bool[H.Length];
+        for (int i = 0; i < H.Length; i++) _origSea[i] = H[i] < 0f;
         _heightImg = height;
         _riverImg = Image.CreateFromData(Size.X, Size.Y, false, Image.Format.R8, R);
+    }
+
+    private bool[] _origSea = [];  // o mar do Gleba (antes das edições): os mapas de imagem não sabem da costa nova
+
+    /// Onde a costa mudou desde o Gleba, para os mapas de imagem (clima, biomas, solos...) seguirem a costa editada: R8, 255 = virou terra,
+    /// 128 = virou mar, 0 = como no Gleba. Calculado junto da costa (fora da pincelada).
+    public Image CoastChangeImage()
+    {
+        var b = new byte[H.Length];
+        for (int i = 0; i < H.Length; i++)
+            if ((H[i] < 0f) != _origSea[i]) b[i] = H[i] < 0f ? (byte)128 : (byte)255;
+        return Image.CreateFromData(Size.X, Size.Y, false, Image.Format.R8, b);
     }
 
     /// A imagem da altitude, atualizada com as edições (a mesma instância sempre: a textura do globo a usa).

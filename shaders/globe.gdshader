@@ -36,6 +36,8 @@ varying vec3 obj_pos;
 // Mapa plano: a mesma malha (uma grade de lat/lon com UV equiretangular) desdobrada no plano z = 0, com x = lon · raio e y = lat · raio.
 // O fragmento continua lendo a direção da esfera (obj_pos): é o mesmo mapa, só a geometria muda.
 uniform float flat_map = 0.0;
+// Onde a costa editada difere da do Gleba (Terrain.CoastChangeImage): 1 = virou terra, 0,5 = virou mar. Os mapas de imagem seguem a costa nova.
+uniform sampler2D coast_change : hint_default_black, filter_nearest, repeat_enable;
 
 vec3 altitude_color(float h) {
 	float t = h < 0.0 ? 0.5 + 0.5 * h / -SEA_FLOOR : 0.5 + 0.5 * h / PEAK;
@@ -305,6 +307,15 @@ void fragment() {
 		vec2 tuv = vec2(uv.x, clamp(uv.y, 0.0, 1.0));
 		float c = mix(textureLod(temp_jan, tuv, 0.0).r, textureLod(temp_jul, tuv, 0.0).r, season_july);
 		col = textureLod(temp_ramp, vec2(clamp((c + 20.0) / 60.0, 0.0, 1.0), 0.5), 0.0).rgb;
+	}
+	// A costa editada nos mapas que vêm de imagem (o Gleba não sabe dela): o mar novo pela profundidade, a terra nova num tom neutro
+	// marcado como sem dado (a imagem não tem o que dizer ali; o mapa natural usa a cor da terra mais comum).
+	if (mode == 0 || mode == 2 || mode == 3) {
+		float chg = textureLod(coast_change, vec2(uv.x, clamp(uv.y, 0.0, 1.0)), 0.0).r;
+		if (chg > 0.25) {
+			float lat = asin(clamp(n.y, -1.0, 1.0));
+			col = chg > 0.75 ? pow(vec3(0.58, 0.54, 0.42), vec3(2.2)) : pow(water_color(h, lat), vec3(2.2));
+		}
 	}
 	if (mode == 4) {
 		// Cor pronta, com a luz de mapa já dentro: vai na emissão, sem o sol (só um leve escurecer na borda do disco).

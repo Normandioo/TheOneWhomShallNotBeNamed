@@ -19,6 +19,7 @@ var _area_shown := false
 var _area_gray := false
 var _area_hatched := false
 var _lake_version := 0
+var _change_image: Image = null  # onde a costa mudou (Terrain.CoastChangeImage), calculado junto da costa
 var _area_key := ""   # a camada de área e a versão que já estão na GPU
 var _coast_task := -1  # tarefa da thread que calcula a costa (-1 = nenhuma)
 var _coast_started := 0
@@ -109,8 +110,13 @@ func _tick_coast() -> void:
 		PerfMonitor.stop("costa", _coast_started)
 		if _coast_image != null:  # null = sem memória: fica a anterior
 			_material.set_coast(_coast_image)
+		if _change_image != null:
+			_material.set_coast_change(_change_image)
 		_coast_image = null
+		_change_image = null
 	if coast_stale and _coast_task == -1 and not _brush.active:
 		coast_stale = false
 		_coast_started = PerfMonitor.start()
-		_coast_task = WorkerThreadPool.add_task(func() -> void: _coast_image = _terrain.CoastImage())
+		_coast_task = WorkerThreadPool.add_task(func() -> void:
+			_coast_image = _terrain.CoastImage()
+			_change_image = _terrain.CoastChangeImage())

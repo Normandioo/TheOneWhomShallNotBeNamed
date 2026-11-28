@@ -94,6 +94,9 @@ static func _basic(m) -> Array:
 			"abra o Território e depois cancele ou conclua.", func(): return [m.territories.painting_territory, m._dock["region_card"].visible], {"tip": "Ctrl+Z desfaz."}),
 		step("Os mapas", "Aqui você troca o que o globo mostra: países, subdivisões, culturas, religiões, relevo, clima e outros.", [these([m.mode_rail])],
 			"clique em outro modo de mapa.", func(): return [m.layer, m.territories.territory_level]),
+		step("Plano e Medir", "Plano (tecla M) mostra o mundo num mapa plano, com as mesmas camadas e cadastros do globo. Medir é a régua: clique nos pontos e a distância pela superfície aparece no quadro do ponto fixado.",
+			[these([m.tool_panel.flat_toggle, m.tool_panel.ruler_toggle])], "ligue o Plano e desligue de novo.", func(): return m.globe.flat,
+			{"tip": "Na régua, Backspace tira o último ponto e Esc encerra."}),
 		step("Tempo, busca e mundo", "Pause ou avance o tempo, busque qualquer nome, abra os Registros e o menu Mundo.", [these([m.tool_panel.world_block])],
 			"abra os Registros.", func(): return m._dock["search"].visible, {"tip": "Os ícones de aviso logo abaixo mostram o que falta no país selecionado."}),
 		step("Pronto", "Você já sabe o básico. Todos os tutoriais estão em Opções → Ajuda; o botão ? no alto à direita leva até lá.", [], "",
@@ -150,8 +153,10 @@ static func _modes(m) -> Array:
 		step("Povo no mapa", "Rel, Cul, Etn, Raç e Idi mostram as áreas de religião, cultura, etnia, raça e idioma. Clicar numa área abre o cadastro dela.",
 			[these([rail._level_buttons["religiao"], rail._level_buttons["cultura"], rail._level_buttons["etnia"], rail._level_buttons["raca"], rail._level_buttons["idioma"]])],
 			"abra o mapa de culturas.", mode),
-		step("Satélite e visão geral", "Sat abre uma lista com as vistas do planeta; a bolinha marca a atual.", [these([rail._group_buttons["Visão geral"]])],
-			"escolha uma vista.", mode),
+		step("Biomas", "Bio mostra todos os biomas da camada editável: nasce igual ao mapa do Gleba e muda quando você pinta biomas pela barra do Relevo.",
+			[these([rail._level_buttons["bioma"]])], "clique em Bio.", mode),
+		step("Satélite e visão geral", "O primeiro ícone da linha Planeta abre as vistas do planeta (satélites e o mapa político); a bolinha marca a atual.",
+			[these([rail._group_buttons["Visão geral"]])], "escolha uma vista.", mode),
 		step("Planeta", "Relevo, clima, ecologia, solos, hidrologia, geologia e organização. Cada ícone abre a lista das camadas do grupo.",
 			[these(rail._group_buttons.values().filter(func(b): return b != rail._group_buttons["Visão geral"]))], "abra um grupo e escolha uma camada.", mode),
 		step("Sobreposições", "Abre o painel com o que vai por cima do mapa: legenda, nomes, rios, áreas e marcadores.", [these([rail._overlays])],
@@ -237,6 +242,8 @@ static func _population(m) -> Array:
 			[named(page, ["habitantes da cidade", "Adicionar cidade"]), box(page, "População")], "adicione uma cidade.", total),
 		step("Cidade nova", "Na lista, “＋ Nova cidade…” cria uma cidade: antes, clique no globo para fixar onde ela fica, depois dê o nome e os habitantes.",
 			[named(page, ["＋ Nova cidade"]), box(page, "População")], "clique no globo para fixar um ponto.", func(): return m.domains.fixed_dir),
+		step("Composição", "＋ Composição diz quanto da população, numa cidade ou numa região, é de cada cultura, etnia, raça, religião ou idioma. Exclusivas e lista completa precisam somar 100%; a ficha avisa o que corrigir. O ✕ de cada composição a apaga (Ctrl+Z desfaz).",
+			[named(page, ["＋ Composição"]), box(page, "População")], "abra o formulário e feche.", Callable()),
 	]
 
 
@@ -249,12 +256,18 @@ static func _sheet_territory(m) -> Array:
 		step("Área e cor", "A área pintada, o quadrado da cor no mapa e Apagar, que tira todo o território deste cadastro (Ctrl+Z desfaz).",
 			[box(page, "Território"), box(page, "Área no mapa")], "abra a cor e feche sem mudar.", Callable()),
 	] + ([
+		step("Dividir", "Dividir abre o lápis de fronteira: uma linha de uma borda até a outra tira um lado, que vira um cadastro novo, com as subdivisões que ficam desse lado. A capital e as outras ligações ficam com o original. \"Outro lado\" troca; Ctrl+Z desfaz tudo de uma vez.",
+			[named(page, ["Dividir"]), box(page, "Território")], "", Callable()),
+	] if String(sheet._sheet.get("kind", "")) in ["pais", "provincia", "municipio"] else []) + ([
+		step("Reivindicação", "Pintar reivindicação pinta o que este país reivindica, inclusive sobre outro país: a fronteira não muda. A seção diz quanto ele reivindica de quem; no mapa, as reivindicações aparecem em listras (Sobreposições → Reivindicações).",
+			[named(func(): return m.domains.sheet, ["Pintar reivindicação"]), box(page, "Território")], "", Callable()),
+	] if String(sheet._sheet.get("kind", "")) == "pais" else []) + ([
 		step("Subdivisões", "A lista das subdivisões daqui. Clicar num nome abre a linha ali mesmo: nome, como se chama, população, área e cor, pintar, ver no mapa, ficha completa e excluir. No mapa de subdivisões, clicar numa delas abre a linha.",
 			[box(page, "Subdivisões")], "clique numa subdivisão da lista.", func(): return sheet.open_division),
 		step("Nova divisão", "＋ Pintar divisão abre o pincel; depois o cartão pergunta o nome e como ela se chama, e ela aparece aberta na lista. Ligar existente… junta uma que já existe.",
 			[named(page, ["＋ Pintar divisão", "Ligar existente"])], "abra Ligar existente… e veja a busca.", Callable()),
 	] if String(sheet._sheet.get("kind", "")) in ["pais", "provincia"] else []) + [
-		step("Lugares", "Os lugares ligados ao cadastro, como a capital. Clicar no nome leva o mapa até lá; o ✕ desliga o lugar.", [box(page, "Lugares")],
+		step("Lugares", "Os lugares ligados ao cadastro, como a capital. Clicar no nome leva o mapa até lá; o ✕ desliga o lugar. O ✎ edita o lugar: nome, tipo e raio, Mover no globo (o próximo clique leva o ponto e a área), Duplicar e Excluir lugar. Tudo desfaz com Ctrl+Z.", [box(page, "Lugares")],
 			"clique no nome de um lugar.", func(): return [snappedf(m.globe.camera.yaw, 0.05), snappedf(m.globe.camera.pitch, 0.05)]),
 		step("＋ Existente", "Liga um lugar que já existe no mundo, dizendo o papel dele (capital, sede, origem…).", [named(page, ["＋ Existente"])],
 			"abra e feche o formulário.", Callable()),
@@ -283,6 +296,8 @@ static func _registry(m) -> Array:
 			[these([panel._sections]), these([panel])], "feche uma seção e abra de novo.", Callable()),
 		step("Abrir um cadastro", "Clicar num nome abre a ficha dele (os Registros dão lugar à ficha).", [these([panel._sections]), these([panel])],
 			"clique num nome.", func(): return m.domains.current()),
+		step("Vários de uma vez", "Com texto na busca, Ctrl ou Shift + clique marcam vários resultados. Com dois ou mais, aparece a barra: Etiquetar põe a mesma etiqueta em todos e Excluir marcados apaga todos, com o território. Um Ctrl+Z desfaz a operação inteira.",
+			[named(root, ["Buscar por nome"]), these([panel])], "", Callable()),
 		step("Criar", "＋ País e ＋ Sociedade (país, cultura e etnia juntos) usam o texto da busca como nome. ＋ Outro cria cadastros dos demais tipos.",
 			[named(root, ["＋ País", "＋ Sociedade", "＋ Outro"]), these([panel])], "abra ＋ Outro para ver os tipos.", Callable()),
 	]
@@ -295,7 +310,7 @@ static func _overlays(m) -> Array:
 		step("Legenda, nomes e rios", "Legenda do mapa mostra as cores no canto. Nomes dos países escreve os nomes no globo. Rios em destaque os realça por cima de qualquer mapa.",
 			[these([panel.legend_check, panel.names_check, panel.rivers_check]), these([panel])], "desligue e ligue os nomes dos países.",
 			func(): return [panel.legend_check.button_pressed, panel.names_check.button_pressed, panel.rivers_check.button_pressed]),
-		step("Áreas sobre o mapa", "Mostra culturas, etnias, raças, religiões ou idiomas por cima dos países, que ficam em cinza. Uma de cada vez.",
+		step("Áreas sobre o mapa", "Mostra culturas, etnias, raças, religiões ou idiomas por cima dos países, que ficam em cinza. Reivindicações vão em listras na cor de quem reivindica, com os países na cor deles. Uma de cada vez.",
 			[these(panel._area_checks.values()), these([panel])], "ligue uma área e depois desligue.", func(): return m.territories.overlay_level),
 		step("Marcadores por lugar", "Os círculos e áreas ligados a lugares: escolha entre os da ficha aberta e os de todos, e quais camadas aparecem.",
 			[named(root, ["▸ Marcadores", "▾ Marcadores"]), these([panel])], "abra os marcadores.", Callable()),
@@ -325,11 +340,15 @@ static func _relief(m) -> Array:
 		step("Esculpir o relevo", "Com um pincel de relevo ativo, o botão esquerdo esculpe e o direito gira o globo.", [these([tools.edit_bar])],
 			"arraste sobre a terra.", func(): return m.commands.can_undo()),
 		step("Os pincéis", "Elevar e Rebaixar mudam a altura. Nivelar leva à altura de onde você começou; Suavizar tira asperezas. Montanhas, Erosão e Vales criam formas.",
-			[these(tools._buttons)], "escolha outro pincel.", func(): return m.tool),
+			[these(tools._buttons.slice(0, 7))], "escolha outro pincel.", func(): return m.tool),
+		step("Costa", "Terra e Mar mudam a costa: o miolo do pincel vira terra baixa ou mar raso. Os mapas de imagem (clima, solos...) passam a mostrar o mar novo e a terra nova em tom neutro, porque o Gleba não tem dado para ela.",
+			[these(tools._buttons.slice(7))], "escolha Terra ou Mar.", func(): return m.tool),
+		step("Lagos e biomas", "Escolha a categoria e aperte Pintar lagos ou Pintar biomas: abre o pincel do território nessa camada. Lago pinta água; Seco tira um lago do Gleba; a borracha devolve o original. Os biomas aparecem no modo de mapa Bio.",
+			[named(func(): return tools.edit_bar, ["Pintar lagos", "Pintar biomas"])], "", Callable()),
 		step("Controles", "Raio é o tamanho do pincel. Intensidade é a força. Rugosidade vai de liso a irregular.", [these([tools.radius.get_parent().get_parent()])],
 			"mude um dos controles.", func(): return [m.brush.radius_km, m.brush.strength, m.brush.roughness]),
 		step("Desfazer e sair", "Ctrl+Z desfaz e Ctrl+Y refaz. Navegar (V) sai da ferramenta.", [these([tools._navigate, tools._undo, tools._redo])],
-			"desfaça o que esculpiu e volte a Navegar.", func(): return m.tool, {"tip": "Os mapas de clima e biomas continuam sendo os do relevo original."}),
+			"desfaça o que esculpiu e volte a Navegar.", func(): return m.tool, {"tip": "Clima, solos e os outros mapas do Gleba não são recalculados: só seguem a costa nova."}),
 	]
 
 

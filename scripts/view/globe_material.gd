@@ -18,6 +18,7 @@ var political_texture: ImageTexture          # os donos de cada pixel (RG8)
 var political_palette_texture: ImageTexture  # 256×256: a cor de cada país por id
 var political_top_texture: ImageTexture      # 256×256 RG8: o país de cada id (a província aponta para o país)
 var height_texture: ImageTexture  # também usada pelos blocos (TileLayer), para o mesmo relevo
+var coast_change_texture: ImageTexture  # onde a costa editada difere da do Gleba (set_coast_change)
 var coast_texture: ImageTexture   # mapa político: distância à costa e lagos (Terrain.CoastImage)
 var _river_highlight := false  # a sobreposição "Rios em destaque" está ligada (usa o atlas de rios do satélite)
 var layer_file := ""  # arquivo da camada carregada ("" = nenhuma)
@@ -124,6 +125,15 @@ func set_coast(coast: Image) -> void:
 		RenderingServer.global_shader_parameter_set("coast_map", coast_texture)  # global: o globo, os blocos e a camada política leem a mesma costa
 	else:
 		coast_texture.update(coast)
+
+
+## Onde a costa mudou desde o Gleba (R8: 255 virou terra, 128 virou mar): os mapas de imagem seguem a costa editada.
+func set_coast_change(change: Image) -> void:
+	if coast_change_texture == null:
+		coast_change_texture = ImageTexture.create_from_image(change)
+		material.set_shader_parameter("coast_change", coast_change_texture)
+	else:
+		coast_change_texture.update(change)
 
 
 func show_political(on: bool) -> void:
