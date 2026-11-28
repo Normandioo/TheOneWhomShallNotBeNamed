@@ -38,6 +38,7 @@ const SCENE_SUITES := [
 	"res://tests/suites/territory_boundary_suite.gd",
 	"res://tests/suites/split_suite.gd",  # com a cena: dividir pelo pincel de fronteira
 	"res://tests/suites/environment_suite.gd",  # com a cena: costa, lago, bioma e alinhamento entre zooms
+	"res://tests/suites/map_suite.gd",  # com a cena: mapa plano, régua e lote
 ]
 
 

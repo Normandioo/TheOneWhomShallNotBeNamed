@@ -49,8 +49,9 @@ func _process(delta: float) -> void:
 	var altitude: float = _globe.camera_altitude_km()
 	var eye: Vector3 = cam.global_position.normalized()
 	for l in _labels:
-		var world: Vector3 = (l.dir as Vector3) * _globe.RADIUS
-		var show: bool = l.radius_km > altitude * size_factor and (l.dir as Vector3).dot(eye) > 0.25 and not cam.is_position_behind(world)
+		var world: Vector3 = _globe.world_of(l.dir as Vector3)
+		var facing: bool = _globe.flat or (l.dir as Vector3).dot(eye) > 0.25
+		var show: bool = l.radius_km > altitude * size_factor and facing and not cam.is_position_behind(world)
 		l.node.visible = show
 		if show:
 			l.node.position = cam.unproject_position(world) - l.node.size / 2.0

@@ -19,7 +19,9 @@ const NEAR_KM := 1500.0      # altitude da câmera: daqui para baixo, tamanho ch
 const FAR_KM := 9000.0       # daqui para cima, o menor
 const CELL := 12.0           # pixels da grade que diz onde já há nome
 
+static var flat := false    # mapa plano (GlobeView.set_flat): os pontos vão para o plano z = 0, em (lon · raio, lat · raio)
 var radius := 1.0            # raio do globo na cena (GlobeView.RADIUS)
+var _items: Array = []       # o último show_items (para redesenhar ao trocar globo e plano)
 var item_count := 0          # presenças desenhadas
 var area_count := 0          # discos
 var label_count := 0         # lugares rotulados
@@ -63,14 +65,14 @@ func _process(_delta: float) -> void:
 ## outros voltam.
 func _lay_out(cam: Camera3D, view: Vector2) -> void:
 	var eye := cam.global_position.normalized()
-	var altitude := (cam.global_position.length() / radius - 1.0) * EvronGeo.RADIUS_KM
+	var altitude := (cam.global_position.z / radius if flat else cam.global_position.length() / radius - 1.0) * EvronGeo.RADIUS_KM
 	var far := clampf(inverse_lerp(NEAR_KM, FAR_KM, altitude), 0.0, 1.0)
 	var pixel := LABEL_PIXEL * snappedf(lerpf(1.0, FAR_SCALE, far), 0.05)  # em degraus: o zoom não refaz os textos a cada quadro
 	var screen := pixel * view.y / (2.0 * tan(deg_to_rad(cam.fov) / 2.0))  # pixels da tela por pixel da fonte
 	var used := {}
 	var loose := {}  # os que ficaram só com o símbolo: onde cada um está na tela
 	for l in _labels:
-		l.visible = l.global_position.normalized().dot(eye) > 0.2
+		l.visible = flat or l.global_position.normalized().dot(eye) > 0.2
 		if not l.visible:
 			continue
 		l.pixel_size = pixel
@@ -98,8 +100,23 @@ func _take(used: Dictionary, rect: Rect2) -> bool:
 	return true
 
 
+## O ponto da cena da direção n a `height` raios do centro: no globo, n × raio × height; no plano, o ponto (lon, lat) com a
+## folga (height − 1) acima dele.
+static func at(n: Vector3, r: float, height: float) -> Vector3:
+	if not flat:
+		return n.normalized() * r * height
+	var ll := EvronGeo.lat_lon(n.normalized())
+	return Vector3(deg_to_rad(ll.y) * r, deg_to_rad(ll.x) * r, (height - 1.0) * r)
+
+
+## Redesenha o que estava na tela (depois de trocar globo e plano).
+func redraw() -> void:
+	show_items(_items)
+
+
 ## Redesenha tudo. items: o que Registry.MapItems devolve (place_id, place, lat, lon, radius_km, layer, role, entity).
 func show_items(items: Array) -> void:
+	_items = items
 	_laid_out = []
 	for l in _labels:
 		l.queue_free()
@@ -164,8 +181,8 @@ func _ribbon(verts: PackedVector3Array, colors: PackedColorArray, dirs: Array[Ve
 		var tangent := next - prev
 		var side := p.cross(tangent)
 		side = side.normalized() if side.length() > 1e-9 else Vector3.ZERO
-		left.append((p + side * w).normalized() * radius * HEIGHT)
-		right.append((p - side * w).normalized() * radius * HEIGHT)
+		left.append(at(p + side * w, radius, HEIGHT))
+		right.append(at(p - side * w, radius, HEIGHT))
 	for i in (m if closed else m - 1):
 		var j := (i + 1) % m
 		verts.append_array([left[i], right[i], right[j], left[i], right[j], left[j]])
@@ -205,7 +222,7 @@ func _show_draft_marks(points: PackedVector3Array, color: Color) -> void:
 		mark.outline_modulate = Color(0, 0, 0, 0.9)
 		mark.modulate = color
 		mark.no_depth_test = false
-		mark.position = points[i] * radius * (HEIGHT + 0.0012)
+		mark.position = at(points[i], radius, HEIGHT + 0.0012)
 		add_child(mark)
 		_draft_labels.append(mark)
 
@@ -241,7 +258,7 @@ func _ring(c: Vector3, u: Vector3, v: Vector3, a: float, height: float) -> Packe
 	var pts := PackedVector3Array()
 	for i in SEGMENTS:
 		var b := TAU * i / SEGMENTS
-		pts.append((cos(a) * c + sin(a) * (cos(b) * u + sin(b) * v)).normalized() * radius * height)
+		pts.append(at(cos(a) * c + sin(a) * (cos(b) * u + sin(b) * v), radius, height))
 	return pts
 
 
@@ -277,7 +294,7 @@ func _place_label(first: Dictionary, text: String) -> void:
 	label.modulate = _color_of(first).lightened(0.25)
 	label.no_depth_test = true  # com teste de profundidade o relevo cortava o nome ao girar o globo; o lado de trás é escondido em _process
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	label.position = EvronGeo.dir(first.lat, first.lon) * radius * (HEIGHT + 0.0008)
+	label.position = at(EvronGeo.dir(first.lat, first.lon), radius, HEIGHT + 0.0008)
 	label.set_meta("text", text)
 	label.set_meta("size", ThemeDB.fallback_font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size))
 	add_child(label)

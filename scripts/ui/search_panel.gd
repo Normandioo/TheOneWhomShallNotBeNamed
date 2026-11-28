@@ -8,6 +8,8 @@ const UiKit = preload("res://scripts/ui/ui_kit.gd")
 const UiIcons = preload("res://scripts/ui/ui_icons.gd")
 
 signal query_changed(text: String, kind: String)
+signal batch_tag_requested(ids: Array, tag: String)  # o lote: a mesma etiqueta em vários
+signal batch_delete_requested(ids: Array)              # o lote: excluir vários
 signal entity_chosen(id: int)
 signal create_requested(kind: String, name: String)
 signal society_requested(name: String)
@@ -40,6 +42,8 @@ var _query: LineEdit
 var _filter: OptionButton
 var _new_pop: PopupMenu
 var _list: ItemList
+var _batch: HFlowContainer  # a barra do lote: aparece com dois ou mais marcados
+var _batch_label: Label
 var _ids: Array[int] = []
 var _sections: VBoxContainer   # as listas, uma sob a outra
 var _results: VBoxContainer    # o filtro e a lista da busca (no lugar das seções enquanto há texto)
@@ -96,7 +100,31 @@ func _init() -> void:
 	_list.custom_minimum_size = Vector2(0, 170)
 	_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_list.item_selected.connect(func(i: int) -> void: entity_chosen.emit.call_deferred(_ids[i]))
+	_list.select_mode = ItemList.SELECT_MULTI  # Ctrl ou Shift marcam vários: a barra do lote aparece embaixo
+	_list.multi_selected.connect(func(_i: int, _on: bool) -> void: _show_batch())
 	_results.add_child(_list)
+	_batch = HFlowContainer.new()
+	_batch.add_theme_constant_override("h_separation", 6)
+	_batch.hide()
+	_results.add_child(_batch)
+	_batch_label = Label.new()
+	_batch.add_child(_batch_label)
+	var tag := LineEdit.new()
+	tag.placeholder_text = "etiqueta"
+	tag.custom_minimum_size.x = 100
+	_batch.add_child(tag)
+	var tag_go := Button.new()
+	tag_go.text = "Etiquetar"
+	tag_go.tooltip_text = "Põe a etiqueta em todos os marcados (um desfazer só)"
+	tag_go.pressed.connect(func() -> void:
+		if tag.text.strip_edges() != "":
+			batch_tag_requested.emit(marked(), tag.text.strip_edges()))
+	_batch.add_child(tag_go)
+	var drop := Button.new()
+	drop.text = "Excluir marcados"
+	drop.tooltip_text = "Exclui todos os marcados, com o território e os vínculos de cada um (um desfazer só)"
+	drop.pressed.connect(func() -> void: batch_delete_requested.emit(marked()))
+	_batch.add_child(drop)
 
 	_sections = VBoxContainer.new()  # cada seção divide a altura: a dos países pesa mais; as vazias ficam só com o título
 	_sections.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -140,10 +168,22 @@ func refresh_kinds() -> void:
 	_filter.select(kinds.find(keep) + 1)
 
 
+## Os ids marcados na lista (Ctrl ou Shift + clique).
+func marked() -> Array:
+	return Array(_list.get_selected_items()).map(func(i: int) -> int: return _ids[i])
+
+
+func _show_batch() -> void:
+	var n := _list.get_selected_items().size()
+	_batch.visible = n > 1
+	_batch_label.text = "%d marcados:" % n
+
+
 ## Mostra os resultados (cada um: id, kind, name, match). Não repete o evento de seleção.
 func show_results(items: Array, selected_id: int = 0) -> void:
 	_list.clear()
 	_ids.clear()
+	_batch.hide()
 	for it in items:
 		var text: String = "%s  ·  %s" % [it.name, UiKit.entry_label(String(it.kind), String(it.get("label", "")))]
 		if it.match != "":

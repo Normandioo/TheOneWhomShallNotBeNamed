@@ -52,6 +52,7 @@ scripts/
     resource_controller.gd painel de recursos, camada das ocorrências e o clique no globo (colocar, mover, escolher)
     generator_controller.gd prévia, tirar sugestão pelo clique, aplicar e descartar
     world_files.gd   exportar e importar o mundo como pasta .world
+    ruler.gd         a régua (botão Medir): pontos clicados e a soma dos trechos pela esfera
   edit/            comandos de edição: toda mudança é um comando com desfazer e refazer.
     command_stack.gd pilha de desfazer/refazer, limitada a 4% da RAM (48 a 256 MiB); cada comando = nome + objeto com Undo/Redo/Bytes;
                      Batch junta vários num desfazer só; o sinal applied(cmd) avisa quem precisa reler depois de desfazer ou refazer
@@ -243,7 +244,9 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
 - **Na ficha:** "Presença no mapa" (lista com "Ver", que centraliza o globo; vincular lugar existente com função; **criar lugar no ponto fixado** com nome, raio e função),
   "População" (os números seguem o formato da ficha: `1.200` é 1200, `1,5` é 1,5, `2.000,5` é 2000,5; estimativas por lugar, na data mostrada: faixa, só nível, certeza; as composições lidas, com a faixa absoluta, o "desconhecido" e o aviso de lista incompleta).
 - **Editar e mover um lugar** (`UpdatePlace`): na ficha, o ✎ de cada lugar abre nome, tipo e raio (Salvar) e **Mover no globo**: o próximo clique leva o ponto e, com ele, a área
-  (o disco em volta); Esc cancela (`DomainHub.place_click` / `cancel_move`). O lugar é o mesmo em todas as fichas que o usam. Tudo desfaz (`undo_suite`).
+  (o disco em volta); Esc cancela (`DomainHub.place_click` / `cancel_move`). O lugar é o mesmo em todas as fichas que o usam. **Duplicar** cria a cópia no
+  mesmo ponto, ligada à ficha com a mesma função (`DuplicatePlace`); **Excluir lugar** o tira de todas as fichas com as presenças, estimativas e composições
+  nele (`RemovePlace`). Tudo desfaz (`undo_suite`).
 - **Composições pela ficha** (página População, "＋ Composição"): lugar (cidade ou região, com busca), dimensão, "Exclusivas", "Lista completa" e as categorias
   com o percentual; vale para a data mostrada, e o denominador é a estimativa da ficha nesse lugar e nessa data, se houver. O hub confere as somas antes de
   gravar e diz o que corrigir (`DomainHub.add_distribution`); o ✕ de cada composição a apaga. Ambos desfazem. Cada lugar tem a sua: a cidade e a região (uma área
@@ -435,6 +438,22 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>                         
   dados, a média 2×2 do nível 4 do relevo casa com o nível 3 sem deslocamento (a diferença cresce com 1 e 2 px).
 - **Ainda não feito:** clima e solo como dados pintados (o mesmo mecanismo do bioma); o bioma ainda não é lido por nenhum cálculo (o gerador de recursos
   usa Köppen, rocha e vegetação do Gleba); recalcular os biomas depois de editar o relevo.
+
+## Mapa plano, régua e lote (E2; A10)
+
+- **Mapa plano** (botão "Plano" da barra de baixo, ou M): o mesmo globo desdobrado. A malha do globo é uma grade de lat/lon com UV equiretangular
+  (`GlobeView._latlon_sphere`, costura em 180°) e o `globe.gdshader`, com `flat_map`, põe cada vértice em (lon · raio, lat · raio, 0); o fragmento
+  continua lendo a direção da esfera, então todas as camadas (satélite, político, áreas, reivindicações, pincéis) são as mesmas. A câmera olha o plano
+  de frente (`GlobeCamera.flat`: arrastar leva o mapa junto com o mouse, a roda dá zoom); `GlobeView.pick` acha o ponto no plano; lugares, rótulos,
+  traços e nomes de país usam `PlaceLayer.at` / `GlobeView.world_of`, que dão o ponto da cena da mesma direção nos dois modos. O clique abre o mesmo
+  cadastro (`map_suite`: projetar e clicar volta ao mesmo lat/lon, também em 180° e perto dos polos). Limites: no plano, os blocos de alta resolução
+  ficam desligados (só o mapa de 4K) e uma faixa ou disco que atravessa 180° é esticado de um lado ao outro do mapa.
+- **Régua** (botão "Medir"): cada clique acrescenta um ponto; a distância é a soma dos trechos pela superfície da esfera (`EvronGeo.distance_km`), e
+  aparece no quadro do ponto fixado. Backspace tira o último ponto, Esc encerra. De um lado a outro de 180° no equador dá ~222 km, não a volta do mapa.
+- **Lote** (busca): Ctrl ou Shift + clique marcam vários resultados; com dois ou mais, aparece a barra "N marcados" com "Etiquetar" e "Excluir marcados".
+  Cada operação é um desfazer só (`DomainHub.batch_tag` / `batch_delete`; excluir leva o território de cada um).
+- **Ainda não feito:** outras operações em lote (mudar um campo, vincular, mover lugares); a régua não guarda medidas; projeções além da equiretangular.
+- **Resolução maior em blocos editáveis:** fora desta entrega, por decisão do autor (depende da resolução-alvo, decisão em aberto na proposta).
 
 ## Limites conhecidos (próximas etapas da E0)
 

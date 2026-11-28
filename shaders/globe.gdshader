@@ -33,6 +33,9 @@ const float SEA_FLOOR = -13500.0;
 const float PEAK = 9103.4;
 
 varying vec3 obj_pos;
+// Mapa plano: a mesma malha (uma grade de lat/lon com UV equiretangular) desdobrada no plano z = 0, com x = lon · raio e y = lat · raio.
+// O fragmento continua lendo a direção da esfera (obj_pos): é o mesmo mapa, só a geometria muda.
+uniform float flat_map = 0.0;
 
 vec3 altitude_color(float h) {
 	float t = h < 0.0 ? 0.5 + 0.5 * h / -SEA_FLOOR : 0.5 + 0.5 * h / PEAK;
@@ -225,6 +228,11 @@ vec3 political_style(vec3 n, vec2 uv, float h, vec2 frag) {
 
 void vertex() {
 	obj_pos = VERTEX;
+	if (flat_map > 0.5) {
+		float r = length(VERTEX);
+		VERTEX = vec3((UV.x - 0.5) * TAU * r, (0.5 - UV.y) * PI * r, 0.0);
+		NORMAL = vec3(0.0, 0.0, 1.0);
+	}
 }
 
 void fragment() {

@@ -70,6 +70,8 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 	search.entity_chosen.connect(choose)
 	search.create_requested.connect(_on_create)
 	search.society_requested.connect(_on_society)
+	search.batch_tag_requested.connect(batch_tag)
+	search.batch_delete_requested.connect(batch_delete)
 	# O que se edita na ficha vai para a entidade da ficha em que foi digitado (o sinal leva o id), mesmo que a ficha já tenha trocado.
 	sheet.name_changed.connect(func(id: int, t: String) -> void:
 		record("Corrigir nome", func(): return registry.Correct(id, t), id)
@@ -179,6 +181,8 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 			var why := edit_place(place_id, place_name, kind, float(p.lat), float(p.lon), radius_km)
 			if why != "":
 				sheet.show_geo_message(why))
+	sheet.place_duplicated.connect(duplicate_place)
+	sheet.place_removed.connect(remove_place)
 	sheet.place_move_requested.connect(func(place_id: int) -> void:
 		moving_place = place_id
 		sheet.show_geo_message("Clique no globo onde o lugar deve ficar (Esc cancela)."))
@@ -232,6 +236,35 @@ func _on_history_applied(cmd: Object) -> void:
 	else:
 		refresh_search()
 		refresh_map()
+	if territories != null:
+		territories.refresh_palette()
+
+
+## Operações em lote (os marcados na busca): cada uma é um desfazer só.
+func batch_tag(ids: Array, tag: String) -> void:
+	var tag_all := func() -> void:
+		for id in ids:
+			registry.AddTag(int(id), tag)
+	record("Etiquetar %d cadastros" % ids.size(), tag_all, 0)
+	_sheet_hash = 0
+	refresh_search()
+	if _current in ids:
+		_reload()
+
+
+func batch_delete(ids: Array) -> void:
+	var cleared: Array = []
+	var delete_all := func() -> void:
+		for id in ids:
+			var layer = territories.before_delete(int(id)) if territories != null else null
+			if registry.Delete(int(id)) != null and territories != null:
+				cleared.append(territories.after_delete(int(id), layer))
+	record("Excluir %d cadastros" % ids.size(), delete_all, 0, cleared)
+	if _current in ids:
+		deselect()
+	_search_key = 0
+	refresh_search()
+	refresh_map()
 	if territories != null:
 		territories.refresh_palette()
 
@@ -298,6 +331,33 @@ func cancel_move() -> bool:
 	moving_place = 0
 	sheet.show_geo_message("")
 	return true
+
+
+## Duplica um lugar e liga a cópia à ficha aberta com a mesma função da original. Devolve o id da cópia (0 = não deu).
+func duplicate_place(place_id: int) -> int:
+	var role := "presenca"
+	for p in registry.PresencesOf(_current, shown_t):
+		if int(p.place_id) == place_id:
+			role = String(p.role)
+	var made := func() -> int:
+		var copy := _id(registry.DuplicatePlace(place_id))
+		if copy != 0 and _current != 0:
+			registry.AddPresence(_current, copy, role, "media")
+		return copy
+	var copy := _id(record("Duplicar lugar", made))
+	_map_key = 0
+	_reload()
+	return copy
+
+
+## Remove um lugar de vez (de todas as fichas), com desfazer.
+func remove_place(place_id: int) -> void:
+	var p = registry.Place(place_id)
+	if p == null:
+		return
+	record("Excluir lugar %s" % p.name, func(): return registry.RemovePlace(place_id))
+	_map_key = 0
+	_reload()
 
 
 ## Muda um lugar (nome, tipo, posição, raio), com desfazer. Devolve "" ou o motivo da recusa.

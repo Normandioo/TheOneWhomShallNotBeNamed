@@ -24,6 +24,8 @@ var pitch := 0.3
 var dist := 3.0
 var target_dist := 3.0
 
+var flat := false  # mapa plano: a câmera olha o plano de frente, em (lon · raio, lat · raio), à altura dist − raio
+
 var _dragging := false
 var _drag_moved := 0.0
 
@@ -55,9 +57,15 @@ func snap() -> void:
 func advance(delta: float) -> void:
 	target_dist = clampf(target_dist, radius * MIN_FACTOR, radius * MAX_FACTOR)
 	dist = exp(lerpf(log(dist), log(target_dist), 1.0 - exp(-SMOOTH * delta)))
+	var surface := maxf(dist - radius, radius * 0.0005)
+	if flat:
+		rotation = Vector3.ZERO
+		cam.position = Vector3(yaw * radius, pitch * radius, surface)
+		cam.near = surface * 0.05
+		cam.far = surface + radius * 0.5
+		return
 	rotation = Vector3(-pitch, yaw, 0.0)
 	cam.position = Vector3(0.0, 0.0, dist)
-	var surface := maxf(dist - radius, radius * 0.0005)
 	cam.near = surface * 0.05
 	cam.far = dist + radius * 1.5
 
@@ -79,6 +87,11 @@ func handle_input(e: InputEvent) -> void:
 	elif e is InputEventMouseMotion and _dragging:
 		var mm := e as InputEventMouseMotion
 		_drag_moved += mm.relative.length()
+		if flat:  # no plano o mapa acompanha o mouse: um pixel arrastado = um pixel do mapa
+			var per_px := 2.0 * (dist - radius) * tan(deg_to_rad(FOV) / 2.0) / maxf(cam.get_viewport().get_visible_rect().size.y, 1.0)
+			yaw = clampf(yaw - mm.relative.x * per_px / radius, -PI, PI)
+			pitch = clampf(pitch + mm.relative.y * per_px / radius, -PI / 2.0, PI / 2.0)
+			return
 		var k := ORBIT_SENSITIVITY * orbit_speed * clampf((dist - radius) / (2.0 * radius), 0.002, 1.0)
 		yaw = wrapf(yaw - mm.relative.x * k, -PI, PI)
 		pitch = clampf(pitch + mm.relative.y * k, -1.5, 1.5)

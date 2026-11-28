@@ -22,7 +22,9 @@ signal search_requested        # a caixa de busca: abre o Índice na aba Busca
 signal config_requested(which: String)  # "tipos", "regras" ou "calendarios"
 signal help_requested
 signal relief_tutorial_requested  # o botão "?" da barra de relevo
-signal data_paint_requested(level: String, category: int)  # pintar lagos ou biomas (TerritoryEditor.DATA_LEVELS)
+signal data_paint_requested(level: String, category: int)
+signal flat_toggled(on: bool)   # globo ou mapa plano
+signal ruler_toggled(on: bool)  # a régua de distâncias  # pintar lagos ou biomas (TerritoryEditor.DATA_LEVELS)
 signal registry_requested      # o botão Registros: abre ou fecha a árvore de todos os cadastros
 signal resources_toggled(open: bool)  # o painel de recursos
 signal settlements_toggled(open: bool)  # o painel dos povoados (produção)
@@ -34,6 +36,8 @@ const BRUSH_ICONS := ["raise", "lower", "level", "smooth", "mountains", "erosion
 var radius: HSlider
 var strength: HSlider
 var roughness: HSlider
+var flat_toggle: Button
+var ruler_toggle: Button
 var edit_bar: PanelContainer  # embaixo, ao centro: o main a põe no HUD
 var world_block: PanelContainer  # no alto à direita: o main o põe no HUD
 var status_items: HBoxContainer  # "salvo" e a contagem: o main põe na barra de estado
@@ -79,6 +83,11 @@ func _init(radius_km: float, strength_m: float, roughness_value := 0.5) -> void:
 	_workspace.add_child(VSeparator.new())
 	_undo = _icon_button("undo", "Desfazer", undo_requested)
 	_redo = _icon_button("redo", "Refazer", redo_requested)
+	_workspace.add_child(VSeparator.new())
+	flat_toggle = _mode("Plano", "world", "Mapa plano: as mesmas camadas, cadastros e coordenadas num mapa equiretangular · M")
+	flat_toggle.toggled.connect(flat_toggled.emit)
+	ruler_toggle = _mode("Medir", "border", "Régua: clique nos pontos para medir a distância pela superfície · Esc encerra")
+	ruler_toggle.toggled.connect(ruler_toggled.emit)
 	# Os painéis de recursos e de povoados são abertos pelas categorias do alto; estes botões escondidos guardam o estado deles.
 	resources_toggle = _hidden_toggle(resources_toggled)
 	settlements_toggle = _hidden_toggle(settlements_toggled)

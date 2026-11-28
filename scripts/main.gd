@@ -16,6 +16,7 @@ const Terrain = preload("res://scripts/world/Terrain.cs")
 const CommandStack = preload("res://scripts/edit/command_stack.gd")
 const PerfMonitor = preload("res://scripts/app/perf_monitor.gd")
 const GpuSync = preload("res://scripts/app/gpu_sync.gd")
+const Ruler = preload("res://scripts/app/ruler.gd")
 const TerrainBrush = preload("res://scripts/edit/terrain_brush.gd")
 const Calendar = preload("res://scripts/world/calendar.gd")
 const WorldClock = preload("res://scripts/world/world_clock.gd")
@@ -113,6 +114,7 @@ var layer := 0                    # índice em MapLayers.LAYERS
 var tool := ToolPanel.NAVIGATE    # -1 navegar; senão TerrainBrush.Op
 var selected_dir := Vector3.ZERO  # ponto fixado pelo clique (ZERO = nenhum)
 var brush_preview := Vector4.ZERO # o que foi para o parâmetro global "brush" (fora do editor não dá para lê-lo)
+var ruler: Ruler  # a régua de distâncias (botão Medir)
 var gpu_sync: GpuSync  # leva altitude, rios, política e costa para a GPU a cada quadro
 
 
@@ -407,6 +409,19 @@ func _ready() -> void:
 		territories.show_level("pais" if subs else level)  # o mapa de área sozinho, sem as fronteiras políticas
 		mode_rail.show_level(territories.territory_level, subs))
 	tool_panel.tool_selected.connect(set_tool)
+	ruler = Ruler.new(globe.ruler, globe.camera_altitude_km)
+	tool_panel.ruler_toggled.connect(func(on: bool) -> void:
+		if on:
+			set_tool(ToolPanel.NAVIGATE)
+			ruler.start()
+			layer_panel.show_selection(ruler.text())
+		else:
+			ruler.stop()
+			layer_panel.show_selection("Clique para fixar um ponto."))
+	tool_panel.flat_toggled.connect(func(on: bool) -> void:
+		globe.set_flat(on)
+		ruler.redraw()
+		domains.redraw_map())
 	tool_panel.data_paint_requested.connect(func(level: String, category: int) -> void:
 		set_tool(ToolPanel.NAVIGATE)
 		territories.start_data(level, category))
@@ -515,6 +530,9 @@ func _unhandled_input(e: InputEvent) -> void:
 				KEY_ESCAPE:
 					if domains.cancel_move():
 						return
+					if ruler.active:
+						tool_panel.ruler_toggle.button_pressed = false  # o sinal encerra a régua
+						return
 					if _can_dismiss():  # Esc fecha a janela; sem janela, tira a seleção (não consome: os painéis também ouvem Esc)
 						if windows.window_open():
 							windows.close_window()
@@ -523,6 +541,14 @@ func _unhandled_input(e: InputEvent) -> void:
 						else:
 							options_panel.open()
 						return
+				KEY_BACKSPACE:
+					if ruler.active:
+						ruler.remove_last()
+						layer_panel.show_selection(ruler.text())
+						return
+				KEY_M:
+					tool_panel.flat_toggle.button_pressed = not tool_panel.flat_toggle.button_pressed
+					return
 				KEY_F1:
 					_show_help()
 					return
@@ -935,6 +961,10 @@ func _on_clock_changed() -> void:
 
 
 func select(n: Vector3) -> void:
+	if ruler.active:
+		ruler.add(n)
+		layer_panel.show_selection(ruler.text())
+		return
 	if production.click(n):
 		return
 	if resources.click(n, maxf(20.0, globe.camera_altitude_km() * 0.02)):

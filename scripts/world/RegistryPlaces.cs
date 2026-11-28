@@ -159,6 +159,26 @@ public partial class Registry
             .Where(r => Matches(Str(r[1]), text)).Take(200).Select(PlaceDict));
     }
 
+    /// Um lugar novo com os dados deste (nome "Cópia de ..."), no mesmo ponto; as presenças não vão (quem chama liga o que quiser).
+    public long DuplicatePlace(long id)
+    {
+        var p = Place(id);
+        return AddPlace("Cópia de " + (string)p["name"], (string)p["kind"], (double)p["lat"], (double)p["lon"], (double)p["radius_km"], (string)p["note"]);
+    }
+
+    /// Remove o lugar com o que só existe por ele: as presenças, estimativas e composições nele (de qualquer ficha). Devolve quantos
+    /// registros foram junto. Com BeginRecord/EndRecord, desfaz tudo.
+    public long RemovePlace(long id) => _db.Tx(() =>
+    {
+        Place(id);  // lança se não existe
+        long n = _db.Run("delete from distribution_share where distribution_id in (select id from distribution where place_id = @0)", id);
+        n += _db.Run("delete from distribution where place_id = @0", id);
+        n += _db.Run("delete from population_estimate where place_id = @0", id);
+        n += _db.Run("delete from presence where place_id = @0", id);
+        _db.Run("delete from place where id = @0", id);
+        return n;
+    });
+
     /// Exclui um lugar criado por engano: recusa se alguma presença, estimativa ou distribuição o usa.
     public void DeletePlace(long id)
     {

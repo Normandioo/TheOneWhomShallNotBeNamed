@@ -175,6 +175,21 @@ func _hub_flow() -> void:
 		return fail("Esc cancela o mover")
 	ok("interface: editar e mover o lugar pela ficha e pelo clique; desfazer e refazer pela pilha; Esc cancela")
 
+	# Duplicar e excluir o lugar (a cidade), com desfazer.
+	var place_copy := hub.duplicate_place(place)
+	if place_copy == 0 or r.Place(place_copy).name != "Cópia de Valdória Velha" or r.PresencesOf(pais, hub.shown_t).size() != 2:
+		return fail("duplicar o lugar cria a cópia no mesmo ponto, ligada à ficha")
+	sheet.place_removed.emit(place)
+	if r.Place(place) != null or r.PresencesOf(pais, hub.shown_t).size() != 1:
+		return fail("excluir o lugar tira ele e a presença nele")
+	stack.undo()
+	if r.Place(place) == null or r.PresencesOf(pais, hub.shown_t).size() != 2:
+		return fail("desfazer a exclusão devolve o lugar e a presença")
+	stack.undo()
+	if r.Place(place_copy) != null or r.PresencesOf(pais, hub.shown_t).size() != 1:
+		return fail("desfazer a duplicação tira a cópia")
+	ok("interface: duplicar e excluir a cidade, com desfazer")
+
 	# Excluir e desfazer pela pilha: a ficha volta a abrir.
 	hub._delete_target = pais
 	hub._on_delete()

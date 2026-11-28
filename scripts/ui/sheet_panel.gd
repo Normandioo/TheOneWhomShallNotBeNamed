@@ -29,6 +29,8 @@ signal calendar_use_added(calendar_id: int, purpose: String)
 signal calendar_use_removed(use_id: int)
 signal place_focus_requested(place_id: int)
 signal place_edited(place_id: int, name: String, kind: String, radius_km: float)  # o mesmo lugar muda em todas as fichas que o usam
+signal place_duplicated(place_id: int)  # uma cópia do lugar no mesmo ponto, ligada a esta ficha com a mesma função
+signal place_removed(place_id: int)     # remover o lugar de vez (com as presenças, estimativas e composições nele)
 signal place_move_requested(place_id: int)  # o próximo clique no globo leva o lugar (e a área dele) para lá
 
 signal territory_paint_requested                              # entrar no modo pintar território para este país
@@ -1525,6 +1527,16 @@ func _place_editor(p: Dictionary) -> HFlowContainer:
 	move.tooltip_text = "O próximo clique no globo leva o lugar (e a área em volta dele) para lá. Esc cancela."
 	move.pressed.connect(func() -> void: place_move_requested.emit(int(p.place_id)))
 	form.add_child(move)
+	var copy := Button.new()
+	copy.text = "Duplicar"
+	copy.tooltip_text = "Cria uma cópia do lugar no mesmo ponto, ligada a esta ficha (depois mova a cópia)"
+	copy.pressed.connect(func() -> void: place_duplicated.emit(int(p.place_id)))
+	form.add_child(copy)
+	var remove := Button.new()
+	remove.text = "Excluir lugar"
+	remove.tooltip_text = "Remove o lugar de todas as fichas, com as estimativas e composições nele (Ctrl+Z desfaz)"
+	remove.pressed.connect(func() -> void: place_removed.emit(int(p.place_id)))
+	form.add_child(remove)
 	return form
 
 
