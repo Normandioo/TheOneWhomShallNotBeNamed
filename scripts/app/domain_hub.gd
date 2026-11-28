@@ -169,6 +169,10 @@ func setup(db_path: String, search_panel, sheet_panel, calendar_panel = null) ->
 		record("Tirar estimativa", func(): return registry.DeleteEstimate(id))
 		_reload())
 	sheet.place_focus_requested.connect(focus_place)
+	sheet.distribution_added.connect(add_distribution)
+	sheet.distribution_removed.connect(func(id: int) -> void:
+		record("Apagar composição", func(): return registry.DeleteDistribution(id))
+		_reload())
 	sheet.place_edited.connect(func(place_id: int, place_name: String, kind: String, radius_km: float) -> void:
 		var p = registry.Place(place_id)
 		if p != null:
@@ -230,6 +234,46 @@ func _on_history_applied(cmd: Object) -> void:
 		refresh_map()
 	if territories != null:
 		territories.refresh_palette()
+
+
+## Uma composição da população da ficha aberta num lugar, na data mostrada, com desfazer. Confere as somas antes (a mensagem diz o que
+## corrigir); o denominador é a estimativa da mesma ficha nesse lugar e nessa data, se houver. Devolve "" ou o motivo da recusa.
+func add_distribution(place_id: int, dimension: String, exclusive: bool, complete: bool, categories: Array, pcts: Array) -> String:
+	var why := ""
+	var sum := 0.0
+	for p in pcts:
+		sum += float(p)
+	if place_id <= 0:
+		why = "Escolha o lugar (uma cidade ou uma região)."
+	elif categories.is_empty():
+		why = "Acrescente ao menos uma categoria."
+	elif categories.size() != _unique(categories):
+		why = "Cada categoria entra uma vez só."
+	elif exclusive and complete and absf(sum - 100.0) > 0.01:
+		why = "Exclusivas e lista completa precisam somar 100% (somam %s%%)." % str(snappedf(sum, 0.01)).replace(".", ",")
+	elif exclusive and sum > 100.01:
+		why = "Categorias exclusivas não passam de 100% (somam %s%%)." % str(snappedf(sum, 0.01)).replace(".", ",")
+	if why == "":
+		var denominator := 0
+		for e in registry.EstimatesOf(_current, shown_t):
+			if int(e.place_id) == place_id and int(e.t) == shown_t:
+				denominator = int(e.id)
+		var id = record("Criar composição", func(): return registry.AddDistribution(_current, place_id, shown_t, dimension, denominator,
+			exclusive, complete, "media", "", PackedInt64Array(categories), PackedFloat64Array(pcts)))
+		if id == null:
+			why = "Não consegui gravar a composição (veja o log)."
+	if why != "":
+		sheet.show_geo_message(why)
+	else:
+		_reload()
+	return why
+
+
+static func _unique(items: Array) -> int:
+	var seen := {}
+	for i in items:
+		seen[i] = true
+	return seen.size()
 
 
 ## Um clique no globo enquanto um lugar espera para ser movido: o lugar (e a área dele, que é o disco em volta) vai para lá. true = usou o clique.

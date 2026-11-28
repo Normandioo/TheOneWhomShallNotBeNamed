@@ -244,7 +244,11 @@ mouse --> Main._unhandled_input --> GlobeView.handle_input --> câmera; surface_
   "População" (os números seguem o formato da ficha: `1.200` é 1200, `1,5` é 1,5, `2.000,5` é 2000,5; estimativas por lugar, na data mostrada: faixa, só nível, certeza; as composições lidas, com a faixa absoluta, o "desconhecido" e o aviso de lista incompleta).
 - **Editar e mover um lugar** (`UpdatePlace`): na ficha, o ✎ de cada lugar abre nome, tipo e raio (Salvar) e **Mover no globo**: o próximo clique leva o ponto e, com ele, a área
   (o disco em volta); Esc cancela (`DomainHub.place_click` / `cancel_move`). O lugar é o mesmo em todas as fichas que o usam. Tudo desfaz (`undo_suite`).
-- **Ainda não feito:** criar distribuições pela interface (hoje só pelo núcleo e testes); polígonos de fronteira, território
+- **Composições pela ficha** (página População, "＋ Composição"): lugar (cidade ou região, com busca), dimensão, "Exclusivas", "Lista completa" e as categorias
+  com o percentual; vale para a data mostrada, e o denominador é a estimativa da ficha nesse lugar e nessa data, se houver. O hub confere as somas antes de
+  gravar e diz o que corrigir (`DomainHub.add_distribution`); o ✕ de cada composição a apaga. Ambos desfazem. Cada lugar tem a sua: a cidade e a região (uma área
+  com outra fronteira) da mesma ficha mostram composições diferentes (`distribution_suite`).
+- **Ainda não feito:** polígonos de fronteira, território
   administrado × reivindicado em desenho próprio e "percentuais por região" como camada; nomes alternativos e históricos de lugar; critérios numéricos configuráveis para os níveis
   baixa/média/alta; fonte da estimativa na interface; recálculo de estimativas por data (hoje cada uma é um registro).
 

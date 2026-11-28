@@ -16,6 +16,7 @@ const HEADLESS_SUITES := [
 	"res://tests/suites/calendar_use_suite.gd",
 	"res://tests/suites/place_suite.gd",
 	"res://tests/suites/undo_suite.gd",
+	"res://tests/suites/distribution_suite.gd",
 	"res://tests/suites/regression_suite.gd",
 	"res://tests/suites/territory_suite.gd",
 	"res://tests/suites/territory_boundary_suite.gd",

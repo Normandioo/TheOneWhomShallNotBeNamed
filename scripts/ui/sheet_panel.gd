@@ -41,6 +41,9 @@ signal presence_removed(presence_id: int)
 signal place_created(name: String, kind: String, radius_km: float, role: String)  # no ponto fixado no mapa
 signal estimate_added(place_id: int, low: String, high: String, level: String, certainty: String)
 signal estimate_removed(estimate_id: int)
+## Uma composição nova da população desta ficha num lugar (cidade ou região), na data mostrada: categorias (ids) e percentuais.
+signal distribution_added(place_id: int, dimension: String, exclusive: bool, complete: bool, categories: Array, pcts: Array)
+signal distribution_removed(distribution_id: int)
 signal total_set(text: String)
 signal total_removed
 signal division_named(id: int, name: String)                  # como esta divisão se chama
@@ -127,6 +130,7 @@ var _create_place_btn: Button
 var _geo_message: Label
 var _territory_msg: Label
 var _place_pickers: Array = []  # os menus de lugar da ficha (a busca de um atualiza todos)
+var composition_form: VBoxContainer = null  # o formulário "＋ Composição" (os testes o preenchem)
 var _universal_label: Label
 var _date_labels := {}     # id do uso -> Label com a data local
 
@@ -1573,7 +1577,18 @@ func _build_population() -> void:
 		var when2: String = _geo.dates_d.get(int(c.id), "")
 		var head := "%s em %s%s (%s, %s)" % [UiKit.kind_label(c.dimension), c.place, "  ·  " + when2 if when2 != "" else "",
 			"categorias exclusivas" if c.exclusive else "podem se sobrepor", "lista completa" if c.complete else "lista incompleta"]
-		box.add_child(_note(head))
+		var head_row := HBoxContainer.new()
+		box.add_child(head_row)
+		var head_label := _note(head)
+		head_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		head_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		head_row.add_child(head_label)
+		var drop := Button.new()
+		drop.text = "✕"
+		drop.flat = true
+		drop.tooltip_text = "Apagar esta composição (desfaz com Ctrl+Z)"
+		drop.pressed.connect(func() -> void: distribution_removed.emit(int(c.id)))
+		head_row.add_child(drop)
 		for s in c.shares:
 			var line := "     %s: %s%%" % [s.name, _pct(s.pct)]
 			if s.has("low"):
@@ -1630,6 +1645,93 @@ func _build_population() -> void:
 	add.add_child(go)
 	_geo_message = _note("")
 	box.add_child(_geo_message)
+	_composition_form(box)
+
+
+## "＋ Composição": em que lugar (cidade ou região), por qual dimensão, se as categorias são exclusivas e se a lista é completa, e as
+## categorias com o percentual de cada uma. Vale para a data mostrada; o hub confere as somas e grava.
+func _composition_form(box: VBoxContainer) -> void:
+	var toggle := Button.new()
+	toggle.text = "＋ Composição"
+	toggle.toggle_mode = true
+	toggle.tooltip_text = "Quanto da população desta ficha, num lugar, é de cada raça, etnia, cultura, religião ou idioma"
+	box.add_child(toggle)
+	var form := VBoxContainer.new()
+	form.visible = false
+	form.add_theme_constant_override("separation", 6)
+	box.add_child(form)
+	composition_form = form
+	toggle.toggled.connect(func(on: bool) -> void: form.visible = on)
+	var place := _place_picker(form)
+	var dims: Array = ["cultura", "etnia", "raca", "religiao", "idioma"]
+	var dim := _option(dims, func(k): return UiKit.kind_label(k))
+	var flags := HFlowContainer.new()
+	flags.add_theme_constant_override("h_separation", 10)
+	form.add_child(flags)
+	flags.add_child(dim)
+	var exclusive := CheckBox.new()
+	exclusive.text = "Exclusivas"
+	exclusive.button_pressed = true
+	exclusive.tooltip_text = "Cada pessoa está em uma só categoria (desligado: falantes de vários idiomas contam em cada um)"
+	flags.add_child(exclusive)
+	var complete := CheckBox.new()
+	complete.text = "Lista completa"
+	complete.tooltip_text = "A lista traz todas as categorias; exclusiva e completa precisa somar 100%"
+	flags.add_child(complete)
+	var rows := VBoxContainer.new()
+	form.add_child(rows)
+	var add_row := func() -> void:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		rows.add_child(row)
+		var who := OptionButton.new()
+		who.fit_to_longest_item = false
+		who.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		who.clip_text = true
+		var found: Array = lookup.call("", dims[dim.selected]) if lookup.is_valid() else []
+		for e in found:
+			who.add_item(String(e.name))
+			who.set_item_metadata(who.item_count - 1, int(e.id))
+		row.add_child(who)
+		var pct := SpinBox.new()
+		pct.min_value = 0
+		pct.max_value = 100
+		pct.step = 0.1
+		pct.suffix = "%"
+		row.add_child(pct)
+		var remove := Button.new()
+		remove.text = "✕"
+		remove.flat = true
+		remove.pressed.connect(row.queue_free)
+		row.add_child(remove)
+	dim.item_selected.connect(func(_i: int) -> void:
+		for r in rows.get_children():
+			r.queue_free()
+		add_row.call())
+	add_row.call()
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 8)
+	form.add_child(actions)
+	var more := Button.new()
+	more.text = "＋ categoria"
+	more.pressed.connect(add_row)
+	actions.add_child(more)
+	var go := Button.new()
+	go.text = "Criar composição"
+	go.tooltip_text = "Vale para a data mostrada pelo relógio"
+	go.pressed.connect(func() -> void:
+		var ids: Array = []
+		var pcts: Array = []
+		for r in rows.get_children():
+			if r.is_queued_for_deletion():
+				continue
+			var who: OptionButton = r.get_child(0)
+			if who.selected >= 0:
+				ids.append(int(who.get_item_metadata(who.selected)))
+				pcts.append(float(r.get_child(1).value))
+		var pid: int = place.get_item_metadata(place.selected) if place.selected >= 0 else 0
+		distribution_added.emit(pid, dims[dim.selected], exclusive.button_pressed, complete.button_pressed, ids, pcts))
+	actions.add_child(go)
 
 
 ## Um menu de lugar com busca por nome: mostra os primeiros lugares e, ao digitar, o hub devolve os que casam (show_place_candidates).
