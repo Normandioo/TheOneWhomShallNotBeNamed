@@ -433,11 +433,11 @@ godot --path . -s tests/shot.gd -- <pasta_das_capturas>                         
   ao banco depois de editada. Pinta-se com as ferramentas do território (pincel, balde, borracha, conta-gotas), sem "Não invadir".
 - **Os mapas de imagem seguem a costa editada:** o Gleba não sabe da costa nova, então `Terrain.CoastChangeImage` (R8, calculada junto da costa:
   255 = virou terra, 128 = virou água, comparando com o mar do Gleba guardado no `Setup` e os lagos do Gleba; lago pintado e lago seco também contam) vai ao shader (`coast_change`), e nas camadas de imagem,
-  na natural e na temperatura sazonal o mar novo é pintado pela profundidade e a terra nova num tom neutro (não há dado do Gleba para ela). Os
+  na natural e na temperatura sazonal a linha terra × água vem da costa suavizada (não dos pixels de 10 km), a água nova vai pela profundidade e a terra nova, no satélite, numa cor de terra pela altitude e latitude (nos mapas de dados, um tom neutro: não há dado do Gleba). A máscara é lida também com mipmaps (`coast_change_soft`), então a área editada se funde ao resto. Os
   valores dos mapas (clima, solos...) não são recalculados.
 - **Modo de mapa Bio** (coluna de modos, linha de cima): o mapa político no nível `bioma`, com todos os biomas da camada editável. O satélite
   ("Visão geral") passou para a linha Planeta.
-- Na barra do relevo, ao lado dos pincéis: a categoria e "Pintar lagos" / "Pintar biomas" (`TerritoryEditor.start_data`); Terminar volta ao mapa
+- Na barra do relevo, na fileira dos pincéis: **Lagos** e **Biomas** abrem a lista do que pintar (`TerritoryEditor.start_data`); Terminar volta ao mapa
   dos países. Migração 23 (a da reivindicação) já aceita os níveis `bioma` e `lago`.
 - **Alinhamento entre zooms** (`environment_suite`): 3.000 pontos ao acaso (com 180° e os polos) caem no mesmo pixel em todos os níveis da pirâmide
   (pelos limites com que o globo monta cada bloco), cada nível é o de cima dividido por 2 e o nível 2 é a grade de edição (`Terrain.PixelOf`); nos

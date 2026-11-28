@@ -36,6 +36,7 @@ const BRUSH_ICONS := ["raise", "lower", "level", "smooth", "mountains", "erosion
 var radius: HSlider
 var strength: HSlider
 var roughness: HSlider
+var data_buttons := {}  # "lago" / "bioma" -> o botão com a lista do que pintar
 var flat_toggle: Button
 var ruler_toggle: Button
 var edit_bar: PanelContainer  # embaixo, ao centro: o main a põe no HUD
@@ -237,25 +238,22 @@ func _build_edit_bar(radius_km: float, strength_m: float, roughness_value: float
 		b.set_meta("op", item[0])
 		row.add_child(b)
 		_buttons.append(b)
-	row.add_child(VSeparator.new())
-	var data := VBoxContainer.new()  # lagos e biomas: dados pintados (não mudam a altitude), com o pincel do território
-	row.add_child(data)
+	# Lagos e biomas, na mesma fileira: o clique abre a lista do que pintar (lago ou seco; os biomas). Não mudam a altitude: são camadas
+	# pintadas, e a pintura usa a barra do território (pincel, balde, borracha, conta-gotas); Terminar ou Esc volta.
 	for level in ["lago", "bioma"]:
-		var line := HBoxContainer.new()
-		data.add_child(line)
-		var pick := OptionButton.new()
-		pick.fit_to_longest_item = false
-		pick.custom_minimum_size.x = 150
-		pick.tooltip_text = "A categoria a pintar"
+		var b := MenuButton.new()
+		b.text = "Lagos" if level == "lago" else "Biomas"
+		b.icon = UiIcons.get_icon("hydrology" if level == "lago" else "ecology", 20)
+		b.tooltip_text = "Lagos: pintar lago novo ou secar um lago" if level == "lago" else "Biomas: escolher o bioma e pintar"
+		b.flat = false
+		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+		b.custom_minimum_size = Vector2(78, 54)
 		for c in TerritoryEditor.DATA_LEVELS[level]:
-			pick.add_item(c.name, int(c.id))
-		line.add_child(pick)
-		var go := Button.new()
-		go.text = "Pintar lagos" if level == "lago" else "Pintar biomas"
-		go.icon = UiIcons.get_icon("hydrology" if level == "lago" else "ecology", 18)
-		go.tooltip_text = "Abre o pincel do território na camada dos %s (Terminar ou Esc volta)" % ("lagos" if level == "lago" else "biomas")
-		go.pressed.connect(func() -> void: data_paint_requested.emit(level, pick.get_selected_id()))
-		line.add_child(go)
+			b.get_popup().add_item(c.name, int(c.id))
+		b.get_popup().id_pressed.connect(func(id: int) -> void: data_paint_requested.emit(level, id))
+		row.add_child(b)
+		data_buttons[level] = b
 	row.add_child(VSeparator.new())
 	var sliders := VBoxContainer.new()
 	row.add_child(sliders)

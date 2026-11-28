@@ -65,6 +65,15 @@ func _coast() -> void:
 	main.globe.focus(sea, 1.4)
 	await frames(20)
 	await save("costa_nova_clima")
+	for i in MapLayers.LAYERS.size():
+		if MapLayers.LAYERS[i].get("tiles", "") == "natural_satellite":
+			main.set_layer(i)
+	main.globe.focus(sea, 1.04)
+	await frames(30)
+	await save("costa_nova_satelite")
+	main.globe.focus(land, 1.04)
+	await frames(30)
+	await save("mar_novo_satelite")
 	main.undo()
 	main.undo()
 	if t.HeightAt(sea) != before_sea or t.HeightAt(land) < 0.0:

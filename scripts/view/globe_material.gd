@@ -129,9 +129,11 @@ func set_coast(coast: Image) -> void:
 
 ## Onde a costa mudou desde o Gleba (R8: 255 virou terra, 128 virou mar): os mapas de imagem seguem a costa editada.
 func set_coast_change(change: Image) -> void:
+	change.generate_mipmaps()  # a versão suave (coast_change_soft) lê um nível acima: a borda da área editada se funde
 	if coast_change_texture == null:
 		coast_change_texture = ImageTexture.create_from_image(change)
 		material.set_shader_parameter("coast_change", coast_change_texture)
+		material.set_shader_parameter("coast_change_soft", coast_change_texture)
 	else:
 		coast_change_texture.update(change)
 
