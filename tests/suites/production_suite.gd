@@ -71,6 +71,11 @@ func run() -> void:
 	if r.RunMonth(start, feb, terrain, {}).ran or var_to_str(r.Stock(vila)) != before:
 		return fail("o mesmo mês não pode rodar duas vezes")
 	ok("janeiro: produção, insumo que limita e mês que não se repete")
+	var makers: Array = r.GoodMakers(carvao, feb)
+	if makers.size() != 1 or int(makers[0].settlement_id) != vila or int(makers[0].workers) != 20 or not _near(makers[0].qty, 25.0) \
+			or r.GoodMakers(carvao, start - 1).size() != 1 or not _near(r.GoodMakers(carvao, start - 1)[0].qty, 0.0):
+		return fail("quem faz o carvão: %s" % [makers])
+	ok("bem fabricado: os povoados que o fazem e o saldo na data")
 
 	var mar: int = Calendar.to_seconds(1, 3, 1)
 	r.RunMonth(feb, mar, terrain, {})
@@ -213,7 +218,7 @@ func _run_scene() -> void:
 	panel.recipe_name.text = "Secar sal"
 	prod.refresh()  # como na virada do mês: o que foi digitado fica
 	panel._save_recipe()
-	if panel.recipe_name.text != "Secar sal" or panel.recipe_output.selected != -1 or panel.message.text != "Escolha o bem que a receita produz.":
+	if panel.recipe_name.text != "Secar sal" or panel.recipe_output.selected != -1 or not panel.message.text.begins_with("Escolha o bem que a receita produz"):
 		return fail("sem o bem escolhido o formulário fica como está: %s" % panel.message.text)
 	panel.recipe_output.select(0)
 	panel._save_recipe()
@@ -262,10 +267,25 @@ func _run_scene() -> void:
 		return fail("a receita exige a capacidade pela tela: %s" % [bronze])
 	if panel.stock_title.text.begins_with("Estoque em") == false:
 		return fail("o estoque diz a data")
+	# Um bem fabricado nasce na receita, como Manufatura, e no painel Recursos aparece pelos povoados, não pelo mapa.
+	panel.good_create_requested.emit("Espada")
+	var espada: Array = Array(reg.ResourceTypes("Espada"))
+	if espada.size() != 1 or espada[0].category != "manufatura" or int(panel._goods[panel.recipe_output.selected].id) != int(espada[0].id):
+		return fail("criar o bem na receita o deixa escolhido: %s" % panel.message.text)
 	panel.back_requested.emit()
 	main.tool_panel.resources_toggle.button_pressed = true
 	if panel.visible or not main.resources.panel.visible:
 		return fail("um painel lateral por vez")
+	var res_panel = main.resources.panel
+	res_panel.type_chosen.emit(int(espada[0].id))
+	if not res_panel._made or res_panel.add_row.visible or res_panel.tab_buttons[1].visible or not res_panel.made_note.text.contains("Nenhuma receita"):
+		return fail("Manufatura sem lugar no mapa mostra a produção: %s" % res_panel.made_note.text)
+	res_panel.type_chosen.emit(sal)
+	if res_panel._made or not res_panel.add_row.visible or not res_panel.tab_buttons[1].visible:
+		return fail("um recurso natural continua no mapa")
+	main.commands.undo()
+	if reg.ResourceTypes("Espada").size() != 0:
+		return fail("Ctrl+Z desfaz o bem criado na receita")
 	main.resources.set_open(false)
 	ok("cena: o calendário processa o mês uma vez; criar, receita, atividade e estoque pela tela")
 

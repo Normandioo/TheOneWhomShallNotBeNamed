@@ -60,6 +60,7 @@ var _preview_hint: Label
 var _tests_box: VBoxContainer
 var advanced_toggle: Button
 var tests_toggle: Button
+var author_tools := false  # os testes da regra (estabilidade, às cegas, gabarito) à vista
 var _into: Control        # onde _spin e _choice põem o que criam
 var surface: OptionButton
 var output: OptionButton
@@ -460,8 +461,14 @@ func _set_previewing(on: bool) -> void:
 	mode_changed.emit()
 
 
+## Os testes da regra são ferramentas do autor: só aparecem ligadas pelo ⋯ do painel (ou com um resultado na tela).
+func set_author_tools(on: bool) -> void:
+	author_tools = on
+	_sync_tests()
+
+
 func _sync_tests() -> void:
-	_tests_box.visible = (advanced_toggle.button_pressed and not previewing) or result.visible or review_box.visible
+	_tests_box.visible = (author_tools and not previewing) or result.visible or review_box.visible
 
 
 ## "Se você aplicar": o que entra, o que sai e o que fica. info: {count, replaced, protected, suppressed}

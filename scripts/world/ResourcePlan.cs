@@ -81,6 +81,27 @@ public partial class ResourcePlan : RefCounted
         return Image.CreateFromData(size.X, size.Y, false, Image.Format.Rg8, bytes);
     }
 
+    /// O modo de mapa Rec: as camadas pintadas de vários recursos numa imagem só. Cada recurso vira um dono de mentira (PreviewBase + a
+    /// posição dele na lista), para a paleta pintar todas as áreas dele numa cor. Onde dois se sobrepõem, o último cobre o outro na tela.
+    public static long LayerOwner(long position) => PreviewBase + position;
+
+    public static Image LayersImage(Vector2I size, Godot.Collections.Array<Territory> layers)
+    {
+        var bytes = new byte[size.X * size.Y * 2];
+        for (int k = 0; k < Math.Min(layers.Count, PreviewRejected - PreviewBase); k++)
+        {
+            int owner = PreviewBase + k;
+            var b = layers[k].B;
+            for (int i = 0; i + 1 < Math.Min(b.Length, bytes.Length); i += 2)
+                if (b[i] != 0 || b[i + 1] != 0)
+                {
+                    bytes[i] = (byte)(owner & 255);
+                    bytes[i + 1] = (byte)(owner >> 8);
+                }
+        }
+        return Image.CreateFromData(size.X, size.Y, false, Image.Format.Rg8, bytes);
+    }
+
     private void Paint(byte[] bytes, int offset)
     {
         for (int i = 0; i < Proposals.Count; i++)

@@ -11,6 +11,7 @@ signal recipes_requested
 signal new_activity_requested                        # de dentro do povoado: criar uma receita nova e voltar para ele
 signal recipe_saved(id: int, data: Dictionary)       # id 0 = nova
 signal recipe_delete_requested(id: int)
+signal good_create_requested(name: String)           # um bem fabricado novo, para ser o produto da receita
 signal activity_added(recipe_id: int, workers: int)
 signal activity_workers_set(id: int, workers: int)
 signal activity_up(id: int)
@@ -77,6 +78,7 @@ var recipe_name: LineEdit
 var recipe_kind: OptionButton
 var recipe_output: OptionButton
 var recipe_qty: LineEdit
+var new_good: LineEdit              # criar o bem produzido ali mesmo, sem passar pelo painel Recursos
 var recipe_labor: LineEdit
 var recipe_inputs: Array = []       # [OptionButton, LineEdit]
 var recipe_title: Label
@@ -233,7 +235,7 @@ func _build_place(box: VBoxContainer) -> void:
 
 func _build_recipes(box: VBoxContainer) -> void:
 	recipes_box = _column(box)
-	_note(recipes_box, "Uma receita diz quanto trabalho e quais insumos fazem quanto de um bem. Os bens são os do painel Recursos.")
+	_note(recipes_box, "Uma receita diz quanto trabalho e quais insumos fazem quanto de um bem. Os bens são os do painel Recursos; um bem fabricado se cria aqui mesmo e não precisa de lugar no mapa.")
 	recipes = _list(recipes_box, 170, "Receitas: clique para editar")
 	recipes.max_text_lines = 2
 	recipes.item_selected.connect(func(i: int) -> void: _load_recipe(_recipes[i]))
@@ -254,6 +256,12 @@ func _build_recipes(box: VBoxContainer) -> void:
 	recipe_output.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	recipe_output.accessibility_name = "Bem produzido"
 	out.add_child(recipe_output)
+	var fresh := _row(recipes_box)
+	new_good = _edit(fresh, "ou um bem fabricado novo (ex.: Espada)")
+	new_good.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	new_good.text_submitted.connect(func(t: String) -> void: good_create_requested.emit(t))
+	_button(fresh, "Criar bem", func() -> void: good_create_requested.emit(new_good.text)).tooltip_text = \
+		"Entra nos Recursos como Manufatura, sem lugar no mapa: ele é feito nos povoados"
 	recipe_labor = _edit(recipes_box, "Trabalho por vez (pessoas-dia)")
 	recipe_labor.tooltip_text = "Pessoas-dia: 10 = uma pessoa por 10 dias, ou 10 pessoas por um dia"
 	_label(recipes_box, "Insumos (gastos; opcionais)")
@@ -432,6 +440,11 @@ func new_recipe() -> void:
 	_load_recipe({})
 
 
+## Deixa o bem escolhido como produto da receita (depois de show_catalog).
+func choose_output(id: int) -> void:
+	recipe_output.select(_goods.map(func(g): return int(g.id)).find(id))
+
+
 ## Deixa a receita escolhida no menu de "Nova atividade".
 func choose_recipe(id: int) -> void:
 	for i in _recipes.size():
@@ -466,7 +479,7 @@ func _load_recipe(r: Dictionary) -> void:
 
 func _save_recipe() -> void:
 	if recipe_output.selected < 0:
-		show_message("Crie os bens no painel Recursos antes." if _goods.is_empty() else "Escolha o bem que a receita produz.")
+		show_message("Escolha o bem que a receita produz, ou crie um bem fabricado novo logo abaixo.")
 		return
 	var inputs: Array = []
 	var group := 0

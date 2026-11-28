@@ -16,6 +16,7 @@ var territories           # as camadas pintadas dos recursos (para achar as áre
 var clock
 var navigate := Callable()  # sai do pincel ou da pintura antes de esperar um clique
 var focus_map := Callable()
+var create_good := Callable()  # func(nome) -> id: o resource_controller cria o bem (Manufatura), com desfazer
 var settlement_id := 0
 var _return_to_place := false  # a tela de receitas foi aberta de dentro de um povoado
 var _waiting := ""        # "" | "create" | "move"
@@ -68,6 +69,15 @@ func setup(domain_hub, settlement_panel, settlement_layer, world_terrain, territ
 	panel.move_requested.connect(func() -> void: _wait("move", "Clique no novo lugar do povoado (Esc cancela)."))
 	panel.cancel_requested.connect(cancel_click)
 	panel.recipe_saved.connect(_save_recipe)
+	panel.good_create_requested.connect(func(good_name: String) -> void:
+		var made: int = create_good.call(good_name) if create_good.is_valid() else 0
+		if made == 0:
+			panel.show_message("Dê um nome ao bem novo.")
+			return
+		panel.new_good.text = ""
+		refresh()
+		panel.choose_output(made)
+		panel.show_message("Bem criado. A unidade (kg, unidade…) se escolhe no painel Recursos, aba Editar."))
 	panel.recipe_delete_requested.connect(func(id: int) -> void:
 		_do(func(): hub.registry.DeleteRecipe(id), "Esta receita está em uso: tire as atividades que a usam antes."))
 	panel.activity_added.connect(func(recipe: int, workers: int) -> void:

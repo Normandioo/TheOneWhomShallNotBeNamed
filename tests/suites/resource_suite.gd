@@ -248,13 +248,25 @@ func _run_scene() -> void:
 	var categories := func() -> Array: return panel.type_rows().map(func(row): return row.get_meta("category"))
 	if categories.call() != ["Minerais", "Vegetação"]:
 		return fail("a lista segue a ordem das categorias: %s" % [categories.call()])
-	panel.filter_buttons[2].pressed.emit()
-	if categories.call() != ["Vegetação"]:
-		return fail("o filtro mostra uma categoria: %s" % [categories.call()])
-	panel.filter_buttons[3].pressed.emit()
-	if not categories.call().is_empty() or not panel.empty_list.visible:
-		return fail("categoria sem recurso avisa")
-	panel.filter_buttons[0].pressed.emit()
+	var heads: Array = panel.types.get_children().filter(func(c): return c.has_meta("header"))
+	if heads.size() != 1 or not panel.type_rows()[0].accessibility_name.contains("2 lugares"):
+		return fail("os dois da natureza ficam num grupo só e dizem quantos lugares têm: %s" % panel.type_rows()[0].accessibility_name)
+	# O recurso novo pelo formulário: fabricado, em unidades; e o modelo pronto aparece quando o nome bate.
+	panel.new_toggle.button_pressed = true
+	panel.new_name.text = "cobre"
+	panel.new_name.text_changed.emit("cobre")
+	if not panel.new_profile.visible:
+		return fail("o nome de um modelo pronto oferece o modelo")
+	panel.new_name.text = "Lâmina de teste"
+	panel.new_name.text_changed.emit("Lâmina de teste")
+	panel._origin_cards["fabricado"].pressed.emit()
+	panel._unit_chips["unidade"].pressed.emit()
+	panel.new_create.pressed.emit()
+	var blade: Array = Array(reg.ResourceTypes("Lâmina de teste"))
+	if blade.size() != 1 or blade[0].category != "manufatura" or blade[0].unit != "unidade" or not panel._made or panel.new_box.visible:
+		return fail("criar pelo formulário: fabricado, em unidades, e abre o recurso: %s" % [blade])
+	main.undo()
+	panel.back_requested.emit()
 	await save("recursos_categorias")
 	panel.type_chosen.emit(ferro)
 	panel.occurrence_chosen.emit(area)
@@ -306,6 +318,26 @@ func _run_scene() -> void:
 	main.tool_panel.resources_toggle.button_pressed = false
 	if panel.visible or layer.item_count != 0 or editor.is_resource(editor.territory_level):
 		return fail("fechado, o painel devolve o mapa e some com os nomes (%s)" % editor.territory_level)
+
+	# Rec: todos os recursos juntos, com os pontos; a legenda esconde um; o clique abre o recurso; outro modo encerra.
+	main.mode_rail.level_selected.emit("recursos")
+	await frames(2)
+	if not res.rec or not main.rec_legend.visible or main.rec_legend.checks.size() != 2 or layer.item_count != 1:
+		return fail("o Rec mostra os dois recursos na legenda e o ponto no globo (%d itens)" % layer.item_count)
+	main.globe.focus(EvronGeo.dir(5.0, 25.0), 2.6)
+	await save("recursos_rec")
+	main.rec_legend.checks[solo].button_pressed = false
+	if not res.rec_hidden.has(solo) or res._rec_layers.size() != 1:
+		return fail("desligar na legenda tira o recurso do mapa")
+	main.select(EvronGeo.dir(5.0, 20.0))
+	if res.rec or not panel.visible or res.type_id != ferro or res.occurrence_id != area:
+		return fail("o clique numa área do Rec abre o recurso e o lugar (%d, %d)" % [res.type_id, res.occurrence_id])
+	main.tool_panel.resources_toggle.button_pressed = false
+	main.mode_rail.level_selected.emit("recursos")
+	main.mode_rail.level_selected.emit("pais")
+	if res.rec or main.rec_legend.visible or editor.previewing:
+		return fail("outro modo de mapa encerra o Rec")
+	res.rec_hidden.clear()
 
 	while main.commands.can_undo():
 		main.undo()

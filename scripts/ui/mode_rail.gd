@@ -18,8 +18,9 @@ const ICON := 20
 # Nível territorial (mundo): [nível, ícone, dica, sigla embaixo do ícone]
 const WORLD := [["pais", "politics", "Política: países", "Pol"], ["subdivisoes", "organization", "Política: subdivisões do país aberto (cada uma na sua cor, os outros países em cinza)", "Sub"], ["religiao", "religion", "Religião", "Rel"], ["cultura", "culture", "Cultura", "Cul"],
 	["etnia", "ethnicity", "Etnia", "Etn"], ["raca", "race", "Raça", "Raç"], ["idioma", "language", "Idioma", "Idi"],
-	["bioma", "ecology", "Biomas (a camada editável: todos os biomas; pinte pela barra do Relevo)", "Bio"]]
-const LEVEL_NAME := {"pais": "político", "subdivisoes": "subdivisões", "religiao": "religiões", "cultura": "culturas", "etnia": "etnias", "raca": "raças", "idioma": "idiomas", "bioma": "biomas"}
+	["bioma", "ecology", "Biomas (a camada editável: todos os biomas; pinte pela barra do Relevo)", "Bio"],
+	["recursos", "resources", "Recursos: todos juntos, cada um na sua cor (a legenda liga e desliga; o clique abre o recurso)", "Rec"]]
+const LEVEL_NAME := {"pais": "político", "subdivisoes": "subdivisões", "religiao": "religiões", "cultura": "culturas", "etnia": "etnias", "raca": "raças", "idioma": "idiomas", "bioma": "biomas", "recursos": "recursos"}
 # Grupo de camadas (planeta): [grupo em MapLayers, ícone]
 const PLANET := [["Relevo", "relief"], ["Clima", "climate"], ["Ecologia", "ecology"], ["Solos", "soils"], ["Hidrologia", "hydrology"],
 	["Geologia", "geology"], ["Organização", "organization"]]
@@ -155,7 +156,8 @@ func show_level(level: String, subdivisions := false) -> void:
 
 func _refresh() -> void:
 	var data: Dictionary = MapLayers.LAYERS[_layer]
-	var political: bool = data["kind"] == "political"
+	var rec := _level == "recursos"  # o Rec vai por cima de qualquer mapa: o botão dele vale mais que o do mapa de baixo
+	var political: bool = data["kind"] == "political" or rec
 	_title.text = "Mapa: %s" % data["menu"]
 	if political:
 		var level := "subdivisoes" if _subs else _level

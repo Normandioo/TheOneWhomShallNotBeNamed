@@ -188,10 +188,10 @@ public partial class Registry
     public ResourceEdit DeleteOccurrence(long id) => Remove("resource_occurrence", OccurrenceColumns, id);
 
     /// As ocorrências de um tipo (0 = todas), na ordem de criação: {id, type_id, type, rgb, name, kind ("ponto" | "area"),
-    /// lat, lon (0 numa área), origin, state, note}.
+    /// lat, lon (0 numa área), origin, state, note, fixed, reserve (NaN = sem quantidade)}.
     public Array<Dictionary> Occurrences(long typeId) =>
         new(_db.Rows("""
-                select o.id, o.type_id, t.name, t.rgb, o.name, o.kind, o.lat, o.lon, o.origin, o.state, o.note, o.fixed
+                select o.id, o.type_id, t.name, t.rgb, o.name, o.kind, o.lat, o.lon, o.origin, o.state, o.note, o.fixed, o.reserve
                 from resource_occurrence o join resource_type t on t.id = o.type_id
                 where @0 = 0 or o.type_id = @0 order by o.id
                 """, typeId)
@@ -200,6 +200,7 @@ public partial class Registry
                 ["id"] = Convert.ToInt64(r[0]), ["type_id"] = Convert.ToInt64(r[1]), ["type"] = Str(r[2]), ["rgb"] = Convert.ToInt64(r[3]),
                 ["name"] = Str(r[4]), ["kind"] = Str(r[5]), ["lat"] = r[6] == null ? 0.0 : Convert.ToDouble(r[6]),
                 ["lon"] = r[7] == null ? 0.0 : Convert.ToDouble(r[7]), ["origin"] = Str(r[8]), ["state"] = Str(r[9]), ["note"] = Str(r[10]), ["fixed"] = Convert.ToInt64(r[11]) == 1,
+                ["reserve"] = r[12] == null ? double.NaN : Convert.ToDouble(r[12]),
             }));
 
     /// O tipo de uma ocorrência; 0 se ela não existe.

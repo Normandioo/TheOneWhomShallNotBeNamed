@@ -10,8 +10,17 @@ const Calendar = preload("res://scripts/world/calendar.gd")
 
 
 const Batch = preload("res://scripts/edit/command_stack.gd").Batch  # vários comandos que são um só para o autor
+const ResourcePlanScript = preload("res://scripts/world/ResourcePlan.cs")
+const TerritoryScript = preload("res://scripts/world/Territory.cs")
 
+signal rec_changed(on: bool)    # o modo de mapa Rec ligou ou desligou (a barra de modos e a legenda acompanham)
+signal rec_drawn                # o Rec foi redesenhado: a legenda relê rec_entries e rec_hidden
 
+var rec := false                # o modo de mapa Rec: todos os recursos juntos, cada um na sua cor
+var rec_hidden := {}            # tipo -> true: desligado na legenda do Rec
+var rec_entries: Array = []     # o que a legenda mostra: [{id, name, rgb, category, count}]
+var _rec_layers: Array = []     # [tipo, camada] das áreas desenhadas no Rec, na ordem das cores
+var _drawing_rec := false
 var hub
 var panel: ResourcePanel
 var layer                       # PlaceLayer dos pontos e dos nomes das áreas
@@ -20,6 +29,7 @@ var territories: TerritoryEditor
 var generator                   # o generator_controller (prévia e aplicar), se ligado
 var navigate := Callable()      # sai do pincel ou da pintura antes de esperar um clique
 var focus_map := Callable()     # func(direção, zoom)
+var clock                       # WorldClock: o estoque de um bem fabricado é o da data na tela
 var type_id := 0
 var occurrence_id := 0
 var _waiting := ""              # "" | "place" | "move": o que o próximo clique no globo faz
@@ -38,6 +48,14 @@ func setup(domain_hub, resource_panel, place_layer, command_stack, territory_edi
 	if not hub.usable:
 		return
 	commands.changed.connect(refresh)
+	# Outro mapa na tela (outro nível, ou a prévia de uma geração) encerra o Rec.
+	territories.territory_level_shown.connect(func(_level: String, _layer) -> void:
+		if rec:
+			set_rec(false))
+	territories.preview_image.connect(func(img) -> void:
+		if rec and not _drawing_rec and img != null:
+			rec = false
+			rec_changed.emit(false))
 	territories.resource_owner_picked.connect(func(id: int) -> void:
 		occurrence_id = id
 		_fix_edited()
@@ -139,22 +157,32 @@ func set_open(open: bool) -> void:
 
 func create_type(type_name: String, category := "") -> void:
 	leave_painting()
-	var cmd = hub.registry.CreateResourceType(type_name)
-	if cmd == null:
-		_apply("criar recurso", cmd, "Dê um nome ao recurso.")
+	var made := create_good(type_name, category, panel.chosen_unit())
+	if made == 0:
+		_apply("criar recurso", null, "Dê um nome ao recurso.")
 		return
-	type_id = cmd.Id
+	type_id = made
 	occurrence_id = 0
 	panel.new_name.text = ""
 	panel.query.text = ""
+	panel.new_toggle.button_pressed = false
+	show_map()
+	refresh()  # o push dentro de create_good redesenhou antes de o recurso novo virar o escolhido
+
+
+## Cria o tipo já na categoria e na unidade, num desfazer só, sem mexer na tela (a receita também cria bens por aqui). 0 = recusado.
+func create_good(type_name: String, category := "manufatura", unit := "") -> int:
+	var cmd = hub.registry.CreateResourceType(type_name)
+	if cmd == null:
+		return 0
 	var steps: Array = [cmd]
-	if category != "":
-		var t: Dictionary = hub.registry.ResourceTypes("").filter(func(x): return int(x.id) == type_id)[0]
-		var categorized = hub.registry.SetResourceType(type_id, t.name, "", category, "", int(t.rgb))
+	if category != "" or unit != "":
+		var t: Dictionary = hub.registry.ResourceTypes("").filter(func(x): return int(x.id) == cmd.Id)[0]
+		var categorized = hub.registry.SetResourceType(cmd.Id, t.name, "", category, unit, int(t.rgb))
 		if categorized != null:
 			steps.append(categorized)
 	push_batch("criar recurso", steps)
-	show_map()
+	return cmd.Id
 
 
 ## Uma área nova do recurso escolhido, já no modo pintar.
@@ -234,7 +262,96 @@ func cancel_click() -> void:
 
 
 ## Um clique no globo em n. true = era dos recursos (colocar, mover ou escolher o que está na tela).
+## Liga ou desliga o modo de mapa Rec. Ligado, a camada política mostra as áreas de todos os recursos visíveis (uma cor por recurso) e
+## os pontos deles aparecem no globo; um clique num deles abre o recurso no painel.
+func set_rec(on: bool) -> void:
+	if hub == null or not hub.usable or rec == on:
+		return
+	rec = on
+	if on:
+		_draw_rec()
+	else:
+		_rec_layers = []
+		territories.end_preview()
+	rec_changed.emit(on)
+	refresh()
+
+
+## Mostra ou esconde um recurso no Rec (a legenda).
+func set_rec_visible(id: int, shown: bool) -> void:
+	if shown:
+		rec_hidden.erase(id)
+	else:
+		rec_hidden[id] = true
+	if rec:
+		_draw_rec()
+		refresh()
+
+
+func _draw_rec() -> void:
+	var occurrences: Array = hub.registry.Occurrences(0)
+	var areas := {}
+	for o in occurrences:
+		if o.kind == "area":
+			areas[int(o.type_id)] = true
+	rec_entries = []
+	_rec_layers = []
+	var layers: Array[TerritoryScript] = []
+	var colors: Array = []
+	var plan = ResourcePlanScript.new()  # os métodos dele são estáticos, mas o GDScript os chama por uma instância
+	for t in hub.registry.ResourceTypes(""):
+		if int(t.count) == 0:
+			continue  # fora do mapa (os fabricados ficam nos povoados)
+		rec_entries.append(t)
+		if rec_hidden.has(int(t.id)) or not areas.has(int(t.id)):
+			continue
+		# shortcut: cada camada aberta fica na memória (ver TerritoryEditor.layer); com muitos recursos em área, pesa.
+		var area_layer = territories.layer(TerritoryEditor.RESOURCE + str(t.id))
+		if area_layer == null:
+			continue
+		var owner: int = plan.LayerOwner(layers.size())
+		layers.append(area_layer)
+		_rec_layers.append([int(t.id), area_layer])
+		colors.append({"id": owner, "rgb": int(t.rgb), "top": owner})
+	_drawing_rec = true
+	territories.show_preview(plan.LayersImage(territories.territory.Size, layers), colors)
+	_drawing_rec = false
+	rec_drawn.emit()
+
+
+## O clique no Rec: um ponto perto ou a área sob o clique abre o recurso (e o lugar) no painel. true = era de um recurso.
+func _rec_click(n: Vector3, tolerance_km: float) -> bool:
+	var ll := EvronGeo.lat_lon(n)
+	var picked_type := 0
+	var picked := 0
+	for t in rec_entries:
+		if rec_hidden.has(int(t.id)):
+			continue
+		var hits: PackedInt64Array = hub.registry.PointsAt(int(t.id), ll.x, ll.y, tolerance_km)
+		if not hits.is_empty():
+			picked_type = int(t.id)
+			picked = hits[0]
+			break
+	if picked == 0:
+		for pair in _rec_layers:
+			var owner: int = pair[1].OwnerAt(n)
+			if owner != 0:
+				picked_type = pair[0]
+				picked = owner
+	if picked == 0:
+		return false
+	set_rec(false)
+	set_open(true)
+	type_id = picked_type
+	occurrence_id = picked
+	show_map()
+	refresh()
+	return true
+
+
 func click(n: Vector3, tolerance_km: float) -> bool:
+	if rec and hub.usable and n != Vector3.ZERO and (not panel.visible or type_id == 0):
+		return _rec_click(n, tolerance_km)
 	if not hub.usable or not panel.visible or n == Vector3.ZERO:
 		return false
 	if generator != null and generator.active():
@@ -286,15 +403,32 @@ func refresh() -> void:
 		if mine.filter(func(o): return int(o.id) == occurrence_id).is_empty():
 			occurrence_id = 0
 		_measure(mine)
-		panel.show_types(hub.registry.ResourceTypes(panel.query.text), type_id)
+		var rows: Array = hub.registry.ResourceTypes(panel.query.text)
+		var recipes := {}  # bem -> quantas receitas o fazem: o estado de um fabricado na lista (só a lista mostra)
+		for r in hub.registry.Recipes() if type_id == 0 else []:
+			recipes[int(r.output_id)] = recipes.get(int(r.output_id), 0) + 1
+		for t in rows:
+			t["recipes"] = recipes.get(int(t.id), 0)
+		panel.show_types(rows, type_id)
 		panel.show_type(current)
 		panel.show_occurrences(mine, occurrence_id)
 		panel.show_occurrence(_occurrence())
+		if panel._made:
+			var t: int = clock.shown() if clock != null else 9223372036854775807
+			panel.show_made(hub.registry.Recipes().filter(func(r): return int(r.output_id) == type_id).map(func(r): return String(r.name)),
+				hub.registry.GoodMakers(type_id, t), current.unit)
 		shown = mine
 		if generator != null:
 			generator.show_type(type_id)
 			if generator.active():  # na prévia, as geradas que vão sair somem
 				shown = mine.filter(func(o): return o.origin != "gerada" or o.fixed)
+	var rec_view: bool = rec and (not panel.visible or type_id == 0)
+	var units := {}
+	if rec_view:
+		_draw_rec()  # desfazer e refazer também mudam as áreas
+		shown = hub.registry.Occurrences(0).filter(func(o): return o.kind == "ponto" and not rec_hidden.has(int(o.type_id)))
+		for t in rec_entries:
+			units[int(t.id)] = String(t.unit)
 	if TerritoryEditor.is_resource(territories.territory_level):
 		# Desfazer a criação da área que está sendo pintada encerra a pintura.
 		if territories.painting_territory and hub.registry.OccurrenceType(territories.territory_owner) == 0:
@@ -310,6 +444,9 @@ func refresh() -> void:
 		else:
 			continue
 		var title: String = o.type if o.name == "" else "%s · %s" % [o.name, o.type]
+		if rec_view:  # no Rec, a quantidade vai junto do nome (sem ela, ninguém extrai)
+			var reserve := float(o.get("reserve", NAN))
+			title += " · " + ("sem quantidade" if is_nan(reserve) else ResourcePanel._plain(reserve) + (" " + units.get(int(o.type_id), "") if units.get(int(o.type_id), "") != "" else ""))
 		var color := ResourcePanel._color(o.rgb)
 		items.append({"place_id": o.id, "lat": at.x, "lon": at.y, "radius_km": 0.0,
 			"color": Color.WHITE if int(o.id) == occurrence_id else color, "label": ("◆ " if o.kind == "ponto" else "") + title})

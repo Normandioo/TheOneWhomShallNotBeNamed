@@ -29,6 +29,7 @@ const MapLayers = preload("res://scripts/ui/map_layers.gd")
 const LayerPanel = preload("res://scripts/ui/layer_panel.gd")
 const LegendPanel = preload("res://scripts/ui/legend_panel.gd")
 const ModeRail = preload("res://scripts/ui/mode_rail.gd")
+const RecLegend = preload("res://scripts/ui/rec_legend.gd")
 const SearchPanel = preload("res://scripts/ui/search_panel.gd")
 const SheetPanel = preload("res://scripts/ui/sheet_panel.gd")
 const StatusBar = preload("res://scripts/ui/status_bar.gd")
@@ -78,6 +79,7 @@ var material := GlobeMaterial.new()
 var globe: GlobeView
 var layer_panel: LayerPanel
 var mode_rail: ModeRail
+var rec_legend: RecLegend      # a legenda do modo de mapa Rec, acima dos modos
 var status_bar: StatusBar
 var _dock := {}  # os painéis que o _layout() posiciona: search, sheet, presence
 var _help: AcceptDialog
@@ -163,6 +165,8 @@ func _ready() -> void:
 	layer_panel = LayerPanel.new()
 	mode_rail = ModeRail.new()
 	hud.add_child(mode_rail)
+	rec_legend = RecLegend.new()
+	hud.add_child(rec_legend)
 	status_bar = StatusBar.new()
 	hud.add_child(status_bar)
 	legend = LegendPanel.new()
@@ -244,6 +248,8 @@ func _ready() -> void:
 		_layout())
 	production.navigate = func() -> void: set_tool(ToolPanel.NAVIGATE)
 	production.focus_map = globe.focus
+	production.create_good = resources.create_good
+	resources.clock = clock
 	tool_panel.settlements_toggled.connect(func(open: bool) -> void:
 		if open:
 			resources.set_open(false)
@@ -307,6 +313,14 @@ func _ready() -> void:
 	territories.setup(domains, territory, commands, territory_panel, {}, _new_layer)  # lê a camada dos países e manda a paleta; as outras sob demanda
 	territories.area_palette_changed.connect(material.set_area_palette)
 	resources.setup(domains, resource_panel, globe.resources, commands, territories)  # depois do editor: usa as camadas dele
+	resources.rec_changed.connect(func(on: bool) -> void:
+		rec_legend.visible = on
+		mode_rail.show_level("recursos" if on else territories.territory_level, territories.subdivisions_view and not on)
+		_layout())
+	resources.rec_drawn.connect(func() -> void:
+		rec_legend.show_entries(resources.rec_entries, resources.rec_hidden)
+		_layout.call_deferred())
+	rec_legend.shown_changed.connect(resources.set_rec_visible)
 	production.setup(domains, settlement_panel, globe.settlements, terrain, territories, clock)  # registra-se no relógio
 	production.month_processed.connect(func(_end: int) -> void: resources.refresh())  # a reserva mostrada mudou
 	clock.state_changed.connect(production.refresh)  # o estoque é o da data mostrada: entrar e sair da consulta o muda
@@ -400,10 +414,21 @@ func _ready() -> void:
 	_on_clock_changed()
 	mode_rail.layer_selected.connect(set_layer)
 	mode_rail.level_selected.connect(func(level: String) -> void:  # os modos de mundo são o mapa político num nível
+		if level == "recursos":
+			# Rec: as áreas de todos os recursos por cima do mapa de baixo. O mapa político corta a pintura no mar (pesca, sal de
+			# costa…): nele, o Rec vai para o satélite.
+			if MapLayers.LAYERS[layer]["kind"] == "political":
+				set_layer(0)
+			territories.set_subdivisions_view(false)
+			territories.show_level("pais")
+			resources.set_rec(true)
+			mode_rail.show_level("recursos" if resources.rec else territories.territory_level)
+			return
 		for i in MapLayers.LAYERS.size():
 			if MapLayers.LAYERS[i]["kind"] == "political":
 				set_layer(i)
 				break
+		resources.set_rec(false)
 		var subs := level == "subdivisoes"  # o mapa político por subdivisões: os países, com o aberto repartido em províncias
 		territories.set_subdivisions_view(subs)
 		territories.show_level("pais" if subs else level)  # o mapa de área sozinho, sem as fronteiras políticas
@@ -660,9 +685,14 @@ func _layout() -> void:
 		legend_floor = minf(legend_floor, highest_top - 8.0)  # uma barra chega até a legenda: ela sobe
 	legend.position = Vector2(left + 12.0, legend_floor - legend.size.y)
 	var overlays: Control = _dock.get("presence")
+	var above_rail := mode_rail.position.y
 	if overlays != null and overlays.visible:
 		overlays.size = overlays.get_combined_minimum_size()
 		overlays.position = Vector2(width - overlays.size.x, maxf(top, mode_rail.position.y - overlays.size.y - 6.0))
+		above_rail = overlays.position.y
+	if rec_legend.visible:  # a legenda do Rec, acima dos modos (e das sobreposições, se abertas)
+		rec_legend.size = rec_legend.get_combined_minimum_size()
+		rec_legend.position = Vector2(width - rec_legend.size.x, maxf(top, above_rail - rec_legend.size.y - 6.0))
 	layer_panel.position = Vector2(left + 12.0, top + 8.0)  # o ponto fixado, em cima do globo
 	var area_bar: Control = _dock.get("area_bar")
 	if area_bar != null:
@@ -861,6 +891,8 @@ func _restore_session() -> void:
 func set_layer(index: int) -> void:
 	layer = index
 	var selected: Dictionary = MapLayers.LAYERS[index]
+	if resources != null:
+		resources.set_rec(false)  # outro mapa escolhido é outro modo: o Rec sai
 	var t_l := PerfMonitor.start()
 	material.show_layer(selected)
 	PerfMonitor.stop("trocar camada (" + str(selected["file"] if selected.has("file") else selected["kind"]) + ")", t_l)

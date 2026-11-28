@@ -401,6 +401,21 @@ public partial class Registry
     /// O estoque do povoado hoje: {good_id, name, unit, qty}, só os bens com saldo.
     public Array<Dictionary> Stock(long settlementId) => StockAt(settlementId, long.MaxValue);
 
+    /// Onde está um bem fabricado: os povoados com atividade que o produz ou com saldo dele. {settlement_id, name, workers (postos nessas
+    /// atividades), qty (o saldo até t)}, por nome.
+    public Array<Dictionary> GoodMakers(long goodId, long t) => new(_db.Rows("""
+            select s.id, s.name,
+                   coalesce((select sum(a.workers) from activity a join recipe r on r.id = a.recipe_id where a.settlement_id = s.id and r.output_id = @0), 0),
+                   coalesce((select sum(m.qty) from stock_movement m where m.settlement_id = s.id and m.good_id = @0 and m.t <= @1), 0)
+            from settlement s
+            where exists (select 1 from activity a join recipe r on r.id = a.recipe_id where a.settlement_id = s.id and r.output_id = @0)
+               or abs(coalesce((select sum(m.qty) from stock_movement m where m.settlement_id = s.id and m.good_id = @0 and m.t <= @1), 0)) > 1e-9
+            order by s.name collate nocase, s.id
+            """, goodId, t).Select(r => new Dictionary
+        {
+            ["settlement_id"] = Convert.ToInt64(r[0]), ["name"] = Str(r[1]), ["workers"] = Convert.ToInt64(r[2]), ["qty"] = Convert.ToDouble(r[3]),
+        }));
+
     /// O estoque do povoado no instante t (a soma das movimentações até t): consultar uma data passada não muda nada.
     public Array<Dictionary> StockAt(long settlementId, long t)
     {
